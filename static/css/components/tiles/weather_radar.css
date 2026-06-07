@@ -1,0 +1,237 @@
+/* Weather Tile */
+
+/* The track-map tile-content needs to be a positioning context so the
+ * absolute weather overlay anchors here (not the page). */
+.track-map-content {
+    position: relative;
+}
+
+/* Weather overlay on track map — chosen anchor is set by
+ * weather_radar.js via .anchor-* class so the overlay lands in a
+ * spot that doesn't cover the track. Default top-left until the SVG
+ * loads and positionWeatherOverlay() picks the best anchor. */
+.weather-overlay {
+    position: absolute;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 4px 6px;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    pointer-events: auto;
+    width: 180px;
+    max-width: 50%;
+}
+.weather-overlay.anchor-top-left     { top: 6px;    left: 6px;   }
+.weather-overlay.anchor-top-right    { top: 6px;    right: 6px;  }
+.weather-overlay.anchor-bottom-left  { bottom: 6px; left: 6px;   }
+.weather-overlay.anchor-bottom-right { bottom: 6px; right: 6px;  }
+.weather-overlay.anchor-left-mid     { top: 50%;    left: 6px;   transform: translateY(-50%); }
+.weather-overlay.anchor-right-mid    { top: 50%;    right: 6px;  transform: translateY(-50%); }
+.weather-overlay.anchor-top-mid      { top: 6px;    left: 50%;   transform: translateX(-50%); }
+.weather-overlay.anchor-bottom-mid   { bottom: 6px; left: 50%;   transform: translateX(-50%); }
+
+/* Title row — "Weather" + current-conditions icon (from tomorrow.io). */
+.weather-overlay-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 2px;
+    margin-bottom: 2px;
+}
+.weather-overlay-title-text {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    letter-spacing: 0.5px;
+}
+.weather-overlay-condition {
+    display: inline-flex;
+    align-items: center;
+    color: #ffffff;
+}
+.weather-overlay-condition svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* Precipitation tile — now a full-cover overlay on .track-map-content
+ * (sibling of #trackMap), positioned so the geo-aligned Tomorrow.io
+ * PNG sits over the track. Behind the track SVG via z-index so the
+ * circuit lines stay readable. */
+.track-map-content > .weather-radar-map {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    z-index: 1;
+    pointer-events: none;
+}
+.track-map-content > .track-map { position: relative; z-index: 2; }
+.weather-overlay { z-index: 5; }
+
+/* Weather data overlay — corner box with the live numbers + title +
+ * condition icon. Fonts bumped +3 px per user spec. */
+.weather-overlay .weather-live-data {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 14px;
+    color: var(--text-primary);
+}
+.weather-overlay-title-text { font-size: 14px; }
+.weather-overlay-condition svg { width: 22px; height: 22px; }
+.weather-overlay .weather-live-icon { width: 16px; height: 16px; }
+.weather-overlay .weather-live-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.weather-radar-header {
+    /* Title only — live data moved into the body. */
+    display: flex;
+    align-items: center;
+    line-height: 1.3;
+}
+
+.weather-tile-content {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    overflow: hidden;
+    height: 100%;
+    min-height: 0;
+}
+
+.weather-live-data {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 4px;
+    flex: 0 0 20%;     /* live data takes ~20% horizontal */
+    min-width: 0;
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 17px;
+    color: #ececec;
+    padding: 0 8px;
+    overflow: hidden;
+}
+
+.weather-live-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.weather-live-icon {
+    flex-shrink: 0;
+    opacity: 0.7;
+}
+
+/* Map container — takes the remaining ~80%; SVG is centred and capped
+ * at ~50% of tile height so it doesn't crowd out the data column. */
+.weather-radar-map {
+    flex: 1 1 auto;
+    height: 100%;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    overflow: hidden;
+}
+
+/* Track SVG keeps its natural "fit the box" sizing. */
+.weather-radar-map svg {
+    max-width: 90%;
+    max-height: 50%;
+    width: auto;
+    height: auto;
+    position: relative;
+    z-index: 2;
+}
+
+/* Tomorrow.io map tiles. Geo-aligned with the track SVG so 1 m on the
+ * tile = 1 m on the SVG. `--tile-size-px` is set by JS from
+ * (svg_rendered_px / svg_physical_m) × tile_physical_m; absent that
+ * variable, the tile falls back to the box-fitting defaults so it
+ * still shows something while alignment data loads. Tile typically
+ * overflows the weather container — clipped by `overflow: hidden`. */
+.weather-radar-tile {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: var(--tile-size-px, auto);
+    height: var(--tile-size-px, auto);
+    max-width: none;
+    max-height: none;
+    object-fit: contain;
+    pointer-events: none;
+    image-rendering: -webkit-optimize-contrast;
+}
+
+.weather-radar-precipitationIntensity {
+    opacity: 0.85;
+    z-index: 1;
+}
+
+/* Track outline at weather-tile scale — vector-effect keeps the stroke
+ * a constant pixel width regardless of how aggressively the SVG is
+ * scaled down. Use a thick, light line so the circuit silhouette
+ * reads clearly behind the radar overlay. */
+.weather-radar-map svg.weather-track-svg .track,
+.weather-radar-map svg.weather-track-svg .track-outline {
+    fill: none;
+    stroke: #cfd6e0;
+    stroke-width: 4px;
+    vector-effect: non-scaling-stroke;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.weather-radar-map.raining {
+    background: radial-gradient(ellipse at center, rgba(0,80,200,0.15) 0%, transparent 70%);
+}
+
+/* Wind arrow — inline immediately AFTER the wind-speed value, sized
+ * to match the surrounding font (1em), no border, inherits text colour.
+ * Filled triangle (no notch) so it reads as a clear direction marker. */
+.weather-live-item .wind-arrow {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 11px;
+    line-height: 0;
+    color: var(--text-primary);
+    width: 1em;
+    height: 1em;
+}
+.weather-live-item .wind-arrow svg {
+    width: 100%;
+    height: 100%;
+}
+
+/* Weather-condition icon — current sky over the circuit (clear, cloud,
+ * rain, night, …). Now mounted inside the overlay's title row (see
+ * #weatherCondition); the old absolute-positioned variant is kept
+ * only as a fallback when there is no title slot. */
+.weather-condition {
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+}
+
+.weather-condition svg {
+    width: 100%;
+    height: 100%;
+    filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.8));
+}

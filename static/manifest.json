@@ -1,0 +1,16 @@
+{
+  "name": "F1 Live Timing",
+  "short_name": "F1 Timing",
+  "description": "Formula 1 Live Timing Replay",
+  "start_url": "/static/timing.html",
+  "display": "fullscreen",
+  "background_color": "#0a0a0a",
+  "theme_color": "#e10600",
+  "icons": [
+    {
+      "src": "/static/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

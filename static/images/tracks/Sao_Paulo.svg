@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet type="text/css" href="../../css/tracks.css"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-474.4 363.2 960.0 692.7">
+  <title>Interlagos</title>
+
+  <g id="track-root" transform="translate(0, 692.70) scale(1, -1) scale(0.078393) translate(868.50, 3316.00) rotate(258, -868.50, -3316.00)" data-scale="0.078393" data-rotation="258.0">
+
+    <g id="track-outline">
+      <path d="M -3277.0 -6782.3 L -3272.0 -6801.0 L -3243.0 -6909.0 L -3144.0 -7270.0 L -3085.0 -7478.0 L -3032.0 -7654.0 L -3006.0 -7735.0 L -2929.0 -7951.0 L -2870.0 -8088.0 L -2794.0 -8231.0 L -2766.0 -8274.0 L -2690.0 -8372.0 L -2651.3 -8407.4" class="track-outline" data-sector="1"/>
+      <path d="M -2651.3 -8407.4 L -2619.0 -8437.0 L -2521.0 -8494.0 L -2451.0 -8513.0 L -2393.0 -8519.0 L -2318.0 -8511.0 L -2222.0 -8475.0 L -2206.0 -8467.0 L -2156.0 -8434.0 L -2066.0 -8362.0 L -2011.0 -8312.0 L -1928.0 -8239.0 L -1841.0 -8171.0 L -1767.0 -8124.0 L -1689.0 -8090.0 L -1639.0 -8077.0 L -1468.0 -8089.0 L -1375.0 -8121.0 L -1255.0 -8172.0 L -1203.0 -8195.0 L -1055.0 -8253.0 L -925.0 -8297.0 L -740.0 -8338.0 L -532.0 -8355.0 L -323.0 -8338.0 L -212.0 -8320.0 L 8.0 -8248.0 L 118.0 -8198.0 L 315.0 -8078.0 L 486.0 -7937.0 L 500.7 -7922.2" class="track-outline" data-sector="2"/>
+      <path d="M 500.7 -7922.2 L 565.0 -7857.0 L 724.0 -7656.0 L 801.0 -7533.0 L 874.0 -7391.0 L 961.0 -7171.0 L 1007.0 -7020.0 L 1080.0 -6741.0 L 1147.0 -6469.0 L 1190.0 -6301.0 L 1229.0 -6146.0 L 1275.0 -5958.0 L 1343.0 -5673.0 L 1381.0 -5513.0 L 1467.0 -5157.0 L 1521.0 -4939.0 L 1601.0 -4625.0 L 1632.9 -4500.6" class="track-outline" data-sector="3"/>
+      <path d="M 1632.9 -4500.6 L 1695.0 -4258.0 L 1734.0 -4107.0 L 1787.0 -3905.0 L 1822.0 -3770.0 L 1916.0 -3412.0 L 1963.0 -3235.0 L 2018.0 -3029.0 L 2077.0 -2805.0 L 2119.0 -2649.0 L 2165.0 -2476.0 L 2237.0 -2219.0 L 2288.0 -2038.0 L 2326.0 -1903.0 L 2376.0 -1708.0 L 2405.0 -1479.0" class="track-outline" data-sector="4"/>
+      <path d="M 2405.0 -1479.0 L 2403.0 -1377.0 L 2392.0 -1278.0 L 2361.0 -1153.0 L 2324.0 -1065.0 L 2267.0 -981.0 L 2185.0 -903.0 L 2063.0 -824.0 L 1969.0 -781.0 L 1884.0 -753.0 L 1710.0 -711.0 L 1581.0 -687.0 L 1434.0 -672.0 L 1327.0 -669.0 L 1230.0 -668.0 L 1106.0 -672.0 L 929.0 -693.0 L 815.0 -716.0 L 703.0 -752.0 L 592.0 -800.0 L 473.0 -864.0 L 313.0 -974.0 L 130.0 -1129.0 L -97.0 -1387.0 L -149.0 -1459.0 L -234.0 -1581.0 L -379.0 -1788.0 L -503.0 -1962.0 L -581.0 -2072.3" class="track-outline" data-sector="5"/>
+      <path d="M -581.0 -2072.3 L -655.0 -2177.0 L -768.0 -2337.0 L -848.0 -2452.0 L -980.0 -2649.0 L -1086.0 -2807.0 L -1211.0 -2992.0 L -1354.0 -3205.0 L -1499.0 -3420.0 L -1628.0 -3605.0 L -1734.0 -3736.0 L -1866.0 -3863.0 L -1962.0 -3933.0 L -2133.0 -4019.0 L -2333.0 -4070.0 L -2443.0 -4083.0 L -2553.2 -4083.0" class="track-outline" data-sector="6"/>
+      <path d="M -2553.2 -4083.0 L -2598.0 -4083.0 L -2725.0 -4065.0 L -2859.0 -4021.0 L -2968.0 -3969.0 L -3049.0 -3921.0 L -3115.0 -3871.0 L -3202.0 -3789.0 L -3332.0 -3626.0 L -3437.0 -3428.0 L -3477.0 -3322.0 L -3525.0 -3151.0 L -3547.0 -3053.0 L -3568.0 -2940.0 L -3575.3 -2891.8" class="track-outline" data-sector="7"/>
+      <path d="M -3575.3 -2891.8 L -3594.0 -2768.0 L -3597.0 -2735.0 L -3606.0 -2592.0 L -3601.0 -2477.0 L -3589.0 -2387.0 L -3568.0 -2299.0 L -3532.0 -2202.0 L -3487.0 -2128.0 L -3436.0 -2081.0 L -3374.0 -2053.0 L -3284.0 -2044.0 L -3242.0 -2048.0 L -3190.0 -2062.0 L -3153.0 -2076.0 L -3095.0 -2102.0 L -3005.0 -2148.0 L -2938.2 -2183.6" class="track-outline" data-sector="8"/>
+      <path d="M -2938.2 -2183.6 L -2928.0 -2189.0 L -2855.0 -2225.0 L -2777.0 -2257.0 L -2673.0 -2286.0 L -2571.0 -2294.0 L -2546.0 -2293.0 L -2480.0 -2282.0 L -2383.0 -2240.0 L -2341.0 -2209.0 L -2312.0 -2182.0 L -2256.0 -2103.0 L -2231.0 -2037.0 L -2216.0 -1950.0 L -2215.0 -1890.0 L -2234.0 -1778.0 L -2281.0 -1655.0 L -2303.0 -1611.0 L -2377.0 -1494.0 L -2444.0 -1407.0 L -2549.0 -1290.0 L -2606.0 -1231.0 L -2760.0 -1065.0 L -2778.3 -1042.9" class="track-outline" data-sector="9"/>
+      <path d="M -2778.3 -1042.9 L -2841.0 -967.0 L -2931.0 -846.0 L -2991.0 -757.0 L -3102.0 -557.0 L -3166.0 -403.0 L -3199.0 -302.0 L -3212.0 -249.0 L -3227.0 -164.0 L -3231.0 -99.0 L -3229.0 -29.0 L -3209.0 95.0 L -3174.0 175.0 L -3141.0 216.0 L -3075.0 259.0 L -3016.0 270.0 L -2962.0 268.0 L -2909.0 255.0 L -2834.0 223.0 L -2779.0 189.0 L -2734.0 156.0 L -2670.0 98.0 L -2631.0 59.0 L -2571.0 -8.0 L -2527.0 -62.0 L -2482.0 -121.0 L -2421.0 -204.0 L -2398.6 -232.3" class="track-outline" data-sector="10"/>
+      <path d="M -2398.6 -232.3 L -2345.0 -300.0 L -2224.0 -438.0 L -2159.0 -503.0 L -2068.0 -572.0 L -1911.0 -648.0 L -1846.0 -668.0 L -1701.0 -698.0 L -1517.0 -715.0 L -1316.0 -703.0 L -1280.0 -696.0 L -1076.0 -636.0 L -925.0 -565.0 L -826.0 -503.0 L -712.0 -411.0 L -589.0 -283.0 L -497.0 -161.0 L -369.0 41.0 L -295.0 167.0 L -291.5 172.9" class="track-outline" data-sector="11"/>
+      <path d="M -291.5 172.9 L -241.0 259.0 L -174.0 371.0 L -22.0 629.0 L 32.0 726.0 L 131.0 907.0 L 185.0 1022.0 L 206.0 1084.0 L 212.0 1105.0 L 224.0 1171.0 L 214.0 1342.0 L 203.0 1373.0 L 176.0 1431.0 L 127.0 1506.0 L 48.0 1578.0 L -22.0 1626.0 L -100.0 1668.0 L -179.0 1704.0 L -335.0 1763.0 L -394.0 1784.0 L -530.0 1826.0" class="track-outline" data-sector="12"/>
+      <path d="M -530.0 1826.0 L -617.0 1847.0 L -814.0 1878.0 L -948.0 1886.0 L -1086.0 1887.0 L -1203.0 1880.0 L -1391.0 1857.0 L -1553.0 1828.0 L -1743.0 1783.0 L -1935.0 1728.0 L -2090.0 1675.0 L -2231.0 1618.0 L -2423.0 1529.0 L -2660.0 1394.0 L -2781.0 1313.0 L -2851.0 1260.0 L -2985.3 1140.1" class="track-outline" data-sector="13"/>
+      <path d="M -2985.3 1140.1 L -3085.0 1051.0 L -3189.0 939.0 L -3344.0 739.0 L -3387.0 675.0 L -3460.0 556.0 L -3561.0 363.0 L -3620.0 234.0 L -3679.0 87.0 L -3728.0 -46.0 L -3804.0 -291.0 L -3864.0 -527.0 L -3896.5 -673.5" class="track-outline" data-sector="14"/>
+      <path d="M -3896.5 -673.5 L -3903.0 -703.0 L -3974.0 -1026.0 L -4002.0 -1157.0 L -4031.0 -1305.0 L -4073.0 -1557.0 L -4090.0 -1675.0 L -4120.0 -1967.0 L -4134.0 -2178.0 L -4142.0 -2477.0 L -4139.0 -2689.0 L -4129.0 -2901.0 L -4114.0 -3096.0 L -4098.0 -3238.0 L -4068.0 -3470.0 L -4059.0 -3523.0 L -4021.0 -3754.0 L -3982.0 -3967.0 L -3946.7 -4138.7" class="track-outline" data-sector="15"/>
+      <path d="M -3946.7 -4138.7 L -3938.0 -4181.0 L -3910.0 -4305.0 L -3869.0 -4483.0 L -3831.0 -4643.0 L -3774.0 -4875.0 L -3739.0 -5017.0 L -3698.0 -5177.0 L -3636.0 -5424.0 L -3540.0 -5798.0 L -3450.0 -6137.0 L -3388.0 -6370.0 L -3320.0 -6621.0 L -3277.0 -6782.3" class="track-outline" data-sector="16"/>
+    </g>
+
+    <g id="track-sectors">
+      <path d="M -3277.0 -6782.3 L -3272.0 -6801.0 L -3243.0 -6909.0 L -3144.0 -7270.0 L -3085.0 -7478.0 L -3032.0 -7654.0 L -3006.0 -7735.0 L -2929.0 -7951.0 L -2870.0 -8088.0 L -2794.0 -8231.0 L -2766.0 -8274.0 L -2690.0 -8372.0 L -2651.3 -8407.4" class="track" data-sector="1"/>
+      <path d="M -2651.3 -8407.4 L -2619.0 -8437.0 L -2521.0 -8494.0 L -2451.0 -8513.0 L -2393.0 -8519.0 L -2318.0 -8511.0 L -2222.0 -8475.0 L -2206.0 -8467.0 L -2156.0 -8434.0 L -2066.0 -8362.0 L -2011.0 -8312.0 L -1928.0 -8239.0 L -1841.0 -8171.0 L -1767.0 -8124.0 L -1689.0 -8090.0 L -1639.0 -8077.0 L -1468.0 -8089.0 L -1375.0 -8121.0 L -1255.0 -8172.0 L -1203.0 -8195.0 L -1055.0 -8253.0 L -925.0 -8297.0 L -740.0 -8338.0 L -532.0 -8355.0 L -323.0 -8338.0 L -212.0 -8320.0 L 8.0 -8248.0 L 118.0 -8198.0 L 315.0 -8078.0 L 486.0 -7937.0 L 500.7 -7922.2" class="track" data-sector="2"/>
+      <path d="M 500.7 -7922.2 L 565.0 -7857.0 L 724.0 -7656.0 L 801.0 -7533.0 L 874.0 -7391.0 L 961.0 -7171.0 L 1007.0 -7020.0 L 1080.0 -6741.0 L 1147.0 -6469.0 L 1190.0 -6301.0 L 1229.0 -6146.0 L 1275.0 -5958.0 L 1343.0 -5673.0 L 1381.0 -5513.0 L 1467.0 -5157.0 L 1521.0 -4939.0 L 1601.0 -4625.0 L 1632.9 -4500.6" class="track" data-sector="3"/>
+      <path d="M 1632.9 -4500.6 L 1695.0 -4258.0 L 1734.0 -4107.0 L 1787.0 -3905.0 L 1822.0 -3770.0 L 1916.0 -3412.0 L 1963.0 -3235.0 L 2018.0 -3029.0 L 2077.0 -2805.0 L 2119.0 -2649.0 L 2165.0 -2476.0 L 2237.0 -2219.0 L 2288.0 -2038.0 L 2326.0 -1903.0 L 2376.0 -1708.0 L 2405.0 -1479.0" class="track" data-sector="4"/>
+      <path d="M 2405.0 -1479.0 L 2403.0 -1377.0 L 2392.0 -1278.0 L 2361.0 -1153.0 L 2324.0 -1065.0 L 2267.0 -981.0 L 2185.0 -903.0 L 2063.0 -824.0 L 1969.0 -781.0 L 1884.0 -753.0 L 1710.0 -711.0 L 1581.0 -687.0 L 1434.0 -672.0 L 1327.0 -669.0 L 1230.0 -668.0 L 1106.0 -672.0 L 929.0 -693.0 L 815.0 -716.0 L 703.0 -752.0 L 592.0 -800.0 L 473.0 -864.0 L 313.0 -974.0 L 130.0 -1129.0 L -97.0 -1387.0 L -149.0 -1459.0 L -234.0 -1581.0 L -379.0 -1788.0 L -503.0 -1962.0 L -581.0 -2072.3" class="track" data-sector="5"/>
+      <path d="M -581.0 -2072.3 L -655.0 -2177.0 L -768.0 -2337.0 L -848.0 -2452.0 L -980.0 -2649.0 L -1086.0 -2807.0 L -1211.0 -2992.0 L -1354.0 -3205.0 L -1499.0 -3420.0 L -1628.0 -3605.0 L -1734.0 -3736.0 L -1866.0 -3863.0 L -1962.0 -3933.0 L -2133.0 -4019.0 L -2333.0 -4070.0 L -2443.0 -4083.0 L -2553.2 -4083.0" class="track" data-sector="6"/>
+      <path d="M -2553.2 -4083.0 L -2598.0 -4083.0 L -2725.0 -4065.0 L -2859.0 -4021.0 L -2968.0 -3969.0 L -3049.0 -3921.0 L -3115.0 -3871.0 L -3202.0 -3789.0 L -3332.0 -3626.0 L -3437.0 -3428.0 L -3477.0 -3322.0 L -3525.0 -3151.0 L -3547.0 -3053.0 L -3568.0 -2940.0 L -3575.3 -2891.8" class="track" data-sector="7"/>
+      <path d="M -3575.3 -2891.8 L -3594.0 -2768.0 L -3597.0 -2735.0 L -3606.0 -2592.0 L -3601.0 -2477.0 L -3589.0 -2387.0 L -3568.0 -2299.0 L -3532.0 -2202.0 L -3487.0 -2128.0 L -3436.0 -2081.0 L -3374.0 -2053.0 L -3284.0 -2044.0 L -3242.0 -2048.0 L -3190.0 -2062.0 L -3153.0 -2076.0 L -3095.0 -2102.0 L -3005.0 -2148.0 L -2938.2 -2183.6" class="track" data-sector="8"/>
+      <path d="M -2938.2 -2183.6 L -2928.0 -2189.0 L -2855.0 -2225.0 L -2777.0 -2257.0 L -2673.0 -2286.0 L -2571.0 -2294.0 L -2546.0 -2293.0 L -2480.0 -2282.0 L -2383.0 -2240.0 L -2341.0 -2209.0 L -2312.0 -2182.0 L -2256.0 -2103.0 L -2231.0 -2037.0 L -2216.0 -1950.0 L -2215.0 -1890.0 L -2234.0 -1778.0 L -2281.0 -1655.0 L -2303.0 -1611.0 L -2377.0 -1494.0 L -2444.0 -1407.0 L -2549.0 -1290.0 L -2606.0 -1231.0 L -2760.0 -1065.0 L -2778.3 -1042.9" class="track" data-sector="9"/>
+      <path d="M -2778.3 -1042.9 L -2841.0 -967.0 L -2931.0 -846.0 L -2991.0 -757.0 L -3102.0 -557.0 L -3166.0 -403.0 L -3199.0 -302.0 L -3212.0 -249.0 L -3227.0 -164.0 L -3231.0 -99.0 L -3229.0 -29.0 L -3209.0 95.0 L -3174.0 175.0 L -3141.0 216.0 L -3075.0 259.0 L -3016.0 270.0 L -2962.0 268.0 L -2909.0 255.0 L -2834.0 223.0 L -2779.0 189.0 L -2734.0 156.0 L -2670.0 98.0 L -2631.0 59.0 L -2571.0 -8.0 L -2527.0 -62.0 L -2482.0 -121.0 L -2421.0 -204.0 L -2398.6 -232.3" class="track" data-sector="10"/>
+      <path d="M -2398.6 -232.3 L -2345.0 -300.0 L -2224.0 -438.0 L -2159.0 -503.0 L -2068.0 -572.0 L -1911.0 -648.0 L -1846.0 -668.0 L -1701.0 -698.0 L -1517.0 -715.0 L -1316.0 -703.0 L -1280.0 -696.0 L -1076.0 -636.0 L -925.0 -565.0 L -826.0 -503.0 L -712.0 -411.0 L -589.0 -283.0 L -497.0 -161.0 L -369.0 41.0 L -295.0 167.0 L -291.5 172.9" class="track" data-sector="11"/>
+      <path d="M -291.5 172.9 L -241.0 259.0 L -174.0 371.0 L -22.0 629.0 L 32.0 726.0 L 131.0 907.0 L 185.0 1022.0 L 206.0 1084.0 L 212.0 1105.0 L 224.0 1171.0 L 214.0 1342.0 L 203.0 1373.0 L 176.0 1431.0 L 127.0 1506.0 L 48.0 1578.0 L -22.0 1626.0 L -100.0 1668.0 L -179.0 1704.0 L -335.0 1763.0 L -394.0 1784.0 L -530.0 1826.0" class="track" data-sector="12"/>
+      <path d="M -530.0 1826.0 L -617.0 1847.0 L -814.0 1878.0 L -948.0 1886.0 L -1086.0 1887.0 L -1203.0 1880.0 L -1391.0 1857.0 L -1553.0 1828.0 L -1743.0 1783.0 L -1935.0 1728.0 L -2090.0 1675.0 L -2231.0 1618.0 L -2423.0 1529.0 L -2660.0 1394.0 L -2781.0 1313.0 L -2851.0 1260.0 L -2985.3 1140.1" class="track" data-sector="13"/>
+      <path d="M -2985.3 1140.1 L -3085.0 1051.0 L -3189.0 939.0 L -3344.0 739.0 L -3387.0 675.0 L -3460.0 556.0 L -3561.0 363.0 L -3620.0 234.0 L -3679.0 87.0 L -3728.0 -46.0 L -3804.0 -291.0 L -3864.0 -527.0 L -3896.5 -673.5" class="track" data-sector="14"/>
+      <path d="M -3896.5 -673.5 L -3903.0 -703.0 L -3974.0 -1026.0 L -4002.0 -1157.0 L -4031.0 -1305.0 L -4073.0 -1557.0 L -4090.0 -1675.0 L -4120.0 -1967.0 L -4134.0 -2178.0 L -4142.0 -2477.0 L -4139.0 -2689.0 L -4129.0 -2901.0 L -4114.0 -3096.0 L -4098.0 -3238.0 L -4068.0 -3470.0 L -4059.0 -3523.0 L -4021.0 -3754.0 L -3982.0 -3967.0 L -3946.7 -4138.7" class="track" data-sector="15"/>
+      <path d="M -3946.7 -4138.7 L -3938.0 -4181.0 L -3910.0 -4305.0 L -3869.0 -4483.0 L -3831.0 -4643.0 L -3774.0 -4875.0 L -3739.0 -5017.0 L -3698.0 -5177.0 L -3636.0 -5424.0 L -3540.0 -5798.0 L -3450.0 -6137.0 L -3388.0 -6370.0 L -3320.0 -6621.0 L -3277.0 -6782.3" class="track" data-sector="16"/>
+    </g>
+
+    <g id="marshal-lights">
+      <g class="marshal-light-marker" data-light="1">
+        <rect x="-3545.4" y="-5929.6" width="63.8" height="63.8" class="marshal-light-bg"/>
+        <text x="-3513.5" y="-5897.7" class="marshal-light-label">1</text>
+      </g>
+      <g class="marshal-light-marker" data-light="2">
+        <rect x="-3052.7" y="-7720.8" width="63.8" height="63.8" class="marshal-light-bg"/>
+        <text x="-3020.8" y="-7688.9" class="marshal-light-label">2</text>
+      </g>
+      <g class="marshal-light-marker" data-light="3">
+        <rect x="-916.2" y="-8337.9" width="63.8" height="63.8" class="marshal-light-bg"/>
+        <text x="-884.4" y="-8306.0" class="marshal-light-label">3</text>
+      </g>
+      <g class="marshal-light-marker" data-light="4">
+        <rect x="1147.3" y="-6375.0" width="63.8" height="63.8" class="marshal-light-bg"/>
+        <text x="1179.2" y="-6343.1" class="marshal-light-label">4</text>
+      </g>
+      <g class="marshal-light-marker" data-light="5">
+        <rect x="2143.6" y="-2470.4" width="63.8" height="63.8" class="marshal-light-bg"/>
+        <text x="2175.5" y="-2438.6" class="marshal-light-label">5</text>
+      </g>
+      <g class="marshal-light-marker" data-light="6">
+        <rect x="554.6" y="-834.8" width="63.8" height="63.8" class="marshal-light-bg"/>
+        <text x="586.5" y="-803.0" class="marshal-light-label">6</text>
+      </g>
+      <g class="marshal-light-marker" data-light="7">
+        <rect x="-1874.3" y="-3872.2" width="63.8" height="63.8" class="marshal-light-bg"/>
+        <text x="-1842.4" y="-3840.3" class="marshal-light-label">7</text>
+      </g>
+      <g class="marshal-light-marker" data-light="8">
+        <rect x="-3228.5" y="-3826.0" width="63.8" height="63.8" class="marshal-light-bg"/>
+        <text x="-3196.6" y="-3794.1" class="marshal-light-label">8</text>
+      </g>
+      <g class="marshal-light-marker" data-light="9">
+        <rect x="-3395.8" y="-2083.9" width="63.8" height="63.8" class="marshal-light-bg"/>
+        <text x="-3363.9" y="-2052.0" class="marshal-light-label">9</text>
+      </g>
+      <g class="marshal-light-marker" data-light="10">
+        <rect x="-2288.0" y="-2135.1" width="63.8" height="63.8" class="marshal-light-bg"/>
+        <text x="-2256.2" y="-2103.2" class="marshal-light-label">10</text>
+      </g>
+      <g class="marshal-light-marker" data-light="11">
+        <rect x="-3251.8" y="-235.8" width="63.8" height="63.8" class="marshal-light-bg"/>
+        <text x="-3220.0" y="-203.9" class="marshal-light-label">11</text>
+      </g>
+      <g class="marshal-light-marker" data-light="12">
+        <rect x="-1347.7" y="-734.8" width="63.8" height="63.8" class="marshal-light-bg"/>
+        <text x="-1315.8" y="-703.0" class="marshal-light-label">12</text>
+      </g>
+      <g class="marshal-light-marker" data-light="13">
+        <rect x="192.0" y="1141.2" width="63.8" height="63.8" class="marshal-light-bg"/>
+        <text x="223.9" y="1173.1" class="marshal-light-label">13</text>
+      </g>
+      <g class="marshal-light-marker" data-light="14">
+        <rect x="-2674.8" y="1371.8" width="63.8" height="63.8" class="marshal-light-bg"/>
+        <text x="-2642.9" y="1403.7" class="marshal-light-label">14</text>
+      </g>
+      <g class="marshal-light-marker" data-light="15">
+        <rect x="-3561.2" y="391.6" width="63.8" height="63.8" class="marshal-light-bg"/>
+        <text x="-3529.3" y="423.5" class="marshal-light-label">15</text>
+      </g>
+      <g class="marshal-light-marker" data-light="16">
+        <rect x="-4170.9" y="-2720.8" width="63.8" height="63.8" class="marshal-light-bg"/>
+        <text x="-4139.0" y="-2688.9" class="marshal-light-label">16</text>
+      </g>
+    </g>
+
+    <g id="marshal-sectors">
+      <g class="marshal-sector-marker" data-sector="1" data-length="1405.0">
+        <polygon points="-3277.0,-6858.9 -3343.3,-6744.1 -3210.7,-6744.1" class="marshal-sector-bg"/>
+        <text x="-3277.0" y="-6782.3" class="marshal-sector-label">1</text>
+      </g>
+      <g class="marshal-sector-marker" data-sector="2" data-length="3163.7">
+        <polygon points="-2651.3,-8483.9 -2717.6,-8369.1 -2585.1,-8369.1" class="marshal-sector-bg"/>
+        <text x="-2651.3" y="-8407.4" class="marshal-sector-label">2</text>
+      </g>
+      <g class="marshal-sector-marker" data-sector="3" data-length="6641.5">
+        <polygon points="500.7,-7998.7 434.4,-7883.9 566.9,-7883.9" class="marshal-sector-bg"/>
+        <text x="500.7" y="-7922.2" class="marshal-sector-label">3</text>
+      </g>
+      <g class="marshal-sector-marker" data-sector="4" data-length="10284.6">
+        <polygon points="1632.9,-4577.2 1566.6,-4462.4 1699.1,-4462.4" class="marshal-sector-bg"/>
+        <text x="1632.9" y="-4500.6" class="marshal-sector-label">4</text>
+      </g>
+      <g class="marshal-sector-marker" data-sector="5" data-length="13405.3">
+        <polygon points="2405.0,-1555.5 2338.7,-1440.7 2471.3,-1440.7" class="marshal-sector-bg"/>
+        <text x="2405.0" y="-1479.0" class="marshal-sector-label">5</text>
+      </g>
+      <g class="marshal-sector-marker" data-sector="6" data-length="17455.0">
+        <polygon points="-581.0,-2148.8 -647.3,-2034.0 -514.7,-2034.0" class="marshal-sector-bg"/>
+        <text x="-581.0" y="-2072.3" class="marshal-sector-label">6</text>
+      </g>
+      <g class="marshal-sector-marker" data-sector="7" data-length="20400.6">
+        <polygon points="-2553.2,-4159.5 -2619.5,-4044.7 -2486.9,-4044.7" class="marshal-sector-bg"/>
+        <text x="-2553.2" y="-4083.0" class="marshal-sector-label">7</text>
+      </g>
+      <g class="marshal-sector-marker" data-sector="8" data-length="22119.6">
+        <polygon points="-3575.3,-2968.3 -3641.6,-2853.5 -3509.0,-2853.5" class="marshal-sector-bg"/>
+        <text x="-3575.3" y="-2891.8" class="marshal-sector-label">8</text>
+      </g>
+      <g class="marshal-sector-marker" data-sector="9" data-length="23511.4">
+        <polygon points="-2938.2,-2260.1 -3004.5,-2145.3 -2871.9,-2145.3" class="marshal-sector-bg"/>
+        <text x="-2938.2" y="-2183.6" class="marshal-sector-label">9</text>
+      </g>
+      <g class="marshal-sector-marker" data-sector="10" data-length="25541.2">
+        <polygon points="-2778.3,-1119.4 -2844.6,-1004.6 -2712.0,-1004.6" class="marshal-sector-bg"/>
+        <text x="-2778.3" y="-1042.9" class="marshal-sector-label">10</text>
+      </g>
+      <g class="marshal-sector-marker" data-sector="11" data-length="27904.9">
+        <polygon points="-2398.6,-308.8 -2464.9,-194.0 -2332.3,-194.0" class="marshal-sector-bg"/>
+        <text x="-2398.6" y="-232.3" class="marshal-sector-label">11</text>
+      </g>
+      <g class="marshal-sector-marker" data-sector="12" data-length="30559.5">
+        <polygon points="-291.5,96.4 -357.8,211.2 -225.3,211.2" class="marshal-sector-bg"/>
+        <text x="-291.5" y="172.9" class="marshal-sector-label">12</text>
+      </g>
+      <g class="marshal-sector-marker" data-sector="13" data-length="32784.4">
+        <polygon points="-529.7,1749.4 -595.9,1864.2 -463.4,1864.2" class="marshal-sector-bg"/>
+        <text x="-529.7" y="1825.9" class="marshal-sector-label">13</text>
+      </g>
+      <g class="marshal-sector-marker" data-sector="14" data-length="35425.8">
+        <polygon points="-2985.3,1063.5 -3051.5,1178.3 -2919.0,1178.3" class="marshal-sector-bg"/>
+        <text x="-2985.3" y="1140.1" class="marshal-sector-label">14</text>
+      </g>
+      <g class="marshal-sector-marker" data-sector="15" data-length="37491.9">
+        <polygon points="-3896.5,-750.0 -3962.7,-635.2 -3830.2,-635.2" class="marshal-sector-bg"/>
+        <text x="-3896.5" y="-673.5" class="marshal-sector-label">15</text>
+      </g>
+      <g class="marshal-sector-marker" data-sector="16" data-length="40992.9">
+        <polygon points="-3946.7,-4215.3 -4013.0,-4100.5 -3880.4,-4100.5" class="marshal-sector-bg"/>
+        <text x="-3946.7" y="-4138.7" class="marshal-sector-label">16</text>
+      </g>
+    </g>
+
+    <g id="corners">
+      <g class="corner-marker" data-corner="1" data-length="3451.3">
+        <circle cx="-2393.4" cy="-8519.0" r="102.1" class="corner-bg"/>
+        <text x="-2393.4" y="-8519.0" class="corner-label">1</text>
+      </g>
+      <g class="corner-marker" data-corner="2" data-length="4433.2">
+        <circle cx="-1548.5" cy="-8083.3" r="102.1" class="corner-bg"/>
+        <text x="-1548.5" y="-8083.3" class="corner-label">2</text>
+      </g>
+      <g class="corner-marker" data-corner="3" data-length="6294.4">
+        <circle cx="225.6" cy="-8132.4" r="102.1" class="corner-bg"/>
+        <text x="225.6" y="-8132.4" class="corner-label">3</text>
+      </g>
+      <g class="corner-marker" data-corner="4" data-length="13831.8">
+        <circle cx="2323.7" cy="-1064.5" r="102.1" class="corner-bg"/>
+        <text x="2323.7" y="-1064.5" class="corner-label">4</text>
+      </g>
+      <g class="corner-marker" data-corner="5" data-length="15458.3">
+        <circle cx="821.3" cy="-714.7" r="102.1" class="corner-bg"/>
+        <text x="821.3" y="-714.7" class="corner-label">5</text>
+      </g>
+      <g class="corner-marker" data-corner="6" data-length="19851.8">
+        <circle cx="-2024.5" cy="-3964.4" r="102.1" class="corner-bg"/>
+        <text x="-2024.5" y="-3964.4" class="corner-label">6</text>
+      </g>
+      <g class="corner-marker" data-corner="7" data-length="21227.0">
+        <circle cx="-3261.3" cy="-3714.7" r="102.1" class="corner-bg"/>
+        <text x="-3261.3" y="-3714.7" class="corner-label">7</text>
+      </g>
+      <g class="corner-marker" data-corner="8" data-length="22837.0">
+        <circle cx="-3523.7" cy="-2188.4" r="102.1" class="corner-bg"/>
+        <text x="-3523.7" y="-2188.4" class="corner-label">8</text>
+      </g>
+      <g class="corner-marker" data-corner="9" data-length="24096.5">
+        <circle cx="-2383.0" cy="-2240.0" r="102.1" class="corner-bg"/>
+        <text x="-2383.0" y="-2240.0" class="corner-label">9</text>
+      </g>
+      <g class="corner-marker" data-corner="10" data-length="27018.9">
+        <circle cx="-3075.8" cy="258.5" r="102.1" class="corner-bg"/>
+        <text x="-3075.8" y="258.5" class="corner-label">10</text>
+      </g>
+      <g class="corner-marker" data-corner="11" data-length="29104.9">
+        <circle cx="-1368.6" cy="-706.1" r="102.1" class="corner-bg"/>
+        <text x="-1368.6" y="-706.1" class="corner-label">11</text>
+      </g>
+      <g class="corner-marker" data-corner="12" data-length="32020.7">
+        <circle cx="140.7" cy="1485.0" r="102.1" class="corner-bg"/>
+        <text x="140.7" y="1485.0" class="corner-label">12</text>
+      </g>
+      <g class="corner-marker" data-corner="13" data-length="33131.5">
+        <circle cx="-871.7" cy="1881.4" r="102.1" class="corner-bg"/>
+        <text x="-871.7" y="1881.4" class="corner-label">13</text>
+      </g>
+      <g class="corner-marker" data-corner="14" data-length="35713.4">
+        <circle cx="-3189.6" cy="938.2" r="102.1" class="corner-bg"/>
+        <text x="-3189.6" y="938.2" class="corner-label">14</text>
+      </g>
+      <g class="corner-marker" data-corner="15" data-length="39716.8">
+        <circle cx="-4130.1" cy="-2877.1" r="102.1" class="corner-bg"/>
+        <text x="-4130.1" y="-2877.1" class="corner-label">15</text>
+      </g>
+    </g>
+
+    <g id="start-finish" data-track-x="-3636.0" data-track-y="-5424.0" data-lap-distance="42315.2">
+      <polygon points="-3551.4,-5004.6 -3451.3,-5374.0 -3229.7,-5313.9 -3329.7,-4944.6" class="checker-border"/>
+      <polygon points="-3551.4,-5004.6 -3531.3,-5078.5 -3457.5,-5058.5 -3477.5,-4984.6" class="checker-black"/>
+      <polygon points="-3477.5,-4984.6 -3457.5,-5058.5 -3383.6,-5038.5 -3403.6,-4964.6" class="checker-white"/>
+      <polygon points="-3403.6,-4964.6 -3383.6,-5038.5 -3309.7,-5018.4 -3329.7,-4944.6" class="checker-black"/>
+      <polygon points="-3531.3,-5078.5 -3511.3,-5152.3 -3437.5,-5132.3 -3457.5,-5058.5" class="checker-white"/>
+      <polygon points="-3457.5,-5058.5 -3437.5,-5132.3 -3363.6,-5112.3 -3383.6,-5038.5" class="checker-black"/>
+      <polygon points="-3383.6,-5038.5 -3363.6,-5112.3 -3289.7,-5092.3 -3309.7,-5018.4" class="checker-white"/>
+      <polygon points="-3511.3,-5152.3 -3491.3,-5226.2 -3417.5,-5206.2 -3437.5,-5132.3" class="checker-black"/>
+      <polygon points="-3437.5,-5132.3 -3417.5,-5206.2 -3343.6,-5186.2 -3363.6,-5112.3" class="checker-white"/>
+      <polygon points="-3363.6,-5112.3 -3343.6,-5186.2 -3269.7,-5166.2 -3289.7,-5092.3" class="checker-black"/>
+      <polygon points="-3491.3,-5226.2 -3471.3,-5300.1 -3397.4,-5280.1 -3417.5,-5206.2" class="checker-white"/>
+      <polygon points="-3417.5,-5206.2 -3397.4,-5280.1 -3323.6,-5260.1 -3343.6,-5186.2" class="checker-black"/>
+      <polygon points="-3343.6,-5186.2 -3323.6,-5260.1 -3249.7,-5240.1 -3269.7,-5166.2" class="checker-white"/>
+      <polygon points="-3471.3,-5300.1 -3451.3,-5374.0 -3377.4,-5354.0 -3397.4,-5280.1" class="checker-black"/>
+      <polygon points="-3397.4,-5280.1 -3377.4,-5354.0 -3303.6,-5334.0 -3323.6,-5260.1" class="checker-white"/>
+      <polygon points="-3323.6,-5260.1 -3303.6,-5334.0 -3229.7,-5313.9 -3249.7,-5240.1" class="checker-black"/>
+      <polyline points="-3117.3,-5680.0 -3207.1,-5836.5 -3363.6,-5746.7" class="chevron"/>
+      <polyline points="-3090.6,-5778.5 -3180.4,-5935.0 -3336.9,-5845.2" class="chevron"/>
+      <polyline points="-3064.0,-5877.0 -3153.7,-6033.5 -3310.2,-5943.7" class="chevron"/>
+    </g>
+
+    <g id="car-markers"></g>
+
+  </g>
+</svg>

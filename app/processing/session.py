@@ -1,0 +1,1013 @@
+"""
+Session Engine — DB-driven playback + WebSocket broadcaster.
+
+One SessionEngine per active session. Multiple WebSocket clients can connect
+to the same engine and receive identical output.
+
+The engine reads pre-computed display messages from SQLite (written by
+SessionPreProcessor) and broadcasts them to clients at clock rate.
+Seeking is instant via DB lookups — no message replay.
+"""
+
+import asyncio
+import json
+import logging
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Optional
+
+from fastapi import WebSocket
+
+from app.processing.clock import PlaybackClock, ClockState
+from app.processing.database import SessionDatabase
+from app.processing.file_reader import read_jsonl, load_subscribe_json
+from app.processing.preprocessor import SessionPreProcessor
+from app.services.live_capture import live_capture
+
+logger = logging.getLogger(__name__)
+
+TICK_INTERVAL = 0.016  # ~60fps tick rate
+
+
+class SessionEngine:
+    """Orchestrates replay/live playback for a single session via DB."""
+
+    def __init__(self, session_path: Path, session_name: str, session_type: str = "",
+                 live: bool = False):
+        self._session_path = session_path
+        self._session_name = session_name
+        self._session_type = session_type
+        self._live = live
+
+        # Core components
+        self._clock: Optional[PlaybackClock] = None
+        self._db: Optional[SessionDatabase] = None
+        self._preprocessor: Optional[SessionPreProcessor] = None
+
+        # Session metadata
+        self._initial_state: dict[str, Any] = {}
+        self._session_info: dict[str, Any] = {}
+        self._gmt_offset: Optional[str] = None
+        self._audio_info: Optional[dict[str, Any]] = None
+        self._start_time: Optional[datetime] = None
+        self._end_time: Optional[datetime] = None
+        self._duration: float = 0.0
+
+        # Playback state
+        self._last_offset_ms = 0
+        self._preprocess_done = asyncio.Event()
+
+        # WebSocket clients
+        self._clients: dict[int, WebSocket] = {}
+        self._client_counter = 0
+
+        # Lifecycle
+        self._preprocess_task: Optional[asyncio.Task] = None
+        self._playback_task: Optional[asyncio.Task] = None
+        self._raw_stream_task: Optional[asyncio.Task] = None
+        self._duration_task: Optional[asyncio.Task] = None
+        self._running = False
+        # True once the live-mode initial "seek to live edge" has happened.
+        # Subsequent clients (reloads, additional tabs) inherit the current
+        # playback position rather than yanking the clock forward.
+        self._initial_live_seek_done = False
+
+    @property
+    def session_name(self) -> str:
+        return self._session_name
+
+    @property
+    def clock(self) -> Optional[PlaybackClock]:
+        return self._clock
+
+    async def start(self) -> None:
+        """Initialize and start the session engine."""
+        logger.info(f"Starting session engine for {self._session_name}")
+
+        # Load initial state
+        self._initial_state = load_subscribe_json(self._session_path)
+        self._session_info = self._initial_state.get("SessionInfo", {})
+        self._gmt_offset = self._session_info.get("GmtOffset")
+
+        # Load audio info — prefer the EARLIEST segment for multi-segment
+        # captures. The audio endpoint streams segments oldest-first, so
+        # the start_utc that aligns with the start of the playback is the
+        # one belonging to the lowest-numbered segment (audio_info.001.json),
+        # not the latest (audio_info.json).
+        audio_info_file = self._session_path / "audio_info.json"
+        rotated_info = sorted(self._session_path.glob("audio_info.[0-9][0-9][0-9].json"))
+        if rotated_info:
+            audio_info_file = rotated_info[0]
+        if audio_info_file.exists():
+            with open(audio_info_file, "r", encoding="utf-8") as f:
+                self._audio_info = json.load(f)
+
+        # Detect session type from SessionInfo if not provided
+        if not self._session_type:
+            si_type = (self._session_info.get("Type") or "").lower()
+            si_name = (self._session_info.get("Name") or "").lower()
+            if "qualifying" in si_type or "qualifying" in si_name or "shootout" in si_type:
+                self._session_type = "qualifying"
+            elif si_type in ("race", "sprint"):
+                self._session_type = "race"
+            else:
+                self._session_type = "practice"
+
+        # Open database
+        self._db = SessionDatabase(self._session_path)
+        self._db.open()
+
+        # Determine session time bounds from JSONL file
+        await self._scan_time_bounds()
+
+        self._running = True
+
+        # The session DB is owned by the data source, not the viewer:
+        #  - live capture in progress → its preprocessor is populating
+        #    the DB as data arrives; the engine just reads it.
+        #  - status == complete       → downloaded/processed already.
+        #  - otherwise                → no usable DB and nothing building
+        #    it (missing/corrupt/interrupted); rebuild it once here.
+        status = self._db.get_meta("status")
+        if live_capture.is_capturing_path(self._session_path):
+            self._preprocess_done.set()
+            logger.info(f"Session DB built live by capture: {self._session_name}")
+        elif status == "complete":
+            self._preprocess_done.set()
+            logger.info(f"Session already pre-processed: {self._session_name}")
+        else:
+            logger.info(f"No complete DB for {self._session_name} — rebuilding")
+            self._preprocessor = SessionPreProcessor(
+                self._session_path, self._session_type,
+            )
+            self._preprocess_task = asyncio.create_task(
+                self._run_preprocess()
+            )
+
+        # For live engines, track duration (live edge) independently of
+        # playback so the scrubber stays current even while the clock
+        # is paused or rewound.
+        if self._live:
+            self._duration_task = asyncio.create_task(self._track_duration())
+
+    async def _scan_time_bounds(self) -> None:
+        """Quick scan to find first and last timestamps from JSONL.
+
+        Only reads first and last lines for speed (avoids full file scan).
+        """
+        import json as _json
+        from app.processing.file_reader import _parse_timestamp
+
+        live_file = self._session_path / "live.jsonl"
+        if not live_file.exists():
+            return
+
+        first_ts = None
+        last_ts = None
+
+        with open(live_file, "r", encoding="utf-8") as f:
+            # Read first valid timestamp
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = _json.loads(line)
+                    ts = _parse_timestamp(msg.get("DateTime", ""))
+                    if ts:
+                        first_ts = ts
+                        break
+                except _json.JSONDecodeError:
+                    continue
+
+            # Read last valid timestamp (seek from end)
+            # Read all remaining to find the last one
+            last_line = line
+            for line in f:
+                stripped = line.strip()
+                if stripped:
+                    last_line = stripped
+
+            if last_line:
+                try:
+                    msg = _json.loads(last_line)
+                    ts = _parse_timestamp(msg.get("DateTime", ""))
+                    if ts:
+                        last_ts = ts
+                except _json.JSONDecodeError:
+                    pass
+
+        if first_ts:
+            self._start_time = first_ts
+            self._clock = PlaybackClock(first_ts)
+            if last_ts:
+                self._end_time = last_ts
+                self._duration = (last_ts - first_ts).total_seconds()
+                # Trailing tail-follow recording often runs for several
+                # minutes after the final chequered before the capture
+                # safeguard kills it — nothing meaningful happens in
+                # that window, so cap the scrubber at chequered + 5 min.
+                self._apply_chequered_cap()
+
+    async def _run_preprocess(self) -> None:
+        """Build the session DB — one-shot fallback used only when no
+        complete DB exists and nothing else is building it."""
+        try:
+            await self._preprocessor.run(
+                tail_follow=False,
+                on_progress=self._on_preprocess_progress,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(f"Pre-processing failed for {self._session_name}")
+        finally:
+            self._preprocessor.close()
+            self._preprocess_done.set()
+
+    def _on_preprocess_progress(self, pct: float) -> None:
+        """Callback from pre-processor."""
+        asyncio.create_task(self._broadcast({
+            "topic": "state:scan-progress",
+            "data": {"pct": pct},
+        }))
+
+    async def stop(self) -> None:
+        """Stop and clean up the session engine."""
+        self._running = False
+
+        if self._playback_task and not self._playback_task.done():
+            self._playback_task.cancel()
+            try:
+                await self._playback_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._duration_task and not self._duration_task.done():
+            self._duration_task.cancel()
+            try:
+                await self._duration_task
+            except asyncio.CancelledError:
+                pass
+
+        await self._stop_raw_stream()
+
+        if self._preprocess_task and not self._preprocess_task.done():
+            if self._preprocessor:
+                await self._preprocessor.stop()
+            self._preprocess_task.cancel()
+            try:
+                await self._preprocess_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._db:
+            self._db.close()
+
+        for ws in list(self._clients.values()):
+            try:
+                await ws.close()
+            except Exception:
+                pass
+        self._clients.clear()
+
+        logger.info(f"Session engine stopped for {self._session_name}")
+
+    # ── WebSocket Client Management ──
+
+    async def add_client(self, ws: WebSocket) -> int:
+        """Add a WebSocket client. Returns client ID."""
+        self._client_counter += 1
+        client_id = self._client_counter
+        self._clients[client_id] = ws
+
+        # Wait for pre-processing to complete (up to 60s)
+        try:
+            await asyncio.wait_for(self._preprocess_done.wait(), timeout=60.0)
+        except asyncio.TimeoutError:
+            logger.warning(f"Timed out waiting for pre-processing of {self._session_name}")
+
+        # Get all event/playbackEvent messages for scrubber
+        events = []
+        if self._db:
+            rows = self._db._conn.execute(
+                "SELECT offset_ms, topic, data FROM messages WHERE topic IN ('event','playbackEvent') ORDER BY offset_ms"
+            ).fetchall()
+            events = [{"offset_ms": r[0], "topic": r[1], "data": json.loads(r[2])} for r in rows]
+
+        # Send initial state to new client
+        await self._send_to_client(ws, {
+            "topic": "state:full",
+            "data": {
+                "sessionType": self._session_type,
+                "audioInfo": self._build_audio_info_for_client(),
+                "startTime": self._start_time.isoformat() if self._start_time else None,
+                "endTime": self._end_time.isoformat() if self._end_time else None,
+                "duration": self._duration,
+                "isPlaying": self._clock.state == ClockState.PLAYING if self._clock else False,
+                "speed": self._clock.speed if self._clock else 1.0,
+                "offset": self._clock.offset_seconds if self._clock else 0.0,
+                "scanProgress": 100.0 if self._preprocess_done.is_set() else 0.0,
+                "events": events,
+            },
+        })
+
+        # For live mode: jump to the live edge ONLY on the first client
+        # of an engine's lifetime. Later joins (page reload, second tab,
+        # new viewer) inherit the existing clock position so a paused or
+        # rewound playback isn't yanked forward by an unrelated connect.
+        if self._live and self._clock and self._db and not self._initial_live_seek_done:
+            row = self._db._conn.execute(
+                "SELECT MAX(offset_ms) FROM messages"
+            ).fetchone()
+            if row and row[0]:
+                live_offset = row[0] / 1000.0
+                self._clock.seek_to_offset(live_offset)
+                self._duration = live_offset
+                self._last_offset_ms = row[0]
+            self._initial_live_seek_done = True
+
+        # Send current display state at clock position (all latest messages per topic)
+        if self._clock and self._db:
+            offset_ms = int(self._clock.offset_seconds * 1000)
+            state = self._db.get_state_at(offset_ms)
+            if state:
+                restore_messages = []
+                for topic, entry in state.items():
+                    restore_messages.append({
+                        "topic": topic,
+                        "data": entry["data"],
+                        "offset_ms": entry["offset_ms"],
+                    })
+                await self._send_to_client(ws, {
+                    "topic": "state:restore",
+                    "data": restore_messages,
+                    "offset_ms": offset_ms,
+                })
+
+            # Tell the client which (driver, lap) pairs have a telemetry
+            # row on disk so the lap-pill list only renders clickable
+            # pills for laps that can actually display a trace. Sent as
+            # a single fan-out payload after restore so it's available
+            # immediately on connect / seek.
+            try:
+                # Also send length(data) so the client can flag empty
+                # laps (= laps where the position-data outage spanned the
+                # whole window) with a "NO DATA" placeholder up front.
+                # An empty lap's data column equals the literal string
+                # "[]" (2 bytes); any non-empty payload is longer.
+                rows = self._db._conn.execute(
+                    "SELECT driver, lap, length(data) FROM telemetry "
+                    "WHERE offset_ms <= ? ORDER BY driver, lap",
+                    (offset_ms,),
+                ).fetchall()
+                by_driver: dict[str, list[int]] = {}
+                empty_by_driver: dict[str, list[int]] = {}
+                for driver, lap, dlen in rows:
+                    by_driver.setdefault(driver, []).append(lap)
+                    if dlen is not None and dlen <= 2:
+                        empty_by_driver.setdefault(driver, []).append(lap)
+                if by_driver:
+                    await self._send_to_client(ws, {
+                        "topic": "telemetryAvailable",
+                        "data": by_driver,
+                    })
+                if empty_by_driver:
+                    await self._send_to_client(ws, {
+                        "topic": "telemetryEmpty",
+                        "data": empty_by_driver,
+                    })
+            except Exception:
+                logger.exception("Failed to send telemetry availability map")
+
+        logger.info(f"Client {client_id} connected to {self._session_name} ({len(self._clients)} total)")
+        return client_id
+
+    def remove_client(self, client_id: int) -> None:
+        """Remove a WebSocket client."""
+        self._clients.pop(client_id, None)
+        logger.info(f"Client {client_id} disconnected from {self._session_name} ({len(self._clients)} total)")
+
+    @property
+    def client_count(self) -> int:
+        return len(self._clients)
+
+    # ── Client Commands ──
+
+    async def handle_command(self, cmd: dict[str, Any]) -> None:
+        """Handle a command from a WebSocket client."""
+        action = cmd.get("cmd", "")
+
+        if action == "play":
+            await self._play()
+        elif action == "pause":
+            await self._pause()
+        elif action == "seek":
+            offset = cmd.get("offset", 0.0)
+            await self._seek(offset)
+        elif action == "seek_live":
+            # Snap to the live edge for live engines; ignored for replay.
+            if not self._live:
+                logger.warning("seek_live ignored: engine is not live")
+                return
+            if not self._db:
+                logger.warning("seek_live ignored: no DB")
+                return
+            row = self._db._conn.execute(
+                "SELECT MAX(offset_ms) FROM messages"
+            ).fetchone()
+            if not row or not row[0]:
+                logger.warning("seek_live: DB has no messages yet")
+                return
+            target = row[0] / 1000.0
+            # Bump duration so _seek's clamp doesn't pin us behind the
+            # actual live edge (the duration tracker only ticks every 1 s).
+            if target > self._duration:
+                self._duration = target
+            logger.info(f"seek_live → offset {target:.1f}s (was {self._clock.offset_seconds:.1f}s)")
+            await self._seek(target)
+            if self._clock and self._clock.state != ClockState.PLAYING:
+                await self._play()
+        elif action == "speed":
+            value = cmd.get("value", 1.0)
+            await self._set_speed(value)
+        elif action == "getLapTelemetry":
+            driver = cmd.get("driver", "")
+            lap = cmd.get("lap", 0)
+            await self._send_lap_telemetry(driver, lap, cmd.get("_ws"))
+        elif action == "getLastLapTelemetry":
+            driver = cmd.get("driver", "")
+            await self._send_last_lap_telemetry(driver, cmd.get("_ws"))
+        elif action == "getBestLapTelemetry":
+            driver = cmd.get("driver", "")
+            await self._send_best_lap_telemetry(driver, cmd.get("_ws"))
+        else:
+            logger.warning(f"Unknown command: {action}")
+
+    # ── Playback Control ──
+
+    async def _play(self) -> None:
+        """Start or resume playback."""
+        if not self._clock:
+            return
+        self._clock.play()
+        if not self._playback_task or self._playback_task.done():
+            self._playback_task = asyncio.create_task(self._playback_loop())
+        await self._start_raw_stream(int(self._clock.offset_seconds * 1000))
+        await self._broadcast_status()
+
+    async def _pause(self) -> None:
+        """Pause playback."""
+        if not self._clock:
+            return
+        self._clock.pause()
+        if self._playback_task and not self._playback_task.done():
+            self._playback_task.cancel()
+            try:
+                await self._playback_task
+            except asyncio.CancelledError:
+                pass
+        await self._stop_raw_stream()
+        await self._broadcast_status()
+
+    async def _seek(self, offset_seconds: float) -> None:
+        """Seek to a specific offset — instant via DB lookup."""
+        if not self._clock or not self._db:
+            return
+
+        was_playing = self._clock.state == ClockState.PLAYING
+        if was_playing:
+            self._clock.pause()
+            if self._playback_task and not self._playback_task.done():
+                self._playback_task.cancel()
+                try:
+                    await self._playback_task
+                except asyncio.CancelledError:
+                    pass
+        await self._stop_raw_stream()
+
+        # Clamp offset
+        offset_seconds = max(0.0, min(offset_seconds, self._duration))
+        offset_ms = int(offset_seconds * 1000)
+
+        # Seek the clock
+        self._clock.seek_to_offset(offset_seconds)
+
+        # Query latest display message per topic at target offset
+        state = self._db.get_state_at(offset_ms)
+
+        # Send state as array of {topic, data, offset_ms} messages
+        restore_messages = []
+        for topic, entry in state.items():
+            restore_messages.append({
+                "topic": topic,
+                "data": entry["data"],
+                "offset_ms": entry["offset_ms"],
+            })
+
+        await self._broadcast({
+            "topic": "state:restore",
+            "data": restore_messages,
+            "offset_ms": offset_ms,
+        })
+
+        # Refresh telemetry-availability map for the new offset.
+        try:
+            rows = self._db._conn.execute(
+                "SELECT driver, lap FROM telemetry "
+                "WHERE offset_ms <= ? ORDER BY driver, lap",
+                (offset_ms,),
+            ).fetchall()
+            by_driver: dict[str, list[int]] = {}
+            for driver, lap in rows:
+                by_driver.setdefault(driver, []).append(lap)
+            if by_driver:
+                await self._broadcast({
+                    "topic": "telemetryAvailable",
+                    "data": by_driver,
+                })
+        except Exception:
+            logger.exception("Failed to broadcast telemetry availability on seek")
+
+        self._last_offset_ms = offset_ms
+
+        if was_playing:
+            self._clock.play()
+            self._playback_task = asyncio.create_task(self._playback_loop())
+            await self._start_raw_stream(offset_ms)
+
+        await self._broadcast_status()
+
+        # Broadcast clock position
+        await self._broadcast({
+            "topic": "state:clock",
+            "data": {
+                "offset": self._clock.offset_seconds,
+                "duration": self._duration,
+                "speed": self._clock.speed,
+            },
+        })
+
+    async def _send_lap_telemetry(self, driver: str, lap: int, ws=None) -> None:
+        """Query lap telemetry from DB and send to requesting client."""
+        if not self._db or not driver or not lap:
+            return
+        data = self._db.get_telemetry(driver, lap)
+        if data is None:
+            return
+        msg = {"topic": f"lapTelemetry:{driver}:{lap}", "data": data}
+        if ws:
+            await self._send_to_client(ws, msg)
+        else:
+            await self._broadcast(msg)
+
+    async def _send_last_lap_telemetry(self, driver: str, ws=None) -> None:
+        """Send the most recent completed lap's telemetry for a driver,
+        relative to the current playback offset.
+
+        For practice/qualifying, restrict to PUSH/LONG laps (cool / out /
+        in / pit / aborted laps are skipped — they aren't representative).
+        Race has no such filter: any completed lap counts.
+        """
+        if not self._db or not driver:
+            return
+        playback_ms = int(self._clock.offset_seconds * 1000) if self._clock else 0
+
+        if self._session_type == "race":
+            row = self._db._conn.execute(
+                "SELECT lap, data FROM telemetry WHERE driver=? AND offset_ms <= ? "
+                "ORDER BY offset_ms DESC LIMIT 1",
+                (driver, playback_ms),
+            ).fetchone()
+        else:
+            # Latest classification snapshot up to playback offset gives
+            # us the per-lap status map. Pick the highest lap that is
+            # PUSH/LONG and has a telemetry row at or before playback.
+            cls_row = self._db._conn.execute(
+                "SELECT data FROM messages WHERE topic=? AND offset_ms <= ? "
+                "ORDER BY offset_ms DESC LIMIT 1",
+                (f"lapClassification:{driver}", playback_ms),
+            ).fetchone()
+            if not cls_row:
+                return
+            laps_map = (json.loads(cls_row[0]) or {}).get("laps") or {}
+            fast_laps = sorted(
+                (int(k) for k, v in laps_map.items() if v in ("PUSH", "LONG")),
+                reverse=True,
+            )
+            row = None
+            for lap_num in fast_laps:
+                row = self._db._conn.execute(
+                    "SELECT lap, data FROM telemetry "
+                    "WHERE driver=? AND lap=? AND offset_ms <= ?",
+                    (driver, lap_num, playback_ms),
+                ).fetchone()
+                if row:
+                    break
+
+        if not row:
+            return
+        lap, data_json = row
+        msg = {"topic": f"lapTelemetry:{driver}:{lap}", "data": json.loads(data_json)}
+        if ws:
+            await self._send_to_client(ws, msg)
+        else:
+            await self._broadcast(msg)
+
+    async def _send_best_lap_telemetry(self, driver: str, ws=None) -> None:
+        """Send telemetry for a driver's personal-best lap as of the
+        current playback offset.
+
+        Uses the latest `fastestLaps` message at or before the playback
+        clock to identify the driver's best lap number, then returns the
+        telemetry for that lap.
+        """
+        if not self._db or not driver:
+            return
+        playback_ms = int(self._clock.offset_seconds * 1000) if self._clock else 0
+        # Latest fastestLaps snapshot up to playback offset
+        row = self._db._conn.execute(
+            "SELECT data FROM messages WHERE topic='fastestLaps' "
+            "AND offset_ms <= ? ORDER BY offset_ms DESC LIMIT 1",
+            (playback_ms,),
+        ).fetchone()
+        if not row:
+            return
+        best_lap = None
+        for e in json.loads(row[0]):
+            if e.get("driver") == driver:
+                best_lap = e.get("lap")
+                break
+        if not best_lap:
+            return
+        # Telemetry for that specific lap
+        trow = self._db._conn.execute(
+            "SELECT lap, data FROM telemetry WHERE driver=? AND lap=?",
+            (driver, best_lap),
+        ).fetchone()
+        if not trow:
+            return
+        lap, data_json = trow
+        msg = {"topic": f"lapTelemetry:{driver}:{lap}", "data": json.loads(data_json)}
+        if ws:
+            await self._send_to_client(ws, msg)
+        else:
+            await self._broadcast(msg)
+
+    # Raw topics replayed at playback speed for tiles (like the race
+    # telemetry tile) that consume the raw F1 stream directly rather
+    # than the lowercase processed equivalents. Everything in here is
+    # also in `RAW_F1_TOPICS` (preprocessor.py), so it's NOT in the DB
+    # — the only way to get it on replay is to re-read live.jsonl.
+    _REPLAY_RAW_TOPICS = frozenset({
+        "CarData.z", "Position.z",
+        "DriverList", "TimingData", "TimingAppData",
+        "TrackStatus", "RaceControlMessages",
+    })
+
+    async def _raw_telemetry_stream(self, from_offset_ms: int) -> None:
+        """Stream raw F1 topics from jsonl, paced by the playback clock.
+
+        Originally only CarData.z + Position.z (telemetry samples). Now
+        also DriverList / TimingData / TimingAppData / TrackStatus /
+        RaceControlMessages because the race telemetry tile subscribes
+        to those raw topic names directly — without them the tile has
+        no drivers, no timing, no track status and renders empty on
+        replay. Runs for the lifetime of a play window; cancelled on
+        seek and restarted at the new offset.
+        """
+        if not self._start_time or not self._clock:
+            return
+        try:
+            async for msg in read_jsonl(
+                self._session_path,
+                fast=True,
+                tail_follow=self._live,
+            ):
+                if not self._running or self._clock.state != ClockState.PLAYING:
+                    return
+                if msg.topic not in self._REPLAY_RAW_TOPICS:
+                    continue
+                off_ms = int((msg.timestamp - self._start_time).total_seconds() * 1000)
+                if off_ms < from_offset_ms:
+                    continue
+                # Wait for the playback clock to catch up
+                while self._running and self._clock.state == ClockState.PLAYING:
+                    cur_ms = int(self._clock.offset_seconds * 1000)
+                    if cur_ms >= off_ms:
+                        break
+                    delta = (off_ms - cur_ms) / 1000.0 / max(self._clock.speed, 1.0)
+                    await asyncio.sleep(min(0.1, delta))
+                if not self._running or self._clock.state != ClockState.PLAYING:
+                    return
+                await self._broadcast({"topic": msg.topic, "data": msg.data})
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Raw telemetry stream error")
+
+    async def _start_raw_stream(self, from_offset_ms: int) -> None:
+        """(Re)start the raw telemetry streamer at the given offset."""
+        await self._stop_raw_stream()
+        self._raw_stream_task = asyncio.create_task(
+            self._raw_telemetry_stream(from_offset_ms)
+        )
+
+    async def _stop_raw_stream(self) -> None:
+        if self._raw_stream_task and not self._raw_stream_task.done():
+            self._raw_stream_task.cancel()
+            try:
+                await self._raw_stream_task
+            except asyncio.CancelledError:
+                pass
+        self._raw_stream_task = None
+
+    async def _set_speed(self, speed: float) -> None:
+        """Change playback speed."""
+        if not self._clock:
+            return
+        self._clock.speed = speed
+        await self._broadcast_status()
+
+    # ── Duration Tracking (live mode) ──
+
+    async def _track_duration(self) -> None:
+        """Keep self._duration aligned with the live edge of the DB.
+
+        Runs alongside _playback_loop for live engines so the scrubber
+        and progress reporting stay current even when the clock is
+        paused or rewound (the playback loop only updates duration
+        while it's running).
+        """
+        try:
+            while self._running:
+                await asyncio.sleep(1.0)
+                if not self._db:
+                    continue
+                try:
+                    row = self._db._conn.execute(
+                        "SELECT MAX(offset_ms) FROM messages"
+                    ).fetchone()
+                except Exception:
+                    continue
+                if row and row[0]:
+                    new_dur = row[0] / 1000.0
+                    if new_dur > self._duration:
+                        self._duration = new_dur
+                # Apply (and re-apply, as new chequereds may arrive
+                # through quali segments) the post-chequered cap so the
+                # scrubber doesn't extend into empty trailing tail data.
+                self._apply_chequered_cap()
+        except asyncio.CancelledError:
+            raise
+
+    def _apply_chequered_cap(self) -> None:
+        """Cap _duration at (last CHEQUERED offset + 5 min). Nothing
+        meaningful happens after the final chequered flag — practice /
+        race show one, quali shows three (Q1/Q2/Q3) and we use the
+        latest. If no chequered has been emitted yet, leave _duration
+        untouched."""
+        if not self._db or not getattr(self._db, "_conn", None):
+            return
+        try:
+            row = self._db._conn.execute(
+                "SELECT offset_ms FROM messages "
+                "WHERE topic='trackStatus' AND data = '\"CHEQUERED\"' "
+                "ORDER BY offset_ms DESC LIMIT 1"
+            ).fetchone()
+        except Exception:
+            return
+        if not row:
+            return
+        cap_s = (row[0] + 5 * 60 * 1000) / 1000.0
+        if self._duration > cap_s:
+            self._duration = cap_s
+
+    # ── Playback Loop ──
+
+    async def _playback_loop(self) -> None:
+        """Read pre-computed display messages from DB at clock rate."""
+        try:
+            while self._running and self._clock and self._clock.state == ClockState.PLAYING:
+                self._clock.tick()
+                target_offset_ms = int(self._clock.offset_seconds * 1000)
+
+                # Fetch display messages between last_offset and target_offset
+                if self._db and target_offset_ms > self._last_offset_ms:
+                    new_messages = self._db.get_messages_in_range(
+                        self._last_offset_ms, target_offset_ms
+                    )
+
+                    # Deduplicate: only send latest per topic in this tick
+                    latest: dict[str, tuple[int, Any]] = {}
+                    for offset, topic, data in new_messages:
+                        latest[topic] = (offset, data)
+
+                    # Broadcast to clients with offset_ms
+                    for topic, (offset, data) in latest.items():
+                        await self._broadcast({"topic": topic, "data": data, "offset_ms": offset})
+
+                # Send clock update
+                await self._broadcast({
+                    "topic": "state:clock",
+                    "data": {
+                        "offset": self._clock.offset_seconds,
+                        "duration": self._duration,
+                        "speed": self._clock.speed,
+                    },
+                })
+
+                self._last_offset_ms = target_offset_ms
+
+                # Check for end of session
+                duration_ms = int(self._duration * 1000)
+                if target_offset_ms >= duration_ms:
+                    if self._live:
+                        # Live mode: check if DB has grown, update duration
+                        if self._db:
+                            row = self._db._conn.execute(
+                                "SELECT MAX(offset_ms) FROM messages"
+                            ).fetchone()
+                            if row and row[0] and row[0] > duration_ms:
+                                self._duration = row[0] / 1000.0
+                            else:
+                                # No new data yet — slow down polling
+                                await asyncio.sleep(0.5)
+                                continue
+                    else:
+                        self._clock.pause()
+                        await self._broadcast_status()
+                        break
+
+                await asyncio.sleep(TICK_INTERVAL)
+
+        except asyncio.CancelledError:
+            raise
+
+    # ── Broadcasting ──
+
+    async def _broadcast(self, message: dict[str, Any]) -> None:
+        """Send a message to all connected WebSocket clients."""
+        if not self._clients:
+            return
+
+        data = json.dumps(message)
+        disconnected = []
+
+        for client_id, ws in list(self._clients.items()):
+            try:
+                await ws.send_text(data)
+            except Exception:
+                disconnected.append(client_id)
+
+        for client_id in disconnected:
+            self._clients.pop(client_id, None)
+
+    async def _send_to_client(self, ws: WebSocket, message: dict[str, Any]) -> None:
+        """Send a message to a specific client."""
+        try:
+            await ws.send_text(json.dumps(message))
+        except Exception:
+            pass
+
+    async def _broadcast_status(self) -> None:
+        """Send current playback status to all clients."""
+        await self._broadcast({
+            "topic": "state:status",
+            "data": {
+                "isPlaying": self._clock.state == ClockState.PLAYING if self._clock else False,
+                "speed": self._clock.speed if self._clock else 1.0,
+                "offset": self._clock.offset_seconds if self._clock else 0.0,
+                "duration": self._duration,
+            },
+        })
+
+    # ── Helpers ──
+
+    def _get_duration(self) -> float:
+        return self._duration
+
+    def _build_audio_info_for_client(self) -> Optional[dict[str, Any]]:
+        """Return audio metadata to ship to a new client.
+
+        For an active live capture the audio endpoint serves bytes from
+        slightly before EOF (so the browser has data immediately). The
+        `start_utc` reported here must match the wall-clock time those
+        bytes correspond to, otherwise the displayed audio timestamp
+        will be off.
+        """
+        if not self._audio_info:
+            return None
+        if live_capture.is_capturing_path(self._session_path):
+            _, effective_start = live_capture.get_live_stream_position(self._session_path)
+            if effective_start:
+                return {**self._audio_info, "start_utc": effective_start}
+        return self._audio_info
+
+
+class SessionManager:
+    """Manages active session engines. One engine per session."""
+
+    def __init__(self, cache_dir: str = "data/livetiming_cache"):
+        self._cache_dir = Path(cache_dir)
+        self._engines: dict[str, SessionEngine] = {}
+
+    async def get_or_create(self, session_name: str, live: bool = False) -> SessionEngine:
+        """Get an existing engine or create a new one for the session."""
+        if session_name in self._engines:
+            engine = self._engines[session_name]
+            # Reuse if it has clients, or if it's a live engine (a live
+            # engine follows the still-growing DB — keep it alive across
+            # reloads rather than re-creating it).
+            if engine.client_count > 0 or engine._live:
+                return engine
+            # Replay engine with no clients — discard and rebuild.
+            await engine.stop()
+            del self._engines[session_name]
+
+        session_path = self._find_session_path(session_name)
+        if not session_path:
+            raise ValueError(f"Session not found: {session_name}")
+
+        # Infer session type from directory name
+        session_type = self._infer_session_type(session_path)
+
+        engine = SessionEngine(session_path, session_name, session_type, live=live)
+        await engine.start()
+        self._engines[session_name] = engine
+        return engine
+
+    @staticmethod
+    def _infer_session_type(session_path: Path) -> str:
+        """Infer session type from the directory name.
+
+        Handles session key prefix (e.g., '11235_Race' -> 'race').
+        """
+        name = session_path.name.lower()
+        # Strip leading session key prefix (digits followed by underscore)
+        parts = name.split("_", 1)
+        if parts[0].isdigit() and len(parts) > 1:
+            name = parts[1]
+        if "qualifying" in name or "shootout" in name:
+            return "qualifying"
+        if name in ("race", "sprint"):
+            return "race"
+        return "practice"
+
+    async def remove(self, session_name: str) -> None:
+        """Stop and remove a session engine."""
+        engine = self._engines.pop(session_name, None)
+        if engine:
+            await engine.stop()
+
+    async def cleanup_empty(self) -> None:
+        """Remove engines with no connected clients (excluding live ones)."""
+        empty = [
+            name for name, engine in self._engines.items()
+            if engine.client_count == 0 and not engine._live
+        ]
+        for name in empty:
+            await self.remove(name)
+
+    def _find_session_path(self, session_name: str) -> Optional[Path]:
+        """Find the actual path of a cached session.
+
+        Handles: year_eventNum_location_session format (e.g., 2025_01_Melbourne_Race)
+        """
+        parts = session_name.split("_")
+        if len(parts) >= 4 and parts[0].isdigit():
+            year = parts[0]
+            year_dir = self._cache_dir / year
+            if year_dir.exists():
+                for event_dir in year_dir.iterdir():
+                    if not event_dir.is_dir():
+                        continue
+                    event_parts = event_dir.name.split("_", 1)
+                    if len(event_parts) > 1:
+                        event_number = event_parts[0]
+                        location = event_parts[1]
+                        for session_dir in event_dir.iterdir():
+                            if not session_dir.is_dir():
+                                continue
+                            # Match with full session dir name (includes session key prefix)
+                            cache_key = f"{year}_{event_number}_{location}_{session_dir.name}"
+                            if cache_key == session_name:
+                                return session_dir
+                            # Also match without session key prefix
+                            # e.g. folder "11247_Practice_2" matches URL "Practice_2"
+                            dir_parts = session_dir.name.split("_", 1)
+                            if dir_parts[0].isdigit() and len(dir_parts) > 1:
+                                stripped_key = f"{year}_{event_number}_{location}_{dir_parts[1]}"
+                                if stripped_key == session_name:
+                                    return session_dir
+
+        # Fallback: try legacy flat path
+        legacy_path = self._cache_dir / session_name
+        if legacy_path.exists():
+            return legacy_path
+
+        return None
+
+
+# Global instance
+session_manager = SessionManager()

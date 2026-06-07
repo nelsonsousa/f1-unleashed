@@ -1,0 +1,47 @@
+{# Track map visualization tile #}
+{# Parameters: width (w-45, etc.), title (optional, default "Track Map") #}
+{% set tile_width = width | default('w-45') %}
+{% set tile_title = title | default('Track Map') %}
+<div class="tile {{ tile_width }}">
+    <div class="tile-header">{{ tile_title }}</div>
+    <div class="tile-content track-map-content">
+        {# Tomorrow.io precipitation tile — full-cover overlay behind #}
+        {# the track SVG so the radar PNG geo-aligns with the circuit. #}
+        <div class="weather-radar-map" id="weatherRadarMap"></div>
+        <div class="track-map" id="trackMap">
+            <div class="loading-message" id="trackCalibrating">Loading...</div>
+        </div>
+        {# Weather data overlay — sibling of #trackMap so it survives #}
+        {# the track SVG load (which does innerHTML=''). Anchor is #}
+        {# chosen dynamically by weather_radar.js to avoid overlapping #}
+        {# the track lines (corners first, then edges, then min-overlap). #}
+        <div class="weather-overlay anchor-top-left" id="weatherOverlay">
+            <div class="weather-overlay-title">
+                <span class="weather-overlay-title-text">Weather</span>
+                <span class="weather-overlay-condition" id="weatherCondition"></span>
+            </div>
+            <div class="weather-live-data" id="weatherLiveData">
+                <span class="weather-live-item" title="Air Temperature">
+                    <svg class="weather-live-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg>
+                    <span id="liveAirTemp">--</span>
+                </span>
+                <span class="weather-live-item" title="Track Temperature">
+                    <svg class="weather-live-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+                    <span id="liveTrackTemp">--</span>
+                </span>
+                <span class="weather-live-item" title="Humidity">
+                    <svg class="weather-live-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
+                    <span id="liveHumidity">--</span>
+                </span>
+                <span class="weather-live-item" title="Pressure">
+                    <svg class="weather-live-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                    <span id="livePressure">--</span>
+                </span>
+                <span class="weather-live-item" title="Wind">
+                    <svg class="weather-live-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2"/></svg>
+                    <span id="liveWind">--</span>
+                </span>
+            </div>
+        </div>
+    </div>
+</div>

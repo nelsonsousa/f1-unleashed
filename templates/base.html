@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}F1 Live Timing{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="stylesheet" href="/static/css/base.css?v=2026-05-26l">
+    <link rel="stylesheet" href="/static/css/components/header.css?v=2026-05-26l">
+    {% block styles %}{% endblock %}
+    <meta name="theme-color" content="#0a0a0a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    {% block head %}{% endblock %}
+</head>
+<body class="session-{{ session_type }}">
+    {% include "components/header.html" %}
+
+    {% block content %}{% endblock %}
+
+
+    <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script> -->
+    <script>
+        // Session configuration (injected by server)
+        window.SESSION_CONFIG = {
+            sessionId: {{ session_id | tojson }},
+            sessionType: {{ session_type | tojson }},
+            apiBase: '/api/v1/livetiming/stream'
+        };
+    </script>
+    <script src="/static/js/utils/circuits.js"></script>
+    <script src="/static/js/base.js?v=2026-05-26j"></script>
+    <script src="/static/js/components/header.js?v=2026-05-26j"></script>
+    <script src="/static/js/components/tv_sync.js?v=2026-06-04a"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

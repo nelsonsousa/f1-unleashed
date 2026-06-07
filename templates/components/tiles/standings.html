@@ -1,0 +1,12 @@
+{# Driver standings list tile #}
+{# Parameters: width (w-15, w-20, etc.), title (optional, default "Standings") #}
+{% set tile_width = width | default('w-10') %}
+{% set tile_title = title | default('Standings') %}
+<div class="tile {{ tile_width }}">
+    <div class="tile-header">{{ tile_title }}</div>
+    <div class="tile-content">
+        <div class="driver-list" id="driverList">
+            <div class="loading-message">Loading...</div>
+        </div>
+    </div>
+</div>

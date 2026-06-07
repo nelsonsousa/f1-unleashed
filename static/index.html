@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>F1 Unleashed</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/css/home.css?v=2026-05-27d">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-content">
+                <div class="header-title">
+                    <h1>F1 Unleashed</h1>
+                    <p class="subtitle">Formula 1 Live Timing &amp; Replay</p>
+                </div>
+                <div class="auth-section" id="authSection">
+                    <div class="auth-status" id="authStatus">
+                        <span class="auth-indicator not-logged-in"></span>
+                        <span class="auth-text">Checking...</span>
+                    </div>
+                    <button class="btn-login" id="loginBtn" onclick="handleLogin()">Login</button>
+                </div>
+            </div>
+        </header>
+
+        <section class="countdown-section" id="countdownSection">
+            <div class="countdown-header">
+                <h2 id="nextEventName">Loading...</h2>
+                <p id="nextSessionName" class="session-name"></p>
+            </div>
+            <div class="countdown-timer" id="countdownTimer">
+                <div class="time-unit">
+                    <span class="time-value" id="days">--</span>
+                    <span class="time-label">Days</span>
+                </div>
+                <div class="time-unit">
+                    <span class="time-value" id="hours">--</span>
+                    <span class="time-label">Hours</span>
+                </div>
+                <div class="time-unit">
+                    <span class="time-value" id="minutes">--</span>
+                    <span class="time-label">Minutes</span>
+                </div>
+                <div class="time-unit">
+                    <span class="time-value" id="seconds">--</span>
+                    <span class="time-label">Seconds</span>
+                </div>
+            </div>
+            <div class="live-indicator hidden" id="liveIndicator">
+                <span class="live-badge">LIVE</span>
+                <p class="live-message" id="liveMessage"></p>
+                <div class="live-buttons">
+                    <a href="#" class="btn-live" id="btnLive">Watch Live</a>
+                    <a href="#" class="btn-from-start" id="btnFromStart">From Start</a>
+                </div>
+            </div>
+            <p class="countdown-date" id="countdownDate"></p>
+        </section>
+
+        <!-- Two-column layout: schedule grid on the left, cache panel on right. -->
+        <div class="home-body">
+            <main class="schedule-pane">
+                <div class="schedule-header">
+                    <h2>Season</h2>
+                    <select class="year-select" id="yearSelect"></select>
+                </div>
+                <div class="schedule-grid" id="scheduleGrid">
+                    <div class="loading">Loading…</div>
+                </div>
+            </main>
+
+            <aside class="storage-panel">
+                <h3>Cached Sessions</h3>
+                <p class="cache-info">Raw timing data cached locally</p>
+                <div class="storage-stats">
+                    <div class="stat">
+                        <span class="label">Sessions</span>
+                        <span class="value" id="cachedCount">-</span>
+                    </div>
+                    <div class="stat">
+                        <span class="label">Size</span>
+                        <span class="value" id="cachedSize">-</span>
+                    </div>
+                </div>
+                <div class="cached-list" id="cachedList"></div>
+                <div class="storage-actions">
+                    <button class="btn-secondary" onclick="refreshCache()">Refresh</button>
+                </div>
+            </aside>
+        </div>
+
+        <footer class="page-footer">
+            <a href="/docs">API docs</a>
+            &nbsp;·&nbsp;
+            <span>F1 Unleashed</span>
+        </footer>
+    </div>
+
+    <!-- Login Modal -->
+    <div class="modal" id="loginModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Login to Formula 1</h3>
+                <button class="close-btn" onclick="closeLoginModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="loginModalBody">
+                <!-- Content populated by JS -->
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/home.js?v=2026-05-27d"></script>
+</body>
+</html>

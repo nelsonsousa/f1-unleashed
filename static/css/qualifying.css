@@ -1,0 +1,551 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --bg-primary: #0a0a0a;
+    --bg-secondary: #111;
+    --bg-tertiary: #1a1a1a;
+    --text-primary: #fff;
+    --text-secondary: #aaa;
+    --text-muted: #666;
+    --accent: #e10600;
+    --green: #00d200;
+    --yellow: #ffd700;
+    --blue: #0080ff;
+    --border: #333;
+}
+
+body {
+    font-family: 'Titillium Web', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Header Bar */
+.header {
+    display: flex;
+    align-items: center;
+    padding: 8px 16px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    height: 48px;
+    gap: 8px;
+}
+
+.session-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 15%;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.session-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.session-badge {
+    font-size: 15px;
+    padding: 2px 8px;
+    background: var(--accent);
+    border-radius: 2px;
+    font-weight: 600;
+    text-transform: uppercase;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* Track Status Display */
+.track-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 16px;
+    font-weight: 600;
+    text-transform: uppercase;
+    width: 15%;
+    flex-shrink: 0;
+    justify-content: center;
+    overflow: hidden;
+}
+
+#trackStatusText {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.track-status.green {
+    background: rgba(0, 210, 0, 0.2);
+    color: var(--green);
+    border: 1px solid var(--green);
+}
+
+.track-status.red {
+    background: rgba(225, 6, 0, 0.2);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+}
+
+.track-status.yellow {
+    background: rgba(255, 215, 0, 0.2);
+    color: var(--yellow);
+    border: 1px solid var(--yellow);
+}
+
+.track-status.white {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    border: 1px solid var(--text-secondary);
+}
+
+/* Clock Display */
+.clocks {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    width: 20%;
+    flex-shrink: 0;
+    justify-content: center;
+}
+
+.clock {
+    text-align: center;
+}
+
+.clock-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.clock-value {
+    font-size: 18px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    font-family: 'Monaco', 'Consolas', monospace;
+}
+
+.clock-value.remaining {
+    color: var(--yellow);
+}
+
+.clock-value.elapsed {
+    color: var(--green);
+}
+
+/* Weather Display */
+.weather {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 14px;
+    color: var(--text-secondary);
+    width: 25%;
+    flex-shrink: 0;
+    justify-content: center;
+}
+
+.weather-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.weather-label {
+    color: var(--text-muted);
+    font-size: 14px;
+    text-transform: uppercase;
+}
+
+.weather-value {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    min-width: 50px;
+}
+
+.weather-icon {
+    font-size: 14px;
+}
+
+.wind-arrow {
+    display: inline-block;
+    transition: transform 0.3s;
+}
+
+/* Controls */
+.controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    justify-content: flex-end;
+}
+
+.btn {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: 600;
+    transition: all 0.15s;
+}
+
+.btn:hover {
+    background: var(--border);
+}
+
+.btn:active {
+    transform: scale(0.95);
+}
+
+.btn-play {
+    background: var(--accent);
+    border-color: var(--accent);
+    min-width: 48px;
+}
+
+.btn-play:hover {
+    background: #c00500;
+}
+
+.btn-play.playing {
+    background: var(--green);
+    border-color: var(--green);
+}
+
+.btn-play.playing:hover {
+    background: #00b000;
+}
+
+/* Tile Grid Layout */
+.tile-grid {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 4px;
+    overflow: hidden;
+}
+
+.tile-row {
+    display: flex;
+    flex: 1;
+    gap: 4px;
+    min-height: 0;
+}
+
+.tile {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+/* Width classes - using flex-grow ratios (proportional) */
+.tile.w-10 { flex: 10 1 0; }
+.tile.w-15 { flex: 15 1 0; }
+.tile.w-20 { flex: 20 1 0; }
+.tile.w-25 { flex: 25 1 0; }
+.tile.w-30 { flex: 30 1 0; }
+.tile.w-35 { flex: 35 1 0; }
+.tile.w-40 { flex: 40 1 0; }
+.tile.w-45 { flex: 45 1 0; }
+.tile.w-50 { flex: 50 1 0; }
+
+/* Height classes */
+.tile.h-full { flex: 1; }
+
+.tile-header {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    padding: 4px 8px;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+}
+
+.tile-content {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Track Map Tile */
+.track-map {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 5px;
+    position: relative;
+}
+
+.track-map svg {
+    width: 100%;
+    height: 100%;
+}
+
+.track-map .calibrating {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 10;
+    background: rgba(0,0,0,0.7);
+    padding: 8px 16px;
+    border-radius: 4px;
+}
+
+/* Track styles come from tracks.css */
+
+.car-marker {
+    cursor: pointer;
+}
+
+.car-marker text {
+    font-family: 'Arial', sans-serif;
+}
+
+.calibrating {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-size: 12px;
+    pointer-events: none;
+}
+
+/* Empty tile placeholder */
+.tile-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+/* Driver List */
+.driver-list {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    font-size: 15px;
+    padding: 2px;
+}
+
+.driver-row {
+    display: flex;
+    align-items: center;
+    padding: 0 3px;
+    border-bottom: 1px solid var(--border);
+    gap: 5px;
+    flex: 1;
+    min-height: 0;
+}
+
+.driver-row:last-child {
+    border-bottom: none;
+}
+
+.driver-row span:last-child{
+  flex:1;
+}
+
+.driver-pos {
+    width: 24px;
+    text-align: right;
+    font-weight: 600;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.driver-color {
+    width: 6px;
+    height: 18px;
+    border-radius: 1px;
+    flex-shrink: 0;
+    background: var(--team-color);
+}
+
+.driver-name {
+    width: 40px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.driver-tyre {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    width: 24px;
+    flex-shrink: 0;
+    margin-left: 8px;
+}
+
+.driver-tyre img {
+    width: 18px;
+    height: 18px;
+}
+
+.driver-time {
+    text-align: right;
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    width: 80px;
+    flex-shrink: 0;
+    color: var(--text-secondary);
+    margin-left: auto;
+}
+
+.driver-gap {
+    text-align: right;
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    width: 65px;
+    flex-shrink: 0;
+    color: var(--text-secondary);
+    margin-left: auto;
+}
+
+.driver-interval {
+    text-align: right;
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    width: 55px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+    margin-left: 8px;
+}
+
+.driver-time.purple {
+    color: #a855f7;
+}
+
+.driver-time.green {
+    color: var(--green);
+}
+
+/* Qualifying gap colors */
+.driver-gap.gap-red {
+    color: #ff4444;
+}
+
+/* Knocked out drivers (greyed out) */
+.driver-row.knocked-out {
+    opacity: 0.4;
+}
+
+.driver-row.knocked-out .driver-gap {
+    color: var(--text-muted);
+}
+
+/* Loading state */
+.loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-secondary);
+}
+
+.spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 12px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Position indicator */
+.position-info {
+    font-size: 10px;
+    color: var(--text-muted);
+    padding: 4px 8px;
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+}
+
+/* Error display */
+.error-display {
+    text-align: center;
+}
+
+.error-display .error-title {
+    color: var(--accent);
+    margin-bottom: 12px;
+    font-weight: bold;
+}
+
+/* =====================
+   Car Markers on Track
+   ===================== */
+
+.car-marker {
+    transition: transform 0.1s ease-out;
+}
+
+.car-marker.stopped {
+    opacity: 0.6;
+}
+
+.car-marker.driver-flag circle {
+    stroke: #0066ff;
+    stroke-width: 3;
+}
+
+.car-marker.blue-flag-blink circle {
+    stroke: #0066ff;
+    stroke-width: 4;
+    filter: drop-shadow(0 0 4px #0066ff);
+}
+
+/* Track flag animations come from tracks.css */
