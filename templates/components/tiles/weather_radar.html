@@ -1,0 +1,30 @@
+<div class="tile {{ width }}">
+    <div class="tile-header weather-radar-header">
+        <span>Weather</span>
+    </div>
+    <div class="tile-content weather-tile-content">
+        <div class="weather-live-data" id="weatherLiveData">
+            <span class="weather-live-item" title="Air Temperature">
+                <svg class="weather-live-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg>
+                <span id="liveAirTemp">--</span>
+            </span>
+            <span class="weather-live-item" title="Track Temperature">
+                <svg class="weather-live-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+                <span id="liveTrackTemp">--</span>
+            </span>
+            <span class="weather-live-item" title="Humidity">
+                <svg class="weather-live-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
+                <span id="liveHumidity">--</span>
+            </span>
+            <span class="weather-live-item" title="Pressure">
+                <svg class="weather-live-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                <span id="livePressure">--</span>
+            </span>
+            <span class="weather-live-item" title="Wind">
+                <svg class="weather-live-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2"/></svg>
+                <span id="liveWind">--</span>
+            </span>
+        </div>
+        <div class="weather-radar-map" id="weatherRadarMap"></div>
+    </div>
+</div>

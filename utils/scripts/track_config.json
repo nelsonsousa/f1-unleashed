@@ -1,0 +1,22 @@
+{
+  "_description": "Configuration for track SVG generation and loading",
+
+  "location_mappings": {
+    "_description": "Maps FIA livetiming Meeting.Location to SVG filename (without .svg)",
+    "_note": "Most locations normalize correctly (spaces->underscores, accents removed). Only exceptions listed here.",
+
+    "Monaco": "Monte_Carlo",
+    "Miami": "Miami_Gardens",
+    "Yas Island": "Yas_Marina"
+  },
+
+  "circuit_data": {
+    "_description": "Reference: circuit_key -> naming info from FIA livetiming vs schedule",
+    "_note": "Kept for documentation. FIA Location is what livetiming sends, Schedule Location is from multiviewer API schedule.",
+
+    "22": { "fia_location": "Monaco", "schedule_location": "Monte Carlo", "circuit_short_name": "Monte Carlo" },
+    "151": { "fia_location": "Miami", "schedule_location": "Miami Gardens", "circuit_short_name": "Miami" },
+    "70": { "fia_location": "Yas Island", "schedule_location": "Yas Marina", "circuit_short_name": "Yas Marina Circuit" },
+    "61": { "fia_location": "Marina Bay", "schedule_location": "Marina Bay", "circuit_short_name": "Singapore" }
+  }
+}

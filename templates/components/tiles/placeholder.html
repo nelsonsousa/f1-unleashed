@@ -1,0 +1,10 @@
+{# Placeholder tile for future content #}
+{# Parameters: width (w-20, w-25, etc.), title #}
+{% set tile_width = width | default('w-25') %}
+{% set tile_title = title | default('--') %}
+<div class="tile {{ tile_width }}">
+    <div class="tile-header">{{ tile_title }}</div>
+    <div class="tile-content">
+        <div class="tile-placeholder">--</div>
+    </div>
+</div>

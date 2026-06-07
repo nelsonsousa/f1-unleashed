@@ -1,0 +1,32 @@
+<div class="tile {{ width | default('w-50') }}" id="telemetryTile">
+    <div class="tile-header telemetry-header">
+        <span>Telemetry</span>
+        <button class="telemetry-driver-toggle-all" id="telemetryAllDrivers" data-action="all">ALL DRIVERS</button>
+        <div class="telemetry-channels" id="telemetryChannels">
+            <button class="telemetry-channel active" data-channel="speed">SPD</button>
+            <button class="telemetry-channel" data-channel="rpm">RPM</button>
+            <button class="telemetry-channel" data-channel="gear">GEAR</button>
+            <button class="telemetry-channel" data-channel="throttleBrake">THR/BRK</button>
+        </div>
+        <div class="telemetry-modes" id="telemetryModes">
+            <button class="telemetry-mode active" data-mode="live">Live</button>
+            <button class="telemetry-mode" data-mode="last">Last</button>
+            <button class="telemetry-mode" data-mode="best">Best</button>
+            <button class="telemetry-mode" data-mode="selection">Selection</button>
+        </div>
+    </div>
+    <div class="tile-content">
+        <div class="telemetry-container" id="telemetryContainer">
+            <div class="telemetry-side" id="telemetryDriverSelector"></div>
+            <div class="telemetry-main">
+                <div class="telemetry-charts" id="telemetryCharts">
+                    <div class="telemetry-chart" id="telemetryChartWrapper">
+                        <canvas id="telemetryCanvas"></canvas>
+                    </div>
+                </div>
+                <div class="telemetry-x-axis" id="telemetryXAxis"></div>
+                <div class="telemetry-legend" id="telemetryLegend"></div>
+            </div>
+        </div>
+    </div>
+</div>

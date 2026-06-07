@@ -1,0 +1,16 @@
+<div class="tile {{ width }}">
+    <div class="rc-tabs" id="rcTabs">
+        <button class="rc-tab active" data-tab="rcm">Race control</button>
+        <button class="rc-tab" data-tab="pecking">Pecking order</button>
+        <button class="rc-tab" data-tab="champ">Championship</button>
+    </div>
+    <div class="tile-content">
+        <div class="race-control-list rc-pane active" id="rcPaneRcm" data-pane="rcm"></div>
+        <div class="race-control-list rc-pane" id="rcPanePecking" data-pane="pecking">
+            <div class="rc-empty">Loading…</div>
+        </div>
+        <div class="rc-pane rc-champ-pane" id="rcPaneChamp" data-pane="champ">
+            <div class="rc-empty">Championship standings appear once the race starts.</div>
+        </div>
+    </div>
+</div>

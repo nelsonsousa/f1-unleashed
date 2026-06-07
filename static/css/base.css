@@ -1,0 +1,239 @@
+/* Base styles - Reset, Variables, Layout */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --bg-primary: #0a0a0a;
+    --bg-secondary: #111;
+    --bg-tertiary: #1a1a1a;
+    --text-primary: #fff;
+    --text-secondary: #aaa;
+    --text-muted: #666;
+    --accent: #e10600;
+    --green: #00d200;
+    --yellow: #ffd700;
+    --blue: #0080ff;
+    --border: #333;
+}
+
+body {
+    font-family: 'Titillium Web', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Tile Grid Layout */
+.tile-grid {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 4px;
+    overflow: hidden;
+}
+
+.tile-row {
+    display: flex;
+    flex: 1;
+    gap: 4px;
+    min-height: 0;
+}
+
+/* Row height classes - using flex-grow ratios */
+.tile-row.h-25 { flex: 25 1 0; }
+.tile-row.h-33 { flex: 33 1 0; }
+.tile-row.h-50 { flex: 50 1 0; }
+.tile-row.h-67 { flex: 67 1 0; }
+
+.tile {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+/* Width classes - using flex-grow ratios (proportional) */
+.tile.w-10 { flex: 10 1 0; }
+.tile.w-15 { flex: 15 1 0; }
+.tile.w-20 { flex: 20 1 0; }
+.tile.w-25 { flex: 25 1 0; }
+.tile.w-30 { flex: 30 1 0; }
+.tile.w-33 { flex: 33 1 0; }
+.tile.w-35 { flex: 35 1 0; }
+.tile.w-40 { flex: 40 1 0; }
+.tile.w-45 { flex: 45 1 0; }
+.tile.w-50 { flex: 50 1 0; }
+.tile.w-55 { flex: 55 1 0; }
+.tile.w-60 { flex: 60 1 0; }
+.tile.w-65 { flex: 65 1 0; }
+.tile.w-67 { flex: 67 1 0; }
+.tile.w-70 { flex: 70 1 0; }
+
+/* Height classes — apply inside a tile-column to apportion vertical space */
+.tile.h-full { flex: 1; }
+.tile.h-15 { flex: 15 1 0; }
+.tile.h-20 { flex: 20 1 0; }
+.tile.h-25 { flex: 25 1 0; }
+.tile.h-30 { flex: 30 1 0; }
+.tile.h-33 { flex: 33 1 0; }
+.tile.h-40 { flex: 40 1 0; }
+.tile.h-50 { flex: 50 1 0; }
+.tile.h-60 { flex: 60 1 0; }
+.tile.h-67 { flex: 67 1 0; }
+.tile.h-70 { flex: 70 1 0; }
+.tile.h-75 { flex: 75 1 0; }
+
+/* Nested column layout for tile grid */
+.tile-column {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-height: 0;
+    min-width: 0;
+}
+
+.tile-column.w-10 { flex: 10 1 0; }
+.tile-column.w-15 { flex: 15 1 0; }
+.tile-column.w-33 { flex: 33 1 0; }
+.tile-column.w-50 { flex: 50 1 0; }
+.tile-column.w-60 { flex: 60 1 0; }
+.tile-column.w-65 { flex: 65 1 0; }
+.tile-column.w-67 { flex: 67 1 0; }
+
+.tile-column > .tile {
+    flex: 1;
+    min-height: 0;
+}
+
+/* Per-child height inside a tile-column — overrides the default flex:1 */
+.tile-column > .tile.h-15 { flex: 15 1 0; }
+.tile-column > .tile.h-17 { flex: 17 1 0; }
+.tile-column > .tile.h-20 { flex: 20 1 0; }
+.tile-column > .tile.h-25 { flex: 25 1 0; }
+.tile-column > .tile.h-30 { flex: 30 1 0; }
+.tile-column > .tile.h-33 { flex: 33 1 0; }
+.tile-column > .tile.h-40 { flex: 40 1 0; }
+.tile-column > .tile.h-43 { flex: 43 1 0; }
+.tile-column > .tile.h-50 { flex: 50 1 0; }
+.tile-column > .tile.h-60 { flex: 60 1 0; }
+.tile-column > .tile.h-67 { flex: 67 1 0; }
+.tile-column > .tile.h-70 { flex: 70 1 0; }
+
+.tile-sub-row {
+    display: flex;
+    flex: 1;
+    gap: 4px;
+    min-height: 0;
+}
+
+.tile-sub-row > .tile {
+    flex: 1;
+    min-width: 0;
+}
+
+.tile-header {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    padding: 4px 8px;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+}
+
+.tile-content {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Empty tile placeholder */
+.tile-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+/* Loading state */
+.loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-secondary);
+}
+
+.spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 12px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Position indicator */
+.position-info {
+    font-size: 10px;
+    color: var(--text-muted);
+    padding: 4px 8px;
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+}
+
+/* Error display */
+.error-display {
+    text-align: center;
+}
+
+.error-display .error-title {
+    color: var(--accent);
+    margin-bottom: 12px;
+    font-weight: bold;
+}
+
+/* Seeking overlay */
+#seeking-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 9999;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    pointer-events: all;
+}
+
+#seeking-overlay .seeking-text {
+    color: var(--text-muted);
+    font-size: 18px;
+}
+
+#seeking-overlay.visible {
+    display: flex;
+}

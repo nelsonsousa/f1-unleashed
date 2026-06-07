@@ -1,0 +1,8 @@
+/*
+ * Legacy timing.css - now empty
+ * Styles have been reorganized into:
+ * - base.css (reset, variables, tile layout)
+ * - components/header.css (header bar)
+ * - components/tiles/track_map.css (track map and car markers)
+ * - components/tiles/standings_qualifying.css (driver list/standings)
+ */

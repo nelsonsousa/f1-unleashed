@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+.env
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+
+# Project
+tmp/
+log/
+data/
+*.db
+*.sqlite3
+*.pid
+*.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Claude Code (local/personal config; a shared .claude/settings.json may be committed)
+.claude/settings.local.json

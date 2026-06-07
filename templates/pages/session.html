@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block title %}F1 {{ session_type|capitalize }}{% endblock %}
+
+{% block styles %}
+<link rel="stylesheet" href="/static/css/components/tiles/track_map.css">
+<!-- weather_radar.css still loaded — provides #weatherRadarMap + .wind-arrow styles, now overlaid on the track map -->
+<link rel="stylesheet" href="/static/css/components/tiles/weather_radar.css">
+<link rel="stylesheet" href="/static/css/components/tiles/race_control.css">
+<link rel="stylesheet" href="/static/css/components/tiles/standings.css">
+<link rel="stylesheet" href="/static/css/components/tiles/telemetry.css">
+{% endblock %}
+
+{% block content %}
+<div class="tile-grid">
+    <!-- Single full-height row split into two columns -->
+    <div class="tile-row">
+        <!-- Left column (67% w): standings on top (60% h), telemetry below (40% h) -->
+        <div class="tile-column w-67">
+            {% with width='h-60' %}
+                {% include "components/tiles/standings.html" %}
+            {% endwith %}
+            {# Unified telemetry tile across race / quali / practice — race
+               used to ship a canvas-only telemetry_race tile that was
+               empty on replay (consumed raw CarData.z which isn't saved
+               to the DB). The lapTelemetry-driven tile works for race
+               too since the telemetry processor populates the telemetry
+               table for every session type. #}
+            {% with width='h-40' %}
+                {% include "components/tiles/telemetry.html" %}
+            {% endwith %}
+        </div>
+
+        <!-- Right column (33% w): track map (60% h, with weather overlaid),
+             race control (40% h, grew into freed weather space). -->
+        <div class="tile-column w-33">
+            {% with width='h-60' %}
+                {% include "components/tiles/track_map.html" %}
+            {% endwith %}
+            {% with width='h-40' %}
+                {% include "components/tiles/race_control.html" %}
+            {% endwith %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/components/tiles/track_map.js?v=2026-05-27a"></script>
+<script src="/static/js/components/tiles/weather_radar.js?v=2026-05-27a"></script>
+<script src="/static/js/components/tiles/race_control.js?v=2026-05-27a"></script>
+<script src="/static/js/components/tiles/standings.js?v=2026-05-28b"></script>
+<script src="/static/js/components/tiles/telemetry.js?v=2026-05-27c"></script>
+{% endblock %}

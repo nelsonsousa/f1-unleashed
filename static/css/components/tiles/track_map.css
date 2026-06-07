@@ -1,0 +1,197 @@
+/* Loading message */
+.track-map .loading-message {
+  color: var(--text-muted);
+  padding: 8px;
+}
+
+/* Track styles (stroke-widths set by JS after measuring rendered size) */
+.track-outline {
+  fill: none;
+  stroke: #DDD;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
+}
+.track {
+  fill: none;
+  stroke: #666;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
+}
+
+/* Marker styles - hidden by default */
+.corner-marker,
+.marshal-sector-marker,
+.marshal-light-marker {
+  display: none;
+}
+
+.corner-bg {
+  fill: #2563eb;
+  stroke: #1d4ed8;
+}
+.corner-label {
+  fill: white;
+  font-family: Arial, sans-serif;
+  font-size: 11px;
+  font-weight: bold;
+  text-anchor: middle;
+}
+
+.marshal-sector-bg {
+  fill: #f97316;
+  stroke: #ea580c;
+}
+.marshal-sector-label {
+  fill: white;
+  font-family: Arial, sans-serif;
+  font-size: 9px;
+  font-weight: bold;
+  text-anchor: middle;
+}
+
+.marshal-light-bg {
+  fill: #22c55e;
+  stroke: #16a34a;
+}
+.marshal-light-label {
+  fill: white;
+  font-family: Arial, sans-serif;
+  font-size: 8px;
+  font-weight: bold;
+  text-anchor: middle;
+}
+
+/* Start/finish marker */
+.checker-border {
+  fill: none;
+  stroke: #CCC;
+}
+.checker-black {
+  fill: #333;
+}
+.checker-white {
+  fill: #CCC;
+}
+
+.chevron {
+  fill: none;
+  stroke: #CCC;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
+}
+
+/* Sector flag states */
+.sector-yellow {
+  stroke: #ffd700 !important;
+  filter: drop-shadow(0 0 4px #ffd700);
+}
+
+.sector-double-yellow {
+  animation: sector-double-yellow-blink 0.5s ease-in-out infinite;
+}
+
+@keyframes sector-double-yellow-blink {
+  0%, 100% {
+    stroke: #ffd700;
+    filter: drop-shadow(0 0 6px #ffd700);
+  }
+  50% {
+    stroke: #ff8c00;
+    filter: drop-shadow(0 0 2px #ff8c00);
+  }
+}
+
+/* Track-wide flag blink */
+.flag-blink .track,
+.flag-blink .track-outline {
+  stroke: var(--flag-color, #ffd700) !important;
+  filter: drop-shadow(0 0 8px var(--flag-color, #ffd700));
+}
+
+/* Track Map Container */
+.track-map {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  position: relative;
+}
+
+.track-map svg {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+}
+
+.track-map .calibrating {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  background: rgba(0,0,0,0.7);
+  padding: 8px 16px;
+  border-radius: 4px;
+}
+
+.calibrating {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+/* Car Markers */
+.car-marker {
+  cursor: pointer;
+  transition: transform 0.1s ease-out;
+}
+
+.car-marker text {
+  font-family: 'Titillium Web', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-weight: 400;
+}
+
+.car-marker.stopped {
+  opacity: 0.6;
+}
+
+.car-marker.driver-flag circle {
+  stroke: #0066ff;
+  stroke-width: 3;
+}
+
+.car-marker.blue-flag-blink circle {
+  stroke: #0066ff;
+  stroke-width: 40;
+  filter: drop-shadow(0 0 4px #0066ff);
+}
+
+/* Stopped-on-track overlay: sits on top of marker, pulses red */
+.stopped-overlay {
+  fill: #ff0000;
+  animation: stopped-glow 1s ease-in-out infinite;
+}
+
+@keyframes stopped-glow {
+  0%, 100% {
+    fill-opacity: 0.6;
+    stroke-width: 40px;
+    stroke: #ff0000;
+  }
+  50% {
+    fill-opacity: 0;
+    stroke-width: 4px;
+    stroke: #ff0000;
+  }
+}

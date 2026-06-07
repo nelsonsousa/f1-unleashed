@@ -1,0 +1,724 @@
+/* Header Bar */
+.header {
+    display: flex;
+    align-items: center;
+    padding: 8px 16px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    height: 48px;
+    /* Equal gap between every header group (event-name, track-status,
+     * clocks, audio-controls, playback-controls, close-button). */
+    gap: 24px;
+}
+
+.session-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 15%;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.session-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.session-badge {
+    font-size: 15px;
+    padding: 2px 8px;
+    background: var(--accent);
+    border-radius: 2px;
+    font-weight: 600;
+    text-transform: uppercase;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* Track Status Display — narrower to make room for the audio scrubber. */
+.track-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    width: 9%;
+    min-width: 90px;
+    flex-shrink: 0;
+    justify-content: center;
+    overflow: hidden;
+}
+
+#trackStatusText {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.track-status.green {
+    background: rgba(0, 210, 0, 0.2);
+    color: var(--green);
+    border: 1px solid var(--green);
+}
+
+.track-status.red {
+    background: rgba(225, 6, 0, 0.2);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+}
+
+.track-status.yellow {
+    background: rgba(255, 215, 0, 0.2);
+    color: var(--yellow);
+    border: 1px solid var(--yellow);
+}
+
+.track-status.white {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    border: 1px solid var(--text-secondary);
+}
+
+/* Pre-session "Track Clear" indicator — white text on transparent. */
+.track-status.track-clear {
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid var(--text-secondary);
+}
+
+/* Clock Display */
+.clocks {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    flex: 0 0 auto;
+    justify-content: center;
+    /* Box the two clocks to match the audio + playback control blocks.
+     * Content-sized (no fixed width %) so the border hugs the text
+     * just like the other groups. */
+    height: 38px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    border-radius: 6px;
+}
+
+.clock {
+    text-align: center;
+}
+
+.clock-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.clock-value {
+    font-size: 16px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    font-family: 'Monaco', 'Consolas', monospace;
+    white-space: nowrap;
+}
+
+.clock-value.remaining {
+    color: var(--yellow);
+}
+
+.clock-value.elapsed {
+    color: var(--green);
+}
+
+/* Audio output device picker — small inline select. Uses setSinkId
+ * to pin F1Unleashed's commentary to a chosen device regardless of
+ * the system default. */
+.audio-output-label {
+    font-size: 11px;
+    color: #aaa;
+    margin-left: 4px;
+}
+.audio-output-picker {
+    background: rgba(0, 0, 0, 0.4);
+    color: #d4d4d4;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+    font-size: 11px;
+    padding: 2px 4px;
+    max-width: 140px;
+}
+
+/* TV-signal + Sync panel — sits before the Audio panel. Capture from a
+ * named audio input (= BlackHole-2ch) and align the data clock to the
+ * incoming broadcast via cross-correlation. */
+.sync-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+    padding: 0 8px;
+    margin-right: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    border-radius: 6px;
+    height: 38px;
+    box-sizing: border-box;
+}
+.btn-tv-signal,
+.btn-sync {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+}
+.btn-sync[disabled] {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+.tv-signal-light {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #444;
+    transition: background 0.2s;
+}
+.tv-signal-light.live {
+    background: #00ff88;
+    box-shadow: 0 0 4px #00ff88;
+}
+.tv-signal-light.error {
+    background: #ff5555;
+}
+.tv-signal-label {
+    font-size: 12px;
+}
+.sync-status {
+    font-size: 11px;
+    color: #aaa;
+    min-width: 80px;
+    max-width: 160px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.sync-status.warn { color: #ffd700; }
+.sync-status.ok { color: #00ff88; }
+.sync-status.error { color: #ff5555; }
+
+/* Audio Controls — status light, mute, audio play, scrubber, offset.
+ * 1px white border + rounded corners visually separate the block.
+ * margin-right adds breathing room before the data play/pause button
+ * so the two control groups don't crowd each other. */
+.audio-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+    justify-content: center;
+    padding: 0 8px;
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    border-radius: 6px;
+    height: 38px;
+    box-sizing: border-box;
+}
+
+/* Traffic-light status indicator. JS toggles .green / .yellow / .red. */
+.audio-status-light {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #444;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    flex-shrink: 0;
+    transition: background-color 0.15s;
+}
+.audio-status-light.green  { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.6); }
+.audio-status-light.yellow { background: #f5c518; box-shadow: 0 0 6px rgba(245,197,24,0.5); }
+.audio-status-light.red    { background: #ff4040; box-shadow: 0 0 6px rgba(255,64,64,0.5); }
+
+/* Audio play/pause — same shape as the main play but slimmer. */
+.btn-audio-play {
+    padding: 4px 10px;
+    font-size: 14px;
+    min-width: 32px;
+    flex-shrink: 0;
+}
+.btn-audio-play.playing { background: var(--green, #22c55e); border-color: var(--green, #22c55e); color: #fff; }
+
+/* Audio offset input. Editable 0.1 s precision, value applied on
+ * Enter or focus-out via the JS handler. */
+.audio-delay-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+/* Extra left margin so the audio play button and the delay label
+ * aren't crowded together — visually separates audio playback control
+ * from the delay adjustment. */
+.audio-delay-label-spaced { margin-left: 16px; }
+
+/* Volume slider — slim horizontal range between mute and audio-play. */
+.volume-slider {
+    width: 64px;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--text-secondary);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--text-primary);
+    cursor: pointer;
+}
+.volume-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--text-primary);
+    border: none;
+    cursor: pointer;
+}
+
+.audio-offset-input {
+    width: 60px;
+    padding: 3px 6px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 12px;
+    text-align: right;
+    flex-shrink: 0;
+}
+.audio-offset-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+/* (Audio scrubber removed — Audio Delay input box alone now controls
+ * the audio-vs-data relationship.) */
+.audio-time {
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 12px;
+    color: var(--text-primary);
+    min-width: 64px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.audio-controls.hidden {
+    visibility: hidden;
+}
+
+.audio-controls.disabled {
+    /* No audio commentary for this session — fade the whole block and
+     * make it non-interactive so the user doesn't waste a click. */
+    opacity: 0.35;
+    pointer-events: none;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+.audio-controls.disabled .btn { cursor: not-allowed; }
+.audio-controls.disabled .audio-offset-input { cursor: not-allowed; }
+
+.btn-mute {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+}
+
+.btn-mute:hover {
+    background: var(--border);
+}
+
+.btn-mute .icon-muted {
+    display: none;
+}
+
+.btn-mute.muted .icon-unmuted {
+    display: none;
+}
+
+.btn-mute.muted .icon-muted {
+    display: inline-block;
+    color: var(--accent);
+}
+
+.btn-mute.muted {
+    border-color: var(--accent);
+}
+
+/* (Stale duplicate of .volume-slider removed — canonical rule lives
+ * up in the audio-controls block above.) */
+
+/* Controls — data play/pause + speed + scrubber.
+ *   margin-left: 100px → fixed gap between Audio Delay and play button.
+ *   margin-right: 100px → leave space before the close button.
+ *   flex: 1 → fill all remaining header width with the scrubber.
+ *   border + padding visually group the data playback controls (matches
+ *   the audio-controls block). */
+.controls {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    gap: 12px;
+    min-width: 0;
+    /* Spacing to neighbours comes from .header's gap (24 px); no
+     * margin overrides here so the gap is uniform across the header. */
+    padding: 0 10px;
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    border-radius: 6px;
+    height: 38px;
+    box-sizing: border-box;
+}
+
+.btn {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: 600;
+    transition: all 0.15s;
+}
+
+.btn:hover {
+    background: var(--border);
+}
+
+.btn:active {
+    transform: scale(0.95);
+}
+
+/* Close (X) button — top-right corner; goes back in browser history.
+ * Red background + white border + white X, sized to match play/pause
+ * so it stands out as a primary action. */
+.btn-close {
+    margin-left: auto;
+    background: var(--accent);
+    border: 1px solid #ffffff;
+    color: #ffffff;
+    padding: 6px 12px;
+    min-width: 48px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.btn-close:hover {
+    background: #c00500;
+    border-color: #ffffff;
+    color: #ffffff;
+}
+
+/* Audio sync controls — manual offset nudges + decouple toggle. */
+.audio-sync-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 8px;
+    padding-left: 8px;
+    border-left: 1px solid var(--border);
+}
+.btn-audio-adj,
+.btn-audio-decouple {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    line-height: 1;
+}
+.btn-audio-adj:hover,
+.btn-audio-decouple:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+.btn-audio-decouple.active {
+    background: var(--accent);
+    color: #ffffff;
+    border-color: var(--accent);
+}
+/* (Older duplicate kept here for backwards-compat; the canonical
+ * .audio-time rule is in the audio-controls block above. Properties
+ * here cascade-overlap harmlessly with the newer rule.) */
+
+.btn-play {
+    background: var(--accent);
+    border-color: var(--accent);
+    min-width: 48px;
+}
+
+.btn-play:hover {
+    background: #c00500;
+}
+
+.btn-play.playing {
+    background: var(--green);
+    border-color: var(--green);
+}
+
+.btn-play.playing:hover {
+    background: #00b000;
+}
+
+/* Speed Control */
+.btn-speed {
+    min-width: 48px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Go-Live button (live mode only) */
+.btn-go-live {
+    min-width: 56px;
+    font-size: 12px;
+    letter-spacing: 1px;
+    background: var(--bg-tertiary);
+    border-color: var(--border);
+    color: var(--text-secondary);
+}
+
+.btn-go-live.hidden {
+    display: none;
+}
+
+.btn-go-live.at-live {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    cursor: default;
+}
+
+.btn-go-live.at-live:hover {
+    background: var(--accent);
+}
+
+/* Scrubber */
+.scrubber {
+    flex: 1;
+    min-width: 150px;
+    position: relative;
+    height: 32px;
+}
+
+/* Scrubber line + end-caps. Placed at 2/3 of the scrubber height (=
+ * lower portion) so the upper portion is available for the flag
+ * markers floating above. The two caps are short vertical bars at
+ * 0 % and 100 % so the scrubber's extent is visible even before any
+ * event markers populate the strip. Drawn via ::before / ::after on
+ * the line so we don't need extra DOM. */
+.scrubber-line {
+    width: 100%;
+    height: 2px;
+    background: var(--text-secondary);
+    position: absolute;
+    top: 66.67%;
+    left: 0;
+    transform: translateY(-50%);
+}
+.scrubber-line::before,
+.scrubber-line::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    width: 3px;
+    height: 12px;
+    background: var(--text-primary);
+    border-radius: 1px;
+    transform: translate(-50%, -50%);
+    z-index: 2;
+}
+.scrubber-line::before { left: 0; }
+.scrubber-line::after  { left: 100%; }
+
+/* Playback head — circular thumb, same shape/feel as the volume slider
+ * thumb so the two "where am I" indicators read consistently. Centred
+ * on the scrubber line (= 2/3 of scrubber height). */
+.scrubber-dot {
+    position: absolute;
+    top: 66.67%;
+    transform: translate(-50%, -50%);
+    width: 12px;
+    height: 12px;
+    background: var(--text-primary);
+    border: 1px solid rgba(0, 0, 0, 0.4);
+    border-radius: 50%;
+    left: 0%;
+    z-index: 3;
+}
+
+.scrubber-tooltip {
+    position: absolute;
+    bottom: 100%;
+    left: 0%;
+    transform: translateX(-50%);
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: 'Monaco', 'Consolas', monospace;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.1s;
+    margin-bottom: 8px;
+    color: var(--text-primary);
+    z-index: 100;
+}
+
+/* Event markers on scrubber */
+.scrubber-events {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+.scrubber-event {
+    position: absolute;
+    bottom: 50%;
+    transform: translateX(-50%);
+    cursor: pointer;
+    pointer-events: auto;
+    z-index: 2;
+    line-height: 0;
+    padding: 4px 4px 0 4px;
+}
+
+.scrubber-event:hover {
+    transform: translateX(-50%) scale(1.3);
+    transform-origin: bottom center;
+}
+
+.scrubber-event-tyre {
+    bottom: auto;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    padding: 4px;
+}
+
+.scrubber-event-tyre:hover {
+    transform: translate(-50%, -50%) scale(1.3);
+    transform-origin: center;
+}
+
+.scrubber-event-below {
+    bottom: auto;
+    top: 50%;
+    transform: translateX(-50%);
+    padding: 2px 4px 4px 4px;
+}
+
+.scrubber-event-below:hover {
+    transform: translateX(-50%) scale(1.3);
+    transform-origin: top center;
+}
+
+/* Scrubber flag markers — centred at 1/3 of scrubber height (= the
+ * upper third), so the icons sit clearly above the scrubber line
+ * which lives at the 2/3 mark. */
+.scrubber-flag {
+    position: absolute;
+    top: 33.33%;
+    transform: translate(-50%, -50%);
+    cursor: pointer;
+    pointer-events: auto;
+    z-index: 2;
+    font-size: 16px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.scrubber-flag.green { color: #00ff00; }
+.scrubber-flag.yellow { color: #ffd700; }
+.scrubber-flag.red { color: #e10600; }
+.scrubber-flag.chequered { color: #ffffff; }
+.scrubber-flag.pre-start { color: #6fc3ff; }
+.scrubber-flag:hover { transform: translate(-50%, -50%) scale(1.4); }
+
+/* Live button */
+.scrubber-live {
+    position: absolute;
+    right: -4px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: #e10600;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 5px;
+    border-radius: 3px;
+    cursor: pointer;
+    z-index: 3;
+    pointer-events: auto;
+    animation: pulse 2s infinite;
+}
+.scrubber-live:hover { background: #ff2020; }
+
+/* Live mode */
+.session-badge.live {
+    background: var(--accent);
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+/* Manual audio delay input. Small numeric box next to the output picker;
+ * uses the same look as the volume slider container. */
+.audio-manual-delay {
+    width: 50px;
+    height: 22px;
+    padding: 0 6px;
+    background: rgba(0, 0, 0, 0.4);
+    color: var(--text-primary, #fff);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 3px;
+    font-size: 12px;
+    font-family: inherit;
+    text-align: right;
+}
+.audio-manual-delay:focus {
+    outline: 1px solid var(--accent, #6fc3ff);
+}

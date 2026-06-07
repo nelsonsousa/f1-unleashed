@@ -1,0 +1,80 @@
+<header class="header">
+    <div class="session-info">
+        <span class="session-title" id="sessionTitle">Loading...</span>
+        <span class="session-badge" id="sessionBadge">--</span>
+    </div>
+
+    <div class="track-status white" id="trackStatus">
+        <span id="trackStatusText">--</span>
+    </div>
+
+    <div class="clocks">
+        <div class="clock">
+            <div class="clock-label">Local Time</div>
+            <div class="clock-value" id="trackTime">--:--:--</div>
+        </div>
+        <div class="clock">
+            <div class="clock-label">Session Time</div>
+            <div class="clock-value remaining" id="sessionClock">--:--:--</div>
+        </div>
+    </div>
+
+    <div class="sync-controls" id="syncControls">
+        <!-- TV signal capture: picks an audio input device (= BlackHole)
+             and starts streaming its PCM into a ring buffer for matching. -->
+        <button class="btn btn-tv-signal" id="tvSignalBtn" onclick="toggleTvSignal()" title="Capture TV audio (BlackHole-2ch)">
+            <span class="tv-signal-light" id="tvSignalLight"></span>
+            <span class="tv-signal-label">TV signal</span>
+        </button>
+        <!-- Sync button: takes the last few seconds of captured TV audio,
+             cross-correlates against the in-playback commentary, and
+             aligns the data clock to the broadcast. -->
+        <button class="btn btn-sync" id="syncBtn" onclick="triggerSync()" title="Align data to TV broadcast" disabled>
+            Sync
+        </button>
+        <span class="sync-status" id="syncStatus"></span>
+    </div>
+
+    <div class="audio-controls" id="audioControls">
+        <!-- Traffic-light: green = audio playing in sync; yellow =
+             seeking / buffering / wanted-but-not-playing; red = audio
+             unavailable for the current data-clock target. -->
+        <span class="audio-status-light" id="audioStatusLight" title="Audio status"></span>
+
+        <button class="btn btn-mute" id="muteBtn" onclick="toggleMute()" title="Mute (M)">
+            <svg class="icon-unmuted" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="none">
+                <path d="M3 9v6h4l5 5V4L7 9H3z"/>
+                <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
+            </svg>
+            <svg class="icon-muted" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="none">
+                <path d="M3 9v6h4l5 5V4L7 9H3z"/>
+                <path d="M16.5 12L19 9.5l1.4 1.4L17.9 13.4l2.5 2.5-1.4 1.4L16.5 14.8l-2.5 2.5-1.4-1.4 2.5-2.5-2.5-2.5 1.4-1.4L16.5 12z"/>
+            </svg>
+        </button>
+
+        <!-- Volume slider — 0..100 → audio.volume 0..1. Persists to
+             localStorage. Independent of the mute button. -->
+        <input type="range" class="volume-slider" id="volumeSlider"
+               min="0" max="100" value="80"
+               oninput="handleVolumeChange(this.value)" title="Volume">
+
+    </div>
+
+    <div class="controls">
+        <button class="btn btn-play" id="playPauseBtn" onclick="togglePlayPause()" title="Play/Pause data (Space)">
+            <span id="playIcon">&#9658;</span>
+        </button>
+        <button class="btn btn-speed" id="speedBtn">1x</button>
+        <button class="btn btn-go-live hidden" id="goLiveBtn" onclick="seekLive()" title="Snap to live edge">LIVE</button>
+        <div class="scrubber" id="scrubber">
+            <div class="scrubber-line"></div>
+            <div class="scrubber-events" id="scrubberEvents"></div>
+            <div class="scrubber-dot" id="scrubberDot"></div>
+            <div class="scrubber-tooltip" id="scrubberTooltip">--:--:--</div>
+        </div>
+    </div>
+
+    <button class="btn btn-close" id="closeBtn" title="Close" onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href = '/'; }">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+</header>

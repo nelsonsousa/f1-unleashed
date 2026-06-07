@@ -1,0 +1,404 @@
+/* Telemetry Tile */
+
+.telemetry-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.telemetry-channels {
+    display: flex;
+    gap: 4px;
+}
+
+/* ALL DRIVERS button, lives in the tile header between the title and
+ * the channel buttons. Styled to match the channel/mode controls. */
+.telemetry-header .telemetry-driver-toggle-all {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    margin: 0 6px;
+    transition: background 0.15s, color 0.15s;
+}
+
+.telemetry-header .telemetry-driver-toggle-all.all-selected {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border-color: var(--text-muted);
+}
+
+.telemetry-channel {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.telemetry-channel.active {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border-color: var(--text-muted);
+}
+
+.telemetry-modes {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+}
+
+.telemetry-mode {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.telemetry-mode.active {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border-color: var(--text-muted);
+}
+
+.telemetry-container {
+    display: flex;
+    flex-direction: row;
+    height: 100%;
+    position: relative;
+    min-height: 0;
+}
+
+.telemetry-main {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+}
+
+.telemetry-charts {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: none;
+}
+
+.telemetry-charts::-webkit-scrollbar {
+    display: none;
+}
+
+.telemetry-chart {
+    position: relative;
+}
+
+.telemetry-chart canvas {
+    display: block;
+    width: 100%;
+}
+
+/* Side panel — driver lap-list table on the LEFT of the chart. A
+ * single scrolling parent with a CSS-grid row per driver. Each driver
+ * shares the same `grid-template-columns` so lap N lines up
+ * vertically across every driver. The TLA column is sticky on the
+ * left, behaving like a frozen first column. */
+.telemetry-side {
+    flex: 0 0 auto;
+    /* One scroll container drives every driver row in unison. */
+    overflow: auto;
+    scrollbar-width: thin;
+    border-right: 1px solid var(--border);
+    width: 220px;
+    min-width: 0;
+    padding: 4px 0;
+}
+
+.telemetry-side::-webkit-scrollbar { width: 6px; height: 6px; }
+.telemetry-side::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+/* Inner list — width is determined by its grid contents. */
+.telemetry-driver-list {
+    display: flex;
+    flex-direction: column;
+    width: max-content;
+    min-width: 100%;
+}
+
+/* Each driver row is a grid: [tla] min-content, then one 22px column
+ * per lap. `min-content` (not `auto`) pins the TLA col to its actual
+ * width — otherwise, when the grid is narrower than the side panel,
+ * `auto` would absorb the free space and push lap pills to the right
+ * edge instead of flush against the TLA. */
+.telemetry-side .telemetry-driver-entry {
+    display: grid;
+    grid-template-columns: [tla] min-content repeat(var(--max-lap, 1), 22px);
+    align-items: center;
+    column-gap: 1px;
+    padding: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    min-height: 18px;
+    justify-content: start;
+}
+
+/* Sticky frozen first column: swatch + TLA. */
+.telemetry-side .telemetry-driver-row {
+    grid-column: tla;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    padding: 0 8px 0 4px;
+    position: sticky;
+    left: 0;
+    background: var(--bg-primary);
+    z-index: 2;
+    border-right: 1px solid var(--border);
+}
+
+.telemetry-side .telemetry-driver-tla {
+    font-size: 12.5px;
+}
+
+.telemetry-side .telemetry-driver-swatch {
+    height: 14px;
+}
+
+/* Lap pills sit in their explicit grid-column = lap+1, set inline. */
+.telemetry-side .telemetry-lap-pill {
+    text-align: center;
+    justify-self: center;
+    min-width: 18px;
+}
+
+/* Empty placeholder for a lap a driver doesn't have — keeps column N
+ * the same across every row. Renders nothing but occupies its slot. */
+.telemetry-side .telemetry-lap-empty {
+    /* visible width comes from the grid column; no content needed. */
+    display: block;
+}
+
+.telemetry-lap-pill {
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 12.5px;
+    line-height: 1;
+    padding: 1px 4px;
+    border-radius: 2px;
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+/* Classification colours per spec — purple "overall fastest" pill was
+ * dropped (confusing). */
+.telemetry-lap-pill.lap-push    { color: #00ff88; }   /* P/Q push or long; Race green-flag */
+.telemetry-lap-pill.lap-long    { color: #00ff88; }   /* (same as push per SME 2026-06-01) */
+.telemetry-lap-pill.lap-sc      { color: #ffd700; }   /* SC affected (Race) */
+.telemetry-lap-pill.lap-vsc     { color: #ffd700; }   /* VSC affected (Race) */
+.telemetry-lap-pill.lap-cool    { color: #ffffff; }   /* cool / abort */
+.telemetry-lap-pill.lap-skip    { color: var(--text-secondary); }   /* IN / OUT / PIT */
+.telemetry-lap-pill.lap-no-data { color: #888888; border: 1px dashed #555; background: transparent; }
+.telemetry-lap-pill.lap-unknown { color: #ffffff; }
+
+/* Q1/Q2/Q3 section divider in the lap-list (qualifying only). */
+.telemetry-lap-divider {
+    flex-shrink: 0;
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-muted);
+    padding: 0 4px;
+    border-left: 1px solid var(--border);
+    align-self: stretch;
+    display: inline-flex;
+    align-items: center;
+}
+
+.telemetry-lap-pill.selected {
+    background: rgba(255, 255, 255, 0.18);
+    border-color: #fff;
+}
+
+.telemetry-lap-pill:hover {
+    background: rgba(255, 255, 255, 0.14);
+}
+
+/* Selection legend — bottom-right overlay over the chart, listing
+ * each currently-selected lap with its team-coloured marker (solid for
+ * 1st car of team, checkered for 2nd via .second), driver TLA, lap
+ * number, lap time, and an (x) remove button. */
+.telemetry-legend {
+    position: absolute;
+    bottom: 36px;
+    right: 8px;
+    z-index: 5;
+    display: none;
+    flex-direction: column;
+    gap: 3px;
+    padding: 6px 8px;
+    background: rgba(0, 0, 0, 0.78);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    pointer-events: auto;
+    max-width: 320px;
+}
+
+.telemetry-legend.has-entries {
+    display: flex;
+}
+
+.telemetry-legend-entry {
+    display: grid;
+    grid-template-columns: 10px auto auto 1fr auto;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.telemetry-legend-entry .telemetry-driver-swatch {
+    width: 10px;
+    height: 14px;
+}
+
+.telemetry-legend-tla {
+    font-weight: 700;
+}
+
+.telemetry-legend-lap {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.telemetry-legend-time {
+    color: var(--text-secondary);
+    text-align: right;
+}
+
+.telemetry-legend-remove {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 2px;
+}
+
+.telemetry-legend-remove:hover {
+    color: var(--text-primary);
+}
+
+.telemetry-driver-toggle-all {
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    padding: 0 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.telemetry-driver-toggle-all.all-selected {
+    color: #ffffff;
+}
+
+.telemetry-driver-entry {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.telemetry-driver-entry.hidden {
+    opacity: 0.3;
+}
+
+.telemetry-driver-swatch {
+    width: 6px;
+    height: 14px;
+    border-radius: 1px;
+    flex-shrink: 0;
+    background: var(--swatch-color);
+}
+
+.telemetry-driver-entry.second .telemetry-driver-swatch {
+    background: repeating-conic-gradient(
+        var(--swatch-color) 0% 25%,
+        transparent 0% 50%
+    ) 0 0 / 3px 3px;
+}
+
+.telemetry-driver-tla {
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+/* X-axis area for corner numbers */
+.telemetry-x-axis {
+    /* Two stacked rows of corner labels — row 0 (close to plot) and
+     * row 1 above it. JS bumps labels to row 1 when they would
+     * otherwise overlap their neighbour on the same row. */
+    height: 30px;
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+    position: relative;
+    overflow: hidden;
+}
+
+.telemetry-x-axis .corner-label {
+    position: absolute;
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 12px;
+    color: rgba(255, 213, 0, 0.5);
+    transform: translateX(-50%);
+    top: 2px;
+}
+.telemetry-x-axis .corner-label.corner-label-row1 {
+    top: 16px;
+    color: rgba(255, 213, 0, 0.4);
+}
+
+.telemetry-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+/* Zoom cursor */
+.telemetry-charts.zoomed {
+    cursor: grab;
+}
+
+.telemetry-charts.zoomed:active {
+    cursor: grabbing;
+}

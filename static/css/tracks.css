@@ -1,0 +1,88 @@
+/*
+ * Standalone SVG track styles.
+ *
+ * Referenced by each track SVG via <?xml-stylesheet?> so that
+ * opening the SVG directly in a browser renders correctly
+ * (stroked lines, not filled areas).
+ *
+ * When the SVG is loaded inside the app, track_map.css takes
+ * precedence via higher specificity (.track-map .track).
+ */
+
+/* Track paths */
+.track-outline {
+  fill: none;
+  stroke: #DDD;
+  stroke-width: 80;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
+}
+.track {
+  fill: none;
+  stroke: #C0392B;
+  stroke-width: 40;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
+}
+
+/* Markers - hidden by default in standalone view */
+.corner-marker,
+.marshal-sector-marker,
+.marshal-light-marker {
+  display: none;
+}
+
+.corner-bg {
+  fill: #2563eb;
+  stroke: #1d4ed8;
+}
+.corner-label {
+  fill: white;
+  font-family: Arial, sans-serif;
+  font-weight: bold;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.marshal-sector-bg {
+  fill: #f97316;
+  stroke: #ea580c;
+}
+.marshal-sector-label {
+  fill: white;
+  font-family: Arial, sans-serif;
+  font-weight: bold;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.marshal-light-bg {
+  fill: #22c55e;
+  stroke: #16a34a;
+}
+.marshal-light-label {
+  fill: white;
+  font-family: Arial, sans-serif;
+  font-weight: bold;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+/* Start/finish marker */
+.checker-border {
+  fill: none;
+  stroke: #CCC;
+}
+.checker-black {
+  fill: #333;
+}
+.checker-white {
+  fill: #CCC;
+}
+
+.chevron {
+  fill: none;
+  stroke: #CCC;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
+}
