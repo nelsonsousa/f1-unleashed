@@ -376,9 +376,15 @@
     // all three are known, poll the radar endpoint every 30 s and
     // overlay the returned PNG behind the track SVG.
 
+    messageBus.on('meetingName', (name) => {
+        if (!name) return;
+        state.eventName = name;
+        fetchRadarExtent();
+        maybeStartRadarPolling();
+    });
+
     messageBus.on('sessionInfo', (data) => {
         if (!data || typeof data !== 'object') return;
-        if (data.meetingName) state.eventName = data.meetingName;
         if (data.sessionName) state.sessionType = data.sessionName;
         if (state.year == null) {
             const params = new URLSearchParams(window.location.search);
