@@ -289,53 +289,12 @@
 
     // When trackGeometry arrives, load the SVG based on the session
     // The session name in the URL contains the location
-    messageBus.on('session:loaded', async (data) => {
-        // Determine location from session name. Format may use _ or /
-        // as separators ("2026_1279_Melbourne_11227_Practice_1" or
-        // "2026/1279_Melbourne/11230_Qualifying"). parts[2] is the location.
-        const params = new URLSearchParams(window.location.search);
-        const sessionName = params.get('session') || '';
-        // Two URL forms in play:
-        //   replay: "2026/1286_Monte_Carlo/11295_Qualifying"
-        //   live:   "2026_1286_Monte_Carlo_Qualifying"
-        // Multi-word locations (Monte_Carlo, Miami_Gardens, …) break a
-        // naive split on `_`, so peel off the known session-type suffix
-        // first and then strip the year + event key prefix.
-        let location = null;
-        if (sessionName.includes('/')) {
-            const slash = sessionName.split('/');
-            if (slash.length >= 2) {
-                const ev = slash[slash.length - 2];
-                const i = ev.indexOf('_');
-                location = i >= 0 ? ev.substring(i + 1) : ev;
-            }
-        } else {
-            const suffixes = ['Sprint_Qualifying', 'Sprint_Shootout',
-                'Practice_1', 'Practice_2', 'Practice_3',
-                'Qualifying', 'Sprint', 'Race'];
-            let s = sessionName;
-            for (const suf of suffixes) {
-                if (s.endsWith('_' + suf)) {
-                    s = s.slice(0, -suf.length - 1);
-                    break;
-                }
-            }
-            const p = s.split('_');
-            // Two underscore-form URLs in play:
-            //   home: "2026_<round>_<Location>" — 3+ parts, p[0..1] numeric.
-            //   cache: "2026_<eventKey>_<Location>_<sessionKey>" — 4+ parts,
-            //          p[0..1] numeric AND last part numeric (sessionKey).
-            // Strip trailing numeric parts BEFORE joining location, so the
-            // cache form's sessionKey doesn't get appended to the location.
-            while (p.length >= 4 && /^\d+$/.test(p[p.length - 1])) {
-                p.pop();
-            }
-            if (p.length >= 3 && /^\d+$/.test(p[0]) && /^\d+$/.test(p[1])) {
-                location = p.slice(2).join('_');
-            }
-        }
-        if (location && !state.location) {
-            await loadTrackSvg(location);
+    // The circuit comes from the server (SessionInfo.Meeting.Circuit.ShortName,
+    // normalised to the SVG basename, e.g. "Monte_Carlo"). On connect/seek
+    // the latest trackCircuit row is restored, so this fires before drawing.
+    messageBus.on('trackCircuit', (name) => {
+        if (name && !state.location) {
+            loadTrackSvg(name);
         }
     });
 

@@ -66,59 +66,23 @@
 
     function handleSessionInfo(data) {
         if (!data || typeof data !== 'object') return;
-
-        if (data.meetingName) {
-            state.meetingName = data.meetingName;
-        }
-        if (data.sessionName) {
-            state.sessionName = data.sessionName;
-        }
-        if (data.sessionType) {
-            state.sessionType = data.sessionType;
-        }
+        // Only gmtOffset is still consumed here (drives the clock display).
+        // The event title and session badge are now server-computed and
+        // arrive on their own topics (meetingName / sessionBadge).
         if (data.gmtOffset) {
             state.gmtOffsetStr = data.gmtOffset;
             state.gmtOffset = parseGmtOffset(data.gmtOffset);
         }
-        if (data.qualifyingPart !== undefined) {
-            state.qualifyingPart = data.qualifyingPart;
-        }
-
-        // Detect sprint qualifying
-        const name = (state.sessionName || '').toLowerCase();
-        state.isSprintQuali = name.includes('sprint');
-
-        updateSessionDisplay();
     }
 
-    function updateSessionDisplay() {
+    function handleMeetingName(name) {
         const titleEl = document.getElementById('sessionTitle');
+        if (titleEl) titleEl.textContent = name || 'Loading...';
+    }
+
+    function handleSessionBadge(badge) {
         const badgeEl = document.getElementById('sessionBadge');
-        if (titleEl) titleEl.textContent = state.meetingName || 'Loading...';
-
-        if (badgeEl) {
-            let badge = '';
-            const type = (state.sessionType || '').toLowerCase();
-            const name = (state.sessionName || '');
-
-            if (type === 'practice') {
-                // FP1, FP2, FP3
-                const match = name.match(/(\d)/);
-                badge = match ? `FP${match[1]}` : 'FP';
-            } else if (type === 'qualifying') {
-                const prefix = state.isSprintQuali ? 'SQ' : 'Q';
-                if (state.qualifyingPart >= 1) {
-                    badge = `${prefix}${state.qualifyingPart}`;
-                } else {
-                    badge = prefix;
-                }
-            } else if (type === 'race') {
-                badge = name.toLowerCase().includes('sprint') ? 'S' : 'R';
-            } else {
-                badge = name || '--';
-            }
-            badgeEl.textContent = badge;
-        }
+        if (badgeEl) badgeEl.textContent = badge || '--';
     }
 
     function parseGmtOffset(offsetStr) {
@@ -1172,12 +1136,8 @@
     // =========================================================================
 
     messageBus.on('sessionInfo', handleSessionInfo);
-    messageBus.on('qualifyingPart', (data) => {
-        if (typeof data === 'number' && data >= 1) {
-            state.qualifyingPart = data;
-            updateSessionDisplay();
-        }
-    });
+    messageBus.on('meetingName', handleMeetingName);
+    messageBus.on('sessionBadge', handleSessionBadge);
     messageBus.on('clock', handleClock);
     messageBus.on('trackStatus', handleTrackStatus);
     messageBus.on('session:loaded', handleSessionLoaded);
