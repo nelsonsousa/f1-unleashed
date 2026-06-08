@@ -138,23 +138,6 @@ class PaceProcessor(Processor):
                              self._session_path)
             return None
 
-    # ── Processor base abstract overrides ─────────────────────────────
-    # Per-message state is rebuilt from scratch each preprocessing pass
-    # (always reads the full jsonl), so snapshot/restore are no-ops.
-
-    def snapshot(self) -> dict:
-        return {}
-
-    def restore(self, state: dict) -> None:
-        pass
-
-    def reset(self) -> None:
-        self._drivers.clear()
-        self._lap_times.clear()
-        self._lap_cls.clear()
-        self._lap_sectors.clear()
-        self._stints.clear()
-
     # ── subscriptions ──────────────────────────────────────────────────
 
     def subscribe(self) -> None:
