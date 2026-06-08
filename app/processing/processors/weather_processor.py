@@ -23,12 +23,3 @@ class WeatherProcessor(Processor):
     def _handle(self, data: Any, clock_time: datetime) -> None:
         if isinstance(data, dict):
             self._bus.emit("weatherData", data, clock_time)
-
-    def snapshot(self) -> dict[str, Any]:
-        return {}
-
-    def restore(self, state: dict[str, Any]) -> None:
-        pass
-
-    def reset(self) -> None:
-        pass

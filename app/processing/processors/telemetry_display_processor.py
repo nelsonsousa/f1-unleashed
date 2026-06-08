@@ -255,25 +255,3 @@ class TelemetryDisplayProcessor(Processor):
         self._bus.emit("display:telemetry", {
             "drivers": drivers,
         }, clock_time)
-
-    def snapshot(self) -> dict[str, Any]:
-        import copy
-        return {
-            "drivers": copy.deepcopy(self._drivers),
-            "sample_counter": self._sample_counter,
-        }
-
-    def restore(self, state: dict[str, Any]) -> None:
-        import copy
-        self._drivers = copy.deepcopy(state.get("drivers", {}))
-        self._sample_counter = state.get("sample_counter", 0)
-
-    def reset(self) -> None:
-        for d in self._drivers.values():
-            d["lapNumber"] = 0
-            d["lapStatus"] = "IN"
-            d["currentSamples"] = []
-            d["completedLaps"] = []
-            d["bestLapNumber"] = None
-            d["bestLapTime"] = None
-        self._sample_counter = 0

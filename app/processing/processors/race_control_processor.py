@@ -152,20 +152,3 @@ class RaceControlProcessor(Processor):
                         "driverNumber": racing_number,
                         "flag": _flag_to_color(flag),
                     }, clock_time)
-
-    def snapshot(self) -> dict[str, Any]:
-        return {
-            "yellow_sectors": sorted(self._yellow_sectors),
-            "last_key": self._last_key,
-            "all_messages": list(self._all_messages),
-        }
-
-    def restore(self, state: dict[str, Any]) -> None:
-        self._yellow_sectors = set(state.get("yellow_sectors", []))
-        self._last_key = state.get("last_key", -1)
-        self._all_messages = list(state.get("all_messages", []))
-
-    def reset(self) -> None:
-        self._yellow_sectors.clear()
-        self._last_key = -1
-        self._all_messages = []

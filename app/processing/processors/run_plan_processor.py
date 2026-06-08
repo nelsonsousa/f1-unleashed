@@ -281,34 +281,3 @@ class RunPlanProcessor(Processor):
             "qualifyingSegment": self._qualifying_segment,
             "segmentBoundaries": self._segment_boundaries,
         }, clock_time)
-
-    def snapshot(self) -> dict[str, Any]:
-        import copy
-        return {
-            "drivers": copy.deepcopy(self._drivers),
-            "global_best_lap_time": self._global_best_lap_time,
-            "qualifying_segment": self._qualifying_segment,
-            "segment_boundaries": copy.deepcopy(self._segment_boundaries),
-        }
-
-    def restore(self, state: dict[str, Any]) -> None:
-        import copy
-        self._drivers = copy.deepcopy(state.get("drivers", {}))
-        self._global_best_lap_time = state.get("global_best_lap_time")
-        self._qualifying_segment = state.get("qualifying_segment")
-        self._segment_boundaries = copy.deepcopy(state.get("segment_boundaries", []))
-
-    def reset(self) -> None:
-        for d in self._drivers.values():
-            d["position"] = 99
-            d["completedLaps"] = []
-            d["bestLapTime"] = None
-            d["lapStatus"] = "IN"
-            d["pendingLapStatus"] = None
-            d["currentCompound"] = None
-            d["currentTyreLaps"] = 0
-            d["lapNumber"] = 0
-            d["onTrackSeen"] = False
-        self._global_best_lap_time = None
-        self._qualifying_segment = None
-        self._segment_boundaries = []

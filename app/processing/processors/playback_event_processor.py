@@ -17,7 +17,7 @@ showing the real race-start. See `set_effective_start_utc`.
 """
 
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Optional
 
 from app.processing.message_bus import SessionMessageBus
 from app.processing.processors.base import Processor
@@ -95,25 +95,3 @@ class PlaybackEventProcessor(Processor):
         the captured commentary. Caller (preprocessor) computes it via
         ffmpeg silencedetect once the capture is complete."""
         self._bus.emit("playbackEvent", "audioStart", clock_time)
-
-    def snapshot(self) -> dict[str, Any]:
-        return {
-            "first_emitted": self._first_emitted,
-            "pre_start_emitted": self._pre_start_emitted,
-            "effective_start_utc": (
-                self._effective_start_utc.isoformat()
-                if self._effective_start_utc else None
-            ),
-        }
-
-    def restore(self, state: dict[str, Any]) -> None:
-        self._first_emitted = state.get("first_emitted", False)
-        self._pre_start_emitted = state.get("pre_start_emitted", False)
-        esu = state.get("effective_start_utc")
-        if esu:
-            self._effective_start_utc = datetime.fromisoformat(esu)
-
-    def reset(self) -> None:
-        self._first_emitted = False
-        self._pre_start_emitted = False
-        self._effective_start_utc = None

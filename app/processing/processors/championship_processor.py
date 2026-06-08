@@ -132,19 +132,3 @@ class ChampionshipProcessor(Processor):
             "drivers": drivers_out,
             "constructors": constructors_out,
         }, clock_time)
-
-    def snapshot(self) -> dict[str, Any]:
-        import copy
-        return {
-            "drivers": copy.deepcopy(self._drivers),
-            "teams": copy.deepcopy(self._teams),
-        }
-
-    def restore(self, state: dict[str, Any]) -> None:
-        import copy
-        self._drivers = copy.deepcopy(state.get("drivers", {}))
-        self._teams = copy.deepcopy(state.get("teams", {}))
-
-    def reset(self) -> None:
-        self._drivers.clear()
-        self._teams.clear()
