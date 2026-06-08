@@ -111,7 +111,6 @@ def _create_driver(num: str) -> dict[str, Any]:
         "penIncident": None,    # tuple-key for multi-driver incident resolution
         # Flag indicators (= separate from the PEN badge).
         "trackLimitsFlag": False,    # waving black-and-white-flag SVG
-        "blueFlagUntilMs": None,     # session-clock ms when blue-flag expires
         # Race-finished flag — true once the driver has crossed S/F
         # following (or coincident with) the chequered flag. Used to
         # render the chequered badge in standings_race.
@@ -780,14 +779,9 @@ class StandingsProcessor(Processor):
                 d["trackLimitsFlag"] = True
                 d["trackLimitsWarning"] = True
                 return
-            if flag == "BLUE" or "WAVED BLUE FLAG" in upper:
-                # 10 s of session time. Session clock-ms from offset.
-                offset_ms = None
-                if clock_time is not None and self._start_time is not None:
-                    offset_ms = int((clock_time - self._start_time).total_seconds() * 1000)
-                if offset_ms is not None:
-                    d["blueFlagUntilMs"] = offset_ms + 10_000
-                return
+            # Blue flags are owned by the fiaStewards processor (it emits
+            # the blueFlag indicator the standings tile renders). No
+            # standings-side handling.
             return
 
         # ── FIA STEWARDS messages ──────────────────────────────────────
