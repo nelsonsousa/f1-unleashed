@@ -26,11 +26,9 @@
         isSprintQuali: false,
 
         // Clock
-        utc: null,             // last UTC from clock message (Date)
-        utcRefTime: null,      // performance.now() when utc was set
+        utc: null,             // last UTC from clock message (Date) — first-frame fallback
         sessionTimeStr: null,  // raw "HH:MM:SS" from clock
         sessionTimeMs: null,   // parsed to ms
-        sessionTimeRef: null,  // performance.now() when session time was set
         sessionTimeFormat: null, // 'hms' or 'ms'
         clockStatus: 'pause',  // 'play' or 'pause'
         firstNonZeroSeen: false,
@@ -136,8 +134,6 @@
     function handleClock(data, offset_ms) {
         if (!data || typeof data !== 'object') return;
 
-        const now = performance.now();
-
         if (data.clockStatus) {
             state.clockStatus = data.clockStatus;
         }
@@ -151,7 +147,6 @@
         if (data.utc && (state.clockStatus === 'play' || !state.utc)) {
             const utcStr = data.utc.replace('Z', '+00:00');
             state.utc = new Date(utcStr);
-            state.utcRefTime = now;
         }
 
         if (data.sessionTime) {
@@ -167,7 +162,6 @@
                     // Anchor: at offset_ms the session clock showed ms
                     state.sessionTimeMs = ms;
                     state.sessionTimeAnchorMs = (offset_ms !== undefined) ? offset_ms : null;
-                    state.sessionTimeRef = now;
                 }
             }
         }
@@ -354,14 +348,8 @@
             playBtn.classList.toggle('playing', data.isPlaying);
         }
 
-        const now = performance.now();
-
-        // Re-anchor local time
-        if (state.utc) state.utcRefTime = now;
-
-        // Session time is offset-based (see updateClocks) — it needs no
-        // snapshot on play/pause.
-
+        // Track + session time are derived from the playback clock in
+        // updateClocks, so play/pause needs no re-anchoring here.
         startClockAnimation();
     }
 
