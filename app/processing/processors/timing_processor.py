@@ -136,8 +136,8 @@ class TimingProcessor(Processor):
         self._bus.on("trackStatus", self._handle_track_status)
 
     def _handle_track_status(self, data: Any, clock_time: datetime) -> None:
-        if isinstance(data, str):
-            self._under_red_flag = (data == "RED")
+        if isinstance(data, dict):
+            self._under_red_flag = (data.get("status") == "red")
 
     # Suppress STOP if the driver moved in the last ~3 s.
     _STOP_STATIONARY_WINDOW_S = 3.0

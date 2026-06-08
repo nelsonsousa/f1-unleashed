@@ -22,6 +22,7 @@
         markerFontSize: 40,
         markerStrokeWidth: 8,
         location: null,
+        lastFlashColour: null,
     };
 
     const TARGET_MARKER_RADIUS_PX = 10;
@@ -206,19 +207,24 @@
         }
     }
 
+    // Server emits trackStatus {status, message}. Flash once per colour
+    // change (the server re-emits on message changes too, e.g. SC DEPLOYED
+    // -> SC IN THIS LAP, which must not re-trigger the flash):
+    //   red       → blink red 3× (0.5 s on, 0.5 s off)
+    //   sc / vsc  → blink yellow 3× (0.5 s on, 0.5 s off)
+    //   green     → blink green 1× (1 s on)
+    const FLASH_COLOUR = { green: 'green', red: 'red', sc: 'yellow', vsc: 'yellow' };
+
     function handleTrackStatus(data) {
-        if (typeof data !== 'string') return;
-        const upper = data.toUpperCase();
-        // Per SME spec 2026-06-06:
-        //   RED       → blink red 3× (0.5 s on, 0.5 s off)
-        //   SC / VSC  → blink yellow 3× (0.5 s on, 0.5 s off)
-        //   GREEN     → blink green 1× (1 s on)
-        if (upper === 'RED' || upper === 'RED FLAG') {
+        if (!data || typeof data !== 'object') return;
+        const colour = FLASH_COLOUR[data.status] || null;
+        if (colour === state.lastFlashColour) return;
+        state.lastFlashColour = colour;
+        if (data.status === 'red') {
             flashTrack('#e10600', 3, 500, 500);
-        } else if (upper.includes('SC') || upper.includes('VSC')
-                   || upper.includes('SAFETY')) {
+        } else if (data.status === 'sc' || data.status === 'vsc') {
             flashTrack('#ffd700', 3, 500, 500);
-        } else if (upper === 'GREEN') {
+        } else if (data.status === 'green') {
             flashTrack('#00ff00', 1, 1000, 0);
         }
     }
