@@ -103,7 +103,7 @@
 
     function updateCarMarker(num, x, y) {
         const info = state.driverInfo[num] || {};
-        const color = info.color || TEAM_COLORS[num] || DEFAULT_CAR_COLOR;
+        const color = info.color || DEFAULT_CAR_COLOR;
         const tla = info.tla || num;
 
         let marker = state.carMarkers[num];
@@ -189,7 +189,7 @@
         for (const [num, info] of Object.entries(data)) {
             state.driverInfo[num] = {
                 tla: info.tla || num,
-                color: info.teamColour ? `#${info.teamColour}` : (TEAM_COLORS[num] || DEFAULT_CAR_COLOR),
+                color: info.color || DEFAULT_CAR_COLOR,
             };
         }
     }
@@ -220,7 +220,7 @@
         if (!state.trackSvg) return;
         // Clear all sector highlights
         state.trackSvg.querySelectorAll('[data-sector]').forEach(p => {
-            p.classList.remove('sector-yellow', 'sector-double-yellow');
+            p.classList.remove('sector-yellow');
         });
         // Highlight flagged sectors
         if (Array.isArray(data)) {
