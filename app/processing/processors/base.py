@@ -6,7 +6,6 @@ maintains its own state, and emits display-ready messages back to the bus.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any
 
 from app.processing.message_bus import SessionMessageBus
 
@@ -35,15 +34,3 @@ class Processor(ABC):
         Called once during initialization. Subclasses should call
         self._bus.on('TopicName', self._handle_topic) here.
         """
-
-    @abstractmethod
-    def snapshot(self) -> dict[str, Any]:
-        """Return current state for snapshot storage."""
-
-    @abstractmethod
-    def restore(self, state: dict[str, Any]) -> None:
-        """Restore state from a snapshot."""
-
-    @abstractmethod
-    def reset(self) -> None:
-        """Reset to initial state (for backward seeks past all snapshots)."""

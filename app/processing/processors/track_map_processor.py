@@ -54,12 +54,3 @@ class TrackMapProcessor(Processor):
 
         if self._positions:
             self._bus.emit("position", dict(self._positions), clock_time)
-
-    def snapshot(self) -> dict[str, Any]:
-        return {"positions": dict(self._positions)}
-
-    def restore(self, state: dict[str, Any]) -> None:
-        self._positions = state.get("positions", {})
-
-    def reset(self) -> None:
-        self._positions.clear()

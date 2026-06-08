@@ -90,32 +90,3 @@ class SessionInfoProcessor(Processor):
             "meetingName": self._meeting_name,
             "qualifyingPart": self._qualifying_part,
         }, clock_time)
-
-    def snapshot(self) -> dict[str, Any]:
-        return {
-            "expected_key": self._expected_key,
-            "session_type": self._session_type,
-            "session_name": self._session_name,
-            "session_status": self._session_status,
-            "gmt_offset": self._gmt_offset,
-            "meeting_name": self._meeting_name,
-            "qualifying_part": self._qualifying_part,
-        }
-
-    def restore(self, state: dict[str, Any]) -> None:
-        self._expected_key = state.get("expected_key")
-        self._session_type = state.get("session_type", "")
-        self._session_name = state.get("session_name", "")
-        self._session_status = state.get("session_status", "")
-        self._gmt_offset = state.get("gmt_offset", "")
-        self._meeting_name = state.get("meeting_name", "")
-        self._qualifying_part = state.get("qualifying_part", 0)
-
-    def reset(self) -> None:
-        self._expected_key = None
-        self._session_type = ""
-        self._session_name = ""
-        self._session_status = ""
-        self._gmt_offset = ""
-        self._meeting_name = ""
-        self._qualifying_part = 0

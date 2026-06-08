@@ -132,43 +132,6 @@ class LapPredictionProcessor(Processor):
         self._delta_buf: dict[str, list[tuple[datetime, float]]] = {}
         self._last_emit_ts: dict[str, datetime] = {}
 
-    # ── Processor base API ────────────────────────────────────────────
-
-    def snapshot(self) -> dict:
-        return {
-            "ref_actual_ms": dict(self._ref_actual_ms),
-            "ref_lap": dict(self._ref_lap),
-            "cur_lap": dict(self._cur_lap),
-            "cur_cls": dict(self._cur_cls),
-        }
-
-    def restore(self, state: dict) -> None:
-        self._ref_actual_ms = state.get("ref_actual_ms", {})
-        self._ref_lap = state.get("ref_lap", {})
-        self._cur_lap = state.get("cur_lap", {})
-        self._cur_cls = state.get("cur_cls", {})
-        self._ref_dists = {}
-        self._ref_times = {}
-        self._lap_samples = {}
-        self._delta_buf = {}
-        self._last_emit_ts = {}
-        self._lap_start_ts = {}
-        self._prev_dist = {}
-
-    def reset(self) -> None:
-        self._ref_dists.clear()
-        self._ref_times.clear()
-        self._ref_actual_ms.clear()
-        self._ref_lap.clear()
-        self._lap_samples.clear()
-        self._lap_actual_ms.clear()
-        self._cur_lap.clear()
-        self._cur_cls.clear()
-        self._lap_start_ts.clear()
-        self._prev_dist.clear()
-        self._delta_buf.clear()
-        self._last_emit_ts.clear()
-
     def subscribe(self) -> None:
         if not self._active:
             return

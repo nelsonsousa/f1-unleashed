@@ -68,24 +68,3 @@ class ClockProcessor(Processor):
             "sessionTime": self._remaining,
             "clockStatus": self._clock_status,
         }, clock_time)
-
-    def snapshot(self) -> dict[str, Any]:
-        return {
-            "gmt_offset_s": self._gmt_offset.total_seconds() if self._gmt_offset else None,
-            "utc": self._utc,
-            "remaining": self._remaining,
-            "clock_status": self._clock_status,
-        }
-
-    def restore(self, state: dict[str, Any]) -> None:
-        offset_s = state.get("gmt_offset_s")
-        self._gmt_offset = timedelta(seconds=offset_s) if offset_s is not None else None
-        self._utc = state.get("utc")
-        self._remaining = state.get("remaining")
-        self._clock_status = state.get("clock_status", "pause")
-
-    def reset(self) -> None:
-        self._gmt_offset = None
-        self._utc = None
-        self._remaining = None
-        self._clock_status = "pause"

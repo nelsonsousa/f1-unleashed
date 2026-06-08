@@ -100,24 +100,3 @@ class SessionDataProcessor(Processor):
             return True
         cutoff = self._first_valid_time - timedelta(hours=1)
         return utc >= cutoff
-
-    def snapshot(self) -> dict[str, Any]:
-        return {
-            "first_valid_time": self._first_valid_time.isoformat() if self._first_valid_time else None,
-            "qualifying_part": self._qualifying_part,
-            "session_status": self._session_status,
-            "finalised": self._finalised,
-        }
-
-    def restore(self, state: dict[str, Any]) -> None:
-        fvt = state.get("first_valid_time")
-        self._first_valid_time = datetime.fromisoformat(fvt) if fvt else None
-        self._qualifying_part = state.get("qualifying_part", 0)
-        self._session_status = state.get("session_status")
-        self._finalised = state.get("finalised", False)
-
-    def reset(self) -> None:
-        self._first_valid_time = None
-        self._qualifying_part = 0
-        self._session_status = None
-        self._finalised = False
