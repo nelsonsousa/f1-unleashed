@@ -523,7 +523,8 @@ class StandingsProcessor(Processor):
             finish — snapshot their current lap so the next NumberOfLaps
             increment can flip their `finished` flag.
         """
-        if data != "CHEQUERED" or self._chequered_seen:
+        if not isinstance(data, dict) or data.get("status") != "finished" \
+                or self._chequered_seen:
             return
         self._chequered_seen = True
 

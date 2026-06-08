@@ -185,10 +185,13 @@ class TelemetryProcessor(Processor):
                 return
 
     def _handle_track_status(self, data: Any, clock_time: datetime) -> None:
-        if not isinstance(data, str): return
-        if data != self._current_track_status:
-            self._current_track_status = data
-            self._track_status_history.append((clock_time, data))
+        # trackStatus is now {status, message}; only the status enum matters
+        # here (sc/vsc, used by _lap_track_status for lapAffectedBy).
+        if not isinstance(data, dict): return
+        status = data.get("status")
+        if status != self._current_track_status:
+            self._current_track_status = status
+            self._track_status_history.append((clock_time, status))
 
     def _drv(self, num: str) -> DriverData:
         d = self._drivers.get(num)
@@ -625,15 +628,15 @@ class TelemetryProcessor(Processor):
                 active = status
             else:
                 break
-        seen_sc = active == "SC"
-        seen_vsc = active == "VSC"
+        seen_sc = active == "sc"
+        seen_vsc = active == "vsc"
         for ts, status in self._track_status_history:
             if ts <= start_ts:
                 continue
             if ts >= end_ts:
                 break
-            if status == "SC": seen_sc = True
-            elif status == "VSC": seen_vsc = True
+            if status == "sc": seen_sc = True
+            elif status == "vsc": seen_vsc = True
         if seen_sc: return "SC"
         if seen_vsc: return "VSC"
         return None
