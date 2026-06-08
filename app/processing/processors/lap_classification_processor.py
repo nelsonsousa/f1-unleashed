@@ -976,27 +976,12 @@ class LapClassificationProcessor(Processor):
         # per driver fires with the freshly-mutated _lap_history map.
         # Prefer the HIGHEST lap as the header (= a new-lap start beats
         # a retroactive reclassification of an older lap).
+        # Body deferred to _flush_dirty (called by every top-level
+        # handler). Park the header (lap, status); the batched emit
+        # fires there.
         cur = self._dirty_header.get(num)
         if cur is None or lap >= cur[0]:
             self._dirty_header[num] = (lap, status)
-        return
-        payload = {"driverNum": num, "lapNumber": lap, "status": status}
-        self._bus.emit("~lap-status", payload, clock_time)
-
-        # Look up the qualifying segment stamped at _start_lap (never
-        # overwrite — re-classification refinements would otherwise drag
-        # the lap into the wrong segment when they fire during a later
-        # qualifying part).
-        if self._is_qualifying:
-            seg_map = self._lap_segment.setdefault(num, {})
-            if lap not in seg_map:
-                seg_map[lap] = self._current_qual_part
-            seg = seg_map[lap]
-        else:
-            seg = 0
-
-        # Body deferred to _flush_dirty (called by every top-level handler).
-        return
 
     def _flush_dirty(self, clock_time: datetime) -> None:
         """Emit one batched message per dirty driver.
@@ -1029,6 +1014,12 @@ class LapClassificationProcessor(Processor):
                 "segment": seg,
                 "laps": {str(k): v for k, v in self._lap_history.get(num, {}).items()},
                 "lapSegments": lap_segments,
+            }, clock_time)
+            # Internal topic for run_plan + telemetry_display processors
+            # (current-lap status). Emitted alongside the client-facing
+            # lapClassification:{num} topic.
+            self._bus.emit("~lap-status", {
+                "driverNum": num, "lapNumber": lap, "status": status,
             }, clock_time)
 
     # ── Snapshot / Restore / Reset ──
