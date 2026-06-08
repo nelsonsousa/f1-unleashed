@@ -2,12 +2,11 @@
  * Track Map Tile
  *
  * Listens to:
- *   - trackGeometry: load track SVG based on session location
+ *   - trackCircuit: load the track SVG (server-normalised circuit name)
  *   - position: car positions {num: [x, y, distPct]}
  *   - driverList: driver identity (tla, teamColour)
- *   - trackStatus: flash track on GREEN/RED/SC
+ *   - trackStatus: flash track on green/red/sc/vsc
  *   - yellowFlag: highlight sectors under yellow
- *   - driverFlag: highlight individual drivers (blue, B&W)
  */
 
 (function() {
@@ -177,18 +176,6 @@
     // Handlers
     // =========================================================================
 
-    function handleSessionInfo(data) {
-        if (!data || typeof data !== 'object') return;
-        // Load track from meeting name — need location from trackGeometry
-    }
-
-    function handleTrackGeometry(data) {
-        if (!data || !state.location) {
-            // trackGeometry arrives before sessionInfo sometimes
-            // Store it and load when we have location
-        }
-    }
-
     function handlePosition(data) {
         if (!data || typeof data !== 'object') return;
         for (const [num, coords] of Object.entries(data)) {
@@ -245,56 +232,6 @@
         }
     }
 
-    function handleDriverFlag(data) {
-        if (!data || typeof data !== 'object') return;
-        const num = data.driverNumber;
-        const flag = data.flag;
-        const marker = state.carMarkers[num];
-        if (!marker) return;
-
-        // Brief blink effect
-        let count = 0;
-        const circle = marker.querySelector('circle');
-        const origFill = circle?.getAttribute('fill');
-        const origStroke = circle?.getAttribute('stroke');
-
-        const blinkColor = flag === 'blue' ? '#0000ff' : flag === 'blackAndWhite' ? '#ffffff' : null;
-        if (!blinkColor) return;
-
-        const interval = setInterval(() => {
-            count++;
-            if (count > 6) {
-                clearInterval(interval);
-                if (circle) {
-                    circle.setAttribute('fill', origFill);
-                    circle.setAttribute('stroke', origStroke);
-                }
-                return;
-            }
-            if (circle) {
-                if (count % 2 === 1) {
-                    circle.setAttribute('stroke', blinkColor);
-                    circle.setAttribute('stroke-width', state.markerStrokeWidth * 3);
-                } else {
-                    circle.setAttribute('stroke', '#ffffff');
-                    circle.setAttribute('stroke-width', state.markerStrokeWidth);
-                }
-            }
-        }, 300);
-    }
-
-    // Load track from sessionInfo
-    messageBus.on('sessionInfo', (data) => {
-        if (!data || typeof data !== 'object') return;
-        // We need the location — it's in the meeting info
-        // But sessionInfo from our processor has meetingName, not location
-        // Track loading is triggered by trackGeometry which comes from PositionProcessor
-        // which has already parsed the SVG. We need the location from SessionInfo raw topic.
-        // For now, use the trackGeometry message which means SVG was already parsed server-side.
-    });
-
-    // When trackGeometry arrives, load the SVG based on the session
-    // The session name in the URL contains the location
     // The circuit comes from the server (SessionInfo.Meeting.Circuit.ShortName,
     // normalised to the SVG basename, e.g. "Monte_Carlo"). On connect/seek
     // the latest trackCircuit row is restored, so this fires before drawing.
@@ -308,7 +245,6 @@
     messageBus.on('driverList', handleDriverList);
     messageBus.on('trackStatus', handleTrackStatus);
     messageBus.on('yellowFlag', handleYellowFlag);
-    messageBus.on('driverFlag', handleDriverFlag);
 
     messageBus.on('state:reset', () => {
         // Clear car markers on seek
