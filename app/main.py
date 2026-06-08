@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 import asyncio
 from contextlib import asynccontextmanager
@@ -59,8 +60,11 @@ async def _chequered_grace_expired(session_id: str, now_utc: datetime) -> bool:
     if not row:
         _chequered_first_seen.pop(session_id, None)
         return False
-    latest = row[0].strip('"')
-    if latest != "CHEQUERED":
+    try:
+        latest_status = json.loads(row[0]).get("status")
+    except (ValueError, TypeError, AttributeError):
+        latest_status = None
+    if latest_status != "finished":
         # Track returned to GREEN/etc — reset the timer (e.g. quali Q1
         # CHEQUERED followed by Q2 GREEN cancels this safeguard until
         # the final chequered flag).

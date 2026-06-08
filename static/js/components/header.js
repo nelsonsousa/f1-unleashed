@@ -281,63 +281,30 @@
     // Track Status
     // =========================================================================
 
+    // Server-computed badge state {status, message}. The client only maps
+    // the status enum to a colour class and renders the message text.
+    const TRACK_STATUS_COLOR = {
+        green: 'green',
+        red: 'red',
+        sc: 'yellow',
+        vsc: 'yellow',
+        inactive: 'white',
+        finished: 'white',
+    };
+
     function handleTrackStatus(data) {
-        if (typeof data !== 'string') return;
+        if (!data || typeof data !== 'object') return;
 
-        const upper = data.toUpperCase().trim();
-        let text = data;
-        let color = 'white';
-
-        if (upper === 'TRACK_CLEAR' || upper === 'TRACK CLEAR') {
-            // Pre-session "Track Clear" indicator — white text on a
-            // transparent badge.
-            text = 'TRACK CLEAR';
-            color = 'track-clear';
-        } else if (upper === 'GREEN' || upper === 'ALLCLEAR') {
-            // Hard-reset on GREEN: replaces any lingering SC/VSC text so
-            // the badge transitions back even if the only signal was the
-            // raw TrackStatus topic flipping to "1".
-            text = 'GREEN';
-            color = 'green';
-        } else if (upper === 'YELLOW') {
-            text = 'YELLOW';
-            color = 'yellow';
-        } else if (upper === 'RED' || upper.includes('RED FLAG')) {
-            text = 'RED FLAG';
-            color = 'red';
-        } else if (upper === 'CHEQUERED' || upper.includes('CHEQUERED')) {
-            text = 'FINISHED';
-            color = 'white';
-        } else if (upper === 'SC') {
-            // Standalone token from raw TrackStatus code "4". Keep the
-            // short form — the header status badge has limited width.
-            text = 'SC';
-            color = 'yellow';
-        } else if (upper === 'VSC') {
-            text = 'VSC';
-            color = 'yellow';
-        } else if (upper.includes('VIRTUAL SAFETY CAR') || upper.startsWith('VSC')) {
-            // Multi-word VSC variants (e.g. "VSC ENDING") — abbreviate.
-            text = 'VSC';
-            color = 'yellow';
-        } else if (upper.includes('SAFETY CAR') || upper.startsWith('SC ')) {
-            // Multi-word SC variants (e.g. "SC IN THIS LAP", "SAFETY CAR
-            // DEPLOYED") — abbreviate to fit the badge.
-            text = 'SC';
-            color = 'yellow';
-        }
+        const color = TRACK_STATUS_COLOR[data.status] || 'white';
+        const text = data.message || '--';
 
         state.trackStatusText = text;
         state.trackStatusColor = color;
 
         const el = document.getElementById('trackStatus');
         const textEl = document.getElementById('trackStatusText');
-        if (el) {
-            el.className = `track-status ${color}`;
-        }
-        if (textEl) {
-            textEl.textContent = text;
-        }
+        if (el) el.className = `track-status ${color}`;
+        if (textEl) textEl.textContent = text;
     }
 
     // =========================================================================
