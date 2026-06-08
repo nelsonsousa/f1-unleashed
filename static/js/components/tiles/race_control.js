@@ -203,6 +203,8 @@
 
         let rcHtml = '';
         for (const msg of rcMessages) {
+            // Colour is fully server-computed (race_control_processor);
+            // the client just maps the colour name to its CSS class.
             let colorClass = '';
             if (msg.color === 'yellow') colorClass = 'rc-yellow';
             else if (msg.color === 'red') colorClass = 'rc-red';
@@ -210,24 +212,6 @@
             else if (msg.color === 'blue') colorClass = 'rc-blue';
             else if (msg.color === 'chequered') colorClass = 'rc-chequered';
             else if (msg.color === 'orange') colorClass = 'rc-orange';
-            // FIA stewards highlighting:
-            //   - "UNDER INVESTIGATION" / "WILL BE INVESTIGATED" → yellow.
-            //   - "INCIDENT ... NOTED" → no highlight (= not a penalty,
-            //     just a record). The server processor's PENALTY-keyword
-            //     match is too eager and flags NOTED messages because
-            //     they often mention the word PENALTY in their cause
-            //     (e.g. "NOTED - FAILING TO SERVE TIME PENALTY").
-            //   - "PENALTY ... SERVED" → no highlight. Already-served
-            //     penalties are after-the-fact records, not an active
-            //     penalty being awarded; same upstream eager-match.
-            const _msg = msg.message || '';
-            if (/UNDER INVESTIGATION|WILL BE INVESTIGATED/i.test(_msg)) {
-                colorClass = 'rc-yellow';
-            } else if (/INCIDENT.*NOTED/i.test(_msg)) {
-                colorClass = '';
-            } else if (/PENALTY/i.test(_msg) && /SERVED/i.test(_msg)) {
-                colorClass = '';
-            }
 
             const timeStr = toLocalTimeStr(msg.timestamp);
             rcHtml += `<div class="race-control-msg ${colorClass}">` +

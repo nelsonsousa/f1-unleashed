@@ -55,6 +55,27 @@ def _is_penalty_message(message: str) -> bool:
     return any(kw in upper for kw in _PENALTY_KEYWORDS)
 
 
+def _other_message_color(message: str) -> str:
+    """Display colour for Category='Other' RCM (stewards / penalty text).
+
+    F1 gives these no structured field, so they're matched on the message:
+      UNDER INVESTIGATION                  → yellow (active, in-session)
+      penalty awarded (not noted/served)   → orange
+      everything else                      → clear
+        (WILL BE INVESTIGATED = post-session, no in-session penalty; NOTED =
+         record only; PENALTY ... SERVED = after-the-fact; plus track limits,
+         track surface, recovery, weather, session-info messages)
+    """
+    upper = (message or "").upper()
+    if "UNDER INVESTIGATION" in upper:
+        return "yellow"
+    if (_is_penalty_message(message)
+            and "NOTED" not in upper and "SERVED" not in upper
+            and "WILL BE INVESTIGATED" not in upper):
+        return "orange"
+    return "clear"
+
+
 class RaceControlProcessor(Processor):
     """Processes race control messages into display topics."""
 
@@ -106,17 +127,15 @@ class RaceControlProcessor(Processor):
         flag = msg.get("Flag", "")
 
         # raceControlMessages — emit full accumulated list each time.
-        # Penalty-related messages (race only) override colour to orange
-        # so the race-control tile can flag them prominently.
+        # Colour is fully server-computed: Flag carries the flag colour,
+        # SafetyCar is yellow, and "Other" (stewards/penalties — no structured
+        # field) is text-matched (see _other_message_color).
         if category == "Flag":
             color = _flag_to_color(flag)
         elif category == "SafetyCar":
             color = "yellow"
         else:
-            color = "clear"
-
-        if _is_penalty_message(message):
-            color = "orange"
+            color = _other_message_color(message)
 
         self._all_messages.append({
             "timestamp": timestamp,
