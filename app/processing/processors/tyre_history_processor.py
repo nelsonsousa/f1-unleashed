@@ -206,17 +206,3 @@ class TyreHistoryProcessor(Processor):
         self._bus.emit("display:tyre-history", {
             "drivers": drivers,
         }, clock_time)
-
-    def snapshot(self) -> dict[str, Any]:
-        import copy
-        return {"drivers": copy.deepcopy(self._drivers)}
-
-    def restore(self, state: dict[str, Any]) -> None:
-        import copy
-        self._drivers = copy.deepcopy(state.get("drivers", {}))
-
-    def reset(self) -> None:
-        for d in self._drivers.values():
-            d["position"] = 99
-            d["rawStints"] = []
-            d["tyreSets"] = []

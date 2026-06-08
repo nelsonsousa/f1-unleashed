@@ -1031,51 +1031,6 @@ class LapClassificationProcessor(Processor):
                 "lapSegments": lap_segments,
             }, clock_time)
 
-    # ── Snapshot / Restore / Reset ──
-
-    def snapshot(self) -> dict[str, Any]:
-        return {
-            "pending_out": dict(self._pending_out),
-            "collecting": dict(self._collecting),
-            "timing_lap": dict(self._timing_lap),
-            "lap_type": dict(self._lap_type),
-            "classification": dict(self._classification),
-            "is_slow": dict(self._is_slow),
-            "prev_classification": dict(self._prev_classification),
-            "last_dist_pct": dict(self._last_dist_pct),
-            "best_ref": {k: list(v) for k, v in self._best_ref.items()},
-            "best_avg_speed": dict(self._best_avg_speed),
-            "prev_fast_avg_speed": dict(self._prev_fast_avg_speed),
-            "lap_history": {k: dict(v) for k, v in self._lap_history.items()},
-            "lap_actual_ms": {k: dict(v) for k, v in self._lap_actual_ms.items()},
-            "lap_segment": {k: dict(v) for k, v in self._lap_segment.items()},
-            "current_qual_part": self._current_qual_part,
-        }
-
-    def restore(self, state: dict[str, Any]) -> None:
-        self._pending_out = state.get("pending_out", {})
-        self._collecting = state.get("collecting", {})
-        self._lap_segment = {k: dict(v) for k, v in state.get("lap_segment", {}).items()}
-        self._current_qual_part = state.get("current_qual_part", 0)
-        self._timing_lap = state.get("timing_lap", {})
-        self._lap_type = state.get("lap_type", {})
-        self._classification = state.get("classification", {})
-        self._is_slow = state.get("is_slow", {})
-        self._prev_classification = state.get("prev_classification", {})
-        self._last_dist_pct = state.get("last_dist_pct", {})
-        ref = state.get("best_ref", {})
-        self._best_ref = {k: [tuple(p) for p in v] for k, v in ref.items()}
-        self._best_ref_pcts = {k: [p for p, _ in v] for k, v in self._best_ref.items()}
-        self._best_avg_speed = state.get("best_avg_speed", {})
-        self._prev_fast_avg_speed = state.get("prev_fast_avg_speed", {})
-        self._lap_history = {k: {int(lk): lv for lk, lv in v.items()}
-                            for k, v in state.get("lap_history", {}).items()}
-        self._lap_actual_ms = {k: {int(lk): int(lv) for lk, lv in v.items()}
-                               for k, v in state.get("lap_actual_ms", {}).items()}
-        self._slow_window = {}
-        self._lap_speeds = {}
-        self._last_emitted_cls = {}
-
     def finalize_session(self, last_clock: datetime) -> None:
         """At session end: ensure every lap from 1 to NL_max has a
         classification entry AND ensure each driver's last lap_class
@@ -1121,24 +1076,3 @@ class LapClassificationProcessor(Processor):
                 "laps": payload_laps,
                 "lapSegments": seg,
             }, last_clock)
-
-    def reset(self) -> None:
-        self._dirty_header.clear()
-        self._last_emitted_per_lap.clear()
-        self._pending_out.clear()
-        self._collecting.clear()
-        self._timing_lap.clear()
-        self._lap_type.clear()
-        self._classification.clear()
-        self._slow_window.clear()
-        self._is_slow.clear()
-        self._prev_classification.clear()
-        self._last_dist_pct.clear()
-        self._best_ref.clear()
-        self._best_ref_pcts.clear()
-        self._best_avg_speed.clear()
-        self._prev_fast_avg_speed.clear()
-        self._lap_history.clear()
-        self._lap_actual_ms.clear()
-        self._lap_speeds.clear()
-        self._last_emitted_cls.clear()

@@ -322,22 +322,3 @@ class TrackStatusProcessor(Processor):
             emit_event = False
         if emit_event:
             self._bus.emit("event", status, clock_time)
-
-    # ─────────────────────────── Snapshot ─────────────────────────────
-
-    def snapshot(self) -> dict[str, Any]:
-        return {
-            "last_status": self._last_status,
-            "last_rcm_key": self._last_rcm_key,
-            "green_light_count": self._green_light_count,
-        }
-
-    def restore(self, state: dict[str, Any]) -> None:
-        self._last_status = state.get("last_status")
-        self._last_rcm_key = state.get("last_rcm_key", -1)
-        self._green_light_count = state.get("green_light_count", 0)
-
-    def reset(self) -> None:
-        self._last_status = None
-        self._last_rcm_key = -1
-        self._green_light_count = 0

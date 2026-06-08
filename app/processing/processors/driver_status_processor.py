@@ -90,17 +90,3 @@ class DriverStatusProcessor(Processor):
                     self._left_initial_pit[num] = True
                 self._status[num] = new_status
                 self._bus.emit(f"driverStatus:{num}", new_status, clock_time)
-
-    def snapshot(self) -> dict[str, Any]:
-        return {
-            "status": dict(self._status),
-            "left_initial_pit": dict(self._left_initial_pit),
-        }
-
-    def restore(self, state: dict[str, Any]) -> None:
-        self._status = state.get("status", {})
-        self._left_initial_pit = state.get("left_initial_pit", {})
-
-    def reset(self) -> None:
-        self._status.clear()
-        self._left_initial_pit.clear()

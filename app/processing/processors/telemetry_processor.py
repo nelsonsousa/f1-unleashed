@@ -756,14 +756,6 @@ class TelemetryProcessor(Processor):
             }
             drv.emitted.add(n)
 
-    # ── Persistence stubs ───────────────────────────────────────────────
-
-    def snapshot(self): return {}
-    def restore(self, state): pass
-
-    def reset(self) -> None:
-        self._drivers.clear()
-
     # ── External hooks (used by LapPredictionProcessor) ─────────────────
 
     def resolve_lap_start(self, num: str, lap_n: int):

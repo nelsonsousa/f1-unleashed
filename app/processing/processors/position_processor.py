@@ -137,20 +137,3 @@ class PositionProcessor(Processor):
 
         if changed and cars:
             self._bus.emit("position", cars, clock_time)
-
-    def snapshot(self) -> dict[str, Any]:
-        return {
-            "last_seg": dict(self._last_seg),
-            "last_pos": {k: list(v) for k, v in self._last_pos.items()},
-            "geometry_emitted": self._geometry_emitted,
-        }
-
-    def restore(self, state: dict[str, Any]) -> None:
-        self._last_seg = state.get("last_seg", {})
-        self._last_pos = {k: tuple(v) for k, v in state.get("last_pos", {}).items()}
-        self._geometry_emitted = state.get("geometry_emitted", False)
-
-    def reset(self) -> None:
-        self._last_seg.clear()
-        self._last_pos.clear()
-        self._geometry_emitted = False

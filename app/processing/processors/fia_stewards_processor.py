@@ -78,26 +78,6 @@ class FiaStewardsProcessor(Processor):
         self._bus.on("RaceControlMessages", self._handle_rcm)
         self._bus.on("SessionInfo", self._handle_session_info)
 
-    # ── Snapshot / restore ─────────────────────────────────────────────
-
-    def snapshot(self) -> dict:
-        return {
-            "stack": list(self._stack),
-            "next_id": self._next_id,
-            "last_rcm_index": self._last_rcm_index,
-        }
-
-    def restore(self, state: dict) -> None:
-        self._stack = list(state.get("stack") or [])
-        self._next_id = int(state.get("next_id") or 1)
-        self._last_rcm_index = int(state.get("last_rcm_index") or -1)
-
-    def reset(self) -> None:
-        self._stack.clear()
-        self._next_id = 1
-        self._last_rcm_index = -1
-        self._start_time = None
-
     # ── Handlers ───────────────────────────────────────────────────────
 
     def _handle_session_info(self, data: Any, clock_time: datetime) -> None:

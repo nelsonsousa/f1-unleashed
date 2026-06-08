@@ -79,20 +79,3 @@ class DriverListProcessor(Processor):
         while len(self._standings) < idx:
             self._standings.append("")
         self._standings.insert(idx, num)
-
-    def snapshot(self) -> dict[str, Any]:
-        return {
-            "drivers": dict(self._drivers),
-            "standings": list(self._standings),
-            "initialized": self._initialized,
-        }
-
-    def restore(self, state: dict[str, Any]) -> None:
-        self._drivers = state.get("drivers", {})
-        self._standings = state.get("standings", [])
-        self._initialized = state.get("initialized", False)
-
-    def reset(self) -> None:
-        self._drivers.clear()
-        self._standings.clear()
-        self._initialized = False
