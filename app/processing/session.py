@@ -772,7 +772,7 @@ class SessionEngine:
         try:
             row = self._db._conn.execute(
                 "SELECT offset_ms FROM messages "
-                "WHERE topic='trackStatus' AND data = '\"CHEQUERED\"' "
+                "WHERE topic='trackStatus' AND data LIKE '%CHECKERED FLAG%' "
                 "ORDER BY offset_ms DESC LIMIT 1"
             ).fetchone()
         except Exception:
