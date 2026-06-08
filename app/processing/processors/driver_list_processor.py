@@ -12,6 +12,7 @@ from typing import Any
 
 from app.processing.message_bus import SessionMessageBus
 from app.processing.processors.base import Processor
+from app.processing.processors.standings_processor import TEAM_COLORS, DEFAULT_CAR_COLOR
 
 
 class DriverListProcessor(Processor):
@@ -64,7 +65,15 @@ class DriverListProcessor(Processor):
             info_changed = True   # always emit on first message
 
         if info_changed:
-            self._bus.emit("driverList", dict(self._drivers), clock_time)
+            # Resolve the display colour server-side: F1's TeamColour when
+            # present, else the hardcoded team-colour fallback. Consumers
+            # render `color` directly instead of re-deriving it.
+            payload = {
+                num: {**d, "color": (f"#{d['teamColour']}" if d.get("teamColour")
+                                     else TEAM_COLORS.get(num, DEFAULT_CAR_COLOR))}
+                for num, d in self._drivers.items()
+            }
+            self._bus.emit("driverList", payload, clock_time)
         if order_changed:
             self._bus.emit("standings", [n for n in self._standings if n], clock_time)
 
