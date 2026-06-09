@@ -1,3 +1,6 @@
+# DEPRECATED — marked for deletion (processor redesign). Functionality absorbed
+# by telemetry + lap_classification. Delete once the run-plan tile is migrated
+# and no client consumes display:run-plan. See memory/processor_redesign_plan.md.
 """
 Run Plan Processor — lap grid per driver with classification.
 

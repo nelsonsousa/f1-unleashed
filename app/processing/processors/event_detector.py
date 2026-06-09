@@ -1,3 +1,6 @@
+# DEPRECATED — marked for deletion (processor redesign). Scrubber events will
+# come from track/session status instead. Delete once the UI is revised and no
+# client consumes its topics. See memory/processor_redesign_plan.md.
 """
 Event Detector — scrubber event markers.
 
