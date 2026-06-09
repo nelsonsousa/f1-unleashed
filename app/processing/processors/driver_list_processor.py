@@ -1,10 +1,12 @@
 """
-Driver List Processor — driver identity and standings order.
+Driver List Processor — driver identity (TLA, team, colour).
 
 Subscribes to: DriverList
 Emits:
-  - display:driverList  (first message: driver info keyed by car number)
-  - display:standings    (ordered array of car numbers by position)
+  - driverList  (driver info keyed by car number, with resolved display colour)
+
+Standings ORDER is owned by the StandingsProcessor (from live TimingData
+Position), not derived here from the mostly-static DriverList Line.
 """
 
 from datetime import datetime
@@ -16,12 +18,11 @@ from app.processing.processors.standings_processor import TEAM_COLORS, DEFAULT_C
 
 
 class DriverListProcessor(Processor):
-    """Extracts driver info and maintains standings order from DriverList."""
+    """Extracts driver identity (TLA, team, colour) from DriverList."""
 
     def __init__(self, bus: SessionMessageBus, session_type: str):
         super().__init__(bus, session_type)
         self._drivers: dict[str, dict] = {}   # num -> {tla, teamName, teamColour}
-        self._standings: list[str] = []        # car numbers ordered by position
         self._initialized = False
 
     def subscribe(self) -> None:
@@ -38,7 +39,6 @@ class DriverListProcessor(Processor):
         # TeamColour arriving in a later incremental update (canonical
         # case observed for Canada FP1 2026).
         info_changed = False    # tla / teamName / teamColour changed
-        order_changed = False   # Line (standings order) changed
         for num, info in data.items():
             if not isinstance(info, dict):
                 continue
@@ -55,10 +55,6 @@ class DriverListProcessor(Processor):
                 if v and existing.get(dst) != v:
                     existing[dst] = v
                     info_changed = True
-            line = info.get("Line")
-            if line is not None:
-                self._set_position(num, int(line))
-                order_changed = True
 
         if not self._initialized:
             self._initialized = True
@@ -74,17 +70,3 @@ class DriverListProcessor(Processor):
                 for num, d in self._drivers.items()
             }
             self._bus.emit("driverList", payload, clock_time)
-        if order_changed:
-            self._bus.emit("standings", [n for n in self._standings if n], clock_time)
-
-    def _set_position(self, num: str, line: int) -> None:
-        """Place driver at the given 1-based position in standings."""
-        # Remove from current position if present
-        if num in self._standings:
-            self._standings.remove(num)
-
-        # Extend array if needed
-        idx = line - 1
-        while len(self._standings) < idx:
-            self._standings.append("")
-        self._standings.insert(idx, num)
