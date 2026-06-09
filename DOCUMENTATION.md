@@ -2,7 +2,9 @@
 
 A Formula 1 live-timing and replay application with synchronised audio commentary, multi-source analysis, and per-session deep dives.
 
-**Release 1.0.0** — May 7, 2026, celebrating Mclaren's 1000th Grand Prix and the 2026 Monaco Grand Prix. The server listens on port **1950**, an homage to the first F1 World Championship.
+**Release 1.0.0** — May 7, 2026, day of the 2016 Monaco Grand Prix. Celebrating Mclaren's 1000th Grand Prix and 60th anniversary of their first Grand Prix (1966 Monaco Grand Prix).
+
+The server listens on port **1950**, an homage to the first F1 World Championship.
 
 This document describes what the application does and how it's structured. For install instructions see [README.md](README.md).
 

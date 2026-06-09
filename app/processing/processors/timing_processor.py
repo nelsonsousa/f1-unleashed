@@ -219,22 +219,8 @@ class TimingProcessor(Processor):
                 self._state[num] = {}
             _deep_merge(self._state[num], patch)
 
-            # --- driverStatus: Retired / Stopped ---
-            if patch.get("Retired") is True:
-                self._bus.emit(f"driverStatus:{num}", "RET", clock_time)
-            elif patch.get("Stopped") is True:
-                # F1 sometimes flags Stopped=true during a brief speed-sensor
-                # dropout while the car keeps rolling. Only emit STOP if the
-                # driver has actually been stationary for the last few seconds.
-                last_move = self._last_movement_ts.get(num)
-                if last_move is None:
-                    # We've never seen them move yet — accept the flag.
-                    self._bus.emit(f"driverStatus:{num}", "STOP", clock_time)
-                else:
-                    elapsed = (clock_time - last_move).total_seconds()
-                    if elapsed >= self._STOP_STATIONARY_WINDOW_S:
-                        self._bus.emit(f"driverStatus:{num}", "STOP", clock_time)
-                    # else: car is still rolling, ignore the flag.
+            # driverStatus (RET/STOP/OUT/PIT/TRACK) is now owned solely by
+            # DriverStatusProcessor (priority-max of the TimingData flags).
 
             # --- driverGap / driverInt (race only) ---
             if self._is_race:
