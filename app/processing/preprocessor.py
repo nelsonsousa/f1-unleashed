@@ -42,6 +42,8 @@ from app.processing.processors.standings_processor import StandingsProcessor
 from app.processing.processors.telemetry_processor import TelemetryProcessor
 from app.processing.processors.timing_processor import TimingProcessor
 from app.processing.processors.lap_timing_processor import LapTimingProcessor
+from app.processing.processors.driver_gap_processor import DriverGapProcessor
+from app.processing.processors.sector_timing_processor import SectorTimingProcessor
 from app.processing.processors.track_status_processor import TrackStatusProcessor
 from app.processing.processors.weather_processor import WeatherProcessor
 from app.processing.lap_reclassification import reclassify_session
@@ -749,6 +751,8 @@ class SessionPreProcessor:
             DriverStatusProcessor(self._bus, self._session_type),
             self._timing_proc,
             LapTimingProcessor(self._bus, self._session_type),
+            DriverGapProcessor(self._bus, self._session_type),
+            SectorTimingProcessor(self._bus, self._session_type),
             StandingsProcessor(self._bus, self._session_type),
             RaceControlProcessor(self._bus, self._session_type),
             # FIA Stewards stack — only meaningful for race + sprint;

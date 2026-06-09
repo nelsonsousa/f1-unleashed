@@ -222,15 +222,9 @@ class TimingProcessor(Processor):
             # driverStatus (RET/STOP/OUT/PIT/TRACK) is now owned solely by
             # DriverStatusProcessor (priority-max of the TimingData flags).
 
-            # --- driverGap / driverInt (race only) ---
-            if self._is_race:
-                if "GapToLeader" in patch:
-                    self._bus.emit(f"driverGap:{num}", patch["GapToLeader"], clock_time)
-                if "IntervalToPositionAhead" in patch:
-                    val = patch["IntervalToPositionAhead"]
-                    if isinstance(val, dict):
-                        val = val.get("Value", "")
-                    self._bus.emit(f"driverInt:{num}", val, clock_time)
+            # driverGap / driverInt now owned by DriverGapProcessor.
+            # (sectors/mini-sectors are also split out into
+            # SectorTimingProcessor; driverTiming stays until standings migrates.)
 
             # --- driverTiming: apply sectors/segments/times to current lap FIRST ---
             if num not in self._lap_state:
