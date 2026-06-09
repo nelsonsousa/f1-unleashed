@@ -35,7 +35,6 @@ from app.processing.processors.playback_event_processor import PlaybackEventProc
 from app.processing.processors.position_processor import PositionProcessor
 from app.processing.processors.race_control_processor import RaceControlProcessor
 from app.processing.processors.fia_stewards_processor import FiaStewardsProcessor
-from app.processing.processors.race_laps_processor import RaceLapsProcessor
 from app.processing.processors.session_data_processor import SessionDataProcessor
 from app.processing.processors.session_info_processor import SessionInfoProcessor
 from app.processing.processors.standings_processor import StandingsProcessor
@@ -761,8 +760,6 @@ class SessionPreProcessor:
             # the processor itself no-ops if registered elsewhere.
             *([FiaStewardsProcessor(self._bus, self._session_type)]
               if self._session_type in ("race", "sprint") else []),
-            *([RaceLapsProcessor(self._bus, self._session_type)]
-              if self._session_type == "race" else []),
             PositionProcessor(self._bus, self._session_type),
             telem_proc,
             LapPredictionProcessor(self._bus, self._session_type, telemetry_processor=telem_proc),
