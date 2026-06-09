@@ -10,8 +10,10 @@ Priority (highest wins):
 
     DSQ > ELIMINATED > RET > STOP > OUT > PIT > FINISHED > TRACK
 
-DSQ is a latch set by a BLACK flag RCM (not black-and-white — that's a track-
-limits warning); it outranks everything. ELIMINATED is the qualifying knockout
+DSQ is a latch set by a black flag — delivered (2024 São Paulo) as an
+"FIA STEWARDS: BLACK FLAG FOR CAR N" text RCM (also accept a Flag="BLACK"
+driver-flag form); NOT black-and-white (that's a track-limits warning). It
+outranks everything. ELIMINATED is the qualifying knockout
 (KnockedOut) — terminal for the session. RET/STOP/OUT/PIT come from TimingData
 booleans (Retired, Stopped, PitOut, InPit), each set when its field is True and
 cleared when False. FINISHED is a latched flag set when the driver takes the
@@ -203,15 +205,20 @@ class DriverStatusProcessor(Processor):
         for msg in items:
             if not isinstance(msg, dict):
                 continue
-            # BLACK flag (not "BLACK AND WHITE") = disqualification.
-            if msg.get("Flag") == "BLACK":
+            text = msg.get("Message", "") or ""
+            upper = text.upper()
+            # Black flag = disqualification. Delivered as an "FIA STEWARDS:
+            # BLACK FLAG FOR CAR N" text message (also accept a Flag="BLACK"
+            # driver-flag form). "BLACK AND WHITE" is track limits, not DSQ.
+            if (msg.get("Flag") == "BLACK"
+                    or ("BLACK FLAG" in upper and "BLACK AND WHITE" not in upper)):
                 for n in self._cars_in(msg):
                     if n not in self._dsq:
                         self._dsq.add(n)
                         dsq_changed.add(n)
             # Practice/qualifying chequered — first car to take the flag.
             if not self._is_race and not self._chequered:
-                m = _FIRST_FLAG_RX.search(msg.get("Message", "") or "")
+                m = _FIRST_FLAG_RX.search(text)
                 if m:
                     self._on_first_flag(m.group(1), clock_time)
         for n in dsq_changed:
