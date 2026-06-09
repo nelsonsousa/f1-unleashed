@@ -1,3 +1,7 @@
+# DEPRECATED — marked for deletion (processor redesign). qualifyingPart will
+# fold into session_info; sessionStatus is read from raw SessionStatus. Delete
+# once consumers are rehomed and the UI is revised. See
+# memory/processor_redesign_plan.md.
 """
 Session Data Processor — session status and qualifying parts.
 
