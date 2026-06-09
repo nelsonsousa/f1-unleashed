@@ -13,7 +13,7 @@ Indicator object shape (= what's stored in the stack and emitted):
         "kind":        str,           # see KINDS below
         "driverNums":  list[str],     # car numbers this indicator applies to
         "label":       str,           # text shown on the badge ("PEN" / "+5s" / ...)
-        "color":       str,           # yellow / white / red / blue / trackLimits / black
+        "color":       str,           # yellow / white / orange / blue / trackLimits
         "reason":      str | None,    # trailing infringement text from the RCM
         "tooltip":     str,           # full description for hover
         "incidentKey": tuple | None,  # (sorted_cars, reason) for multi-driver resolution
@@ -25,10 +25,9 @@ KINDS:
     "investigation"  — under investigation                 (yellow PEN)
     "deferred"       — will be investigated after the race (white  PEN)
     "noted"          — incident noted, awaiting verdict    (white  PEN)
-    "Ns"             — N-second time penalty (5s, 10s, …)  (red   +Ns)
-    "dt"             — drive-through penalty               (red   D-T)
-    "sg"             — stop-and-go penalty                 (red   S&G)
-    "blackFlag"      — disqualification                    (= DSQ row override on the frontend)
+    "Ns"             — N-second time penalty (5s, 10s, …)  (orange +Ns)
+    "dt"             — drive-through penalty               (orange D-T)
+    "sg"             — stop-and-go penalty                 (orange S&G)
     "trackLimits"    — black-and-white flag, track limits  (track-limits flag SVG)
     "blueFlag"       — waved blue flag                     (blue flag SVG, 10 s)
 
@@ -187,25 +186,8 @@ class FiaStewardsProcessor(Processor):
                 return
             primary = str(primary)
 
-            if flag == "BLACK":
-                # DSQ — wipe ALL other indicators for this driver and
-                # push a single blackFlag indicator.
-                changed |= self._remove_matching(
-                    lambda i: primary in (i.get("driverNums") or [])
-                )
-                self._push({
-                    "kind": "blackFlag",
-                    "driverNums": [primary],
-                    "label": "DSQ",
-                    "color": "black",
-                    "reason": reason,
-                    "tooltip": "DISQUALIFIED",
-                    "incidentKey": None,
-                    "tsMs": now_ms,
-                    "untilMs": None,
-                })
-                self._emit(clock_time)
-                return
+            # DSQ (black flag) is owned solely by the DriverStatusProcessor
+            # (driverStatus "DSQ"); fia_stewards no longer reacts to it.
 
             if flag == "BLACK AND WHITE" and "TRACK LIMITS" in upper:
                 # Only one track-limits indicator per driver — replace if
@@ -390,7 +372,7 @@ class FiaStewardsProcessor(Processor):
             "kind": pen_kind,
             "driverNums": cars,
             "label": label,
-            "color": "red",
+            "color": "orange",
             "reason": reason,
             "tooltip": f"{tooltip_prefix}: {reason}".rstrip(": "),
             "incidentKey": incident_key,
