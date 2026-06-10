@@ -764,7 +764,7 @@ class SessionPreProcessor:
             PositionProcessor(self._bus, self._session_type),
             telem_proc,
             LapDeltaProcessor(self._bus, self._session_type),
-            LapPredictionProcessor(self._bus, self._session_type, telemetry_processor=telem_proc),
+            LapPredictionProcessor(self._bus, self._session_type),
             TrackStatusProcessor(self._bus, self._session_type),
             WeatherProcessor(self._bus, self._session_type),
             self._pace_proc,
