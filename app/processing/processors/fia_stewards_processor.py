@@ -1,12 +1,16 @@
 """FIA Stewards processor — race/sprint only.
 
-Maintains a single ordered stack of "indicators" that apply to one or
-more drivers (= investigations, awarded penalties, deferred reviews,
-notes, plus the track-limits black-and-white flag and the waved blue
-flag). Emits the `fiaStewards` topic on every change; the standings
-tile subscribes to render per-driver badges.
+Maintains a single ordered internal stack of "indicators" that apply to one or
+more drivers (= investigations, awarded penalties, deferred reviews, notes, plus
+the track-limits black-and-white flag and the waved blue flag). The stack drives
+the cross-driver incident logic; the EMIT is per-driver:
 
-Indicator object shape (= what's stored in the stack and emitted):
+    driverPenalties:{num}  [ {kind, label, color, reason, tooltip, tsMs, untilMs} ]
+
+— each affected driver's current indicator list is re-issued on change (and []
+when it clears). Single message per driver, not a global accumulating list.
+
+Internal stack entry shape:
 
     {
         "id":          int,           # unique, monotonically increasing
@@ -20,6 +24,7 @@ Indicator object shape (= what's stored in the stack and emitted):
         "tsMs":        int | None,    # session-clock ms of issuance
         "untilMs":     int | None,    # session-clock ms of expiry (blue flag only)
     }
+(id / driverNums / incidentKey are internal — not emitted.)
 
 KINDS:
     "investigation"  — under investigation                 (yellow PEN)
@@ -70,6 +75,7 @@ class FiaStewardsProcessor(Processor):
         self._next_id: int = 1
         self._last_rcm_index: int = -1
         self._start_time: Optional[datetime] = None
+        self._last_emit: dict[str, list] = {}   # num -> last emitted indicator list
 
     def subscribe(self) -> None:
         if not self._active:
@@ -155,6 +161,8 @@ class FiaStewardsProcessor(Processor):
         self._stack = [i for i in self._stack if not predicate(i)]
         return len(self._stack) != before
 
+    _VIEW = ("kind", "label", "color", "reason", "tooltip", "tsMs", "untilMs")
+
     def _emit(self, clock_time: datetime) -> None:
         # Strip expired blue-flag indicators based on the current
         # session-ms BEFORE serialising — keeps the wire payload clean.
@@ -165,7 +173,19 @@ class FiaStewardsProcessor(Processor):
                 and (i.get("untilMs") is not None)
                 and (i["untilMs"] < now_ms)
             )
-        self._bus.emit("fiaStewards", {"stack": list(self._stack)}, clock_time)
+        # Per-driver current indicators (single message per driver, not a global
+        # stack). The internal stack keeps the cross-driver incident logic; the
+        # emit re-issues each affected driver's list, and [] when it clears.
+        by_driver: dict[str, list] = {}
+        for ind in self._stack:
+            view = {k: ind.get(k) for k in self._VIEW}
+            for num in (ind.get("driverNums") or []):
+                by_driver.setdefault(num, []).append(view)
+        for num in set(by_driver) | set(self._last_emit):
+            cur = by_driver.get(num, [])
+            if cur != self._last_emit.get(num):
+                self._last_emit[num] = cur
+                self._bus.emit(f"driverPenalties:{num}", cur, clock_time)
 
     # ── Per-message handler ────────────────────────────────────────────
 
