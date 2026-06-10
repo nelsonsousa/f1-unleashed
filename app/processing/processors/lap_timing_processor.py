@@ -65,6 +65,10 @@ class LapTimingProcessor(Processor):
         # until the field reappears (it flips False on the first non-improving lap).
         self._pb: dict[str, bool] = {}
         self._ob: dict[str, bool] = {}
+        # Last recorded lap-time {time,pb,ob}, sticky — LastLapTime is omitted
+        # when a lap equals the previous one exactly (F1 delta), so a completed
+        # lap left timeless is recovered from this carried value.
+        self._sticky_ll: dict[str, dict] = {}
         self._overall_best_ms: Optional[int] = None
         self._current_race_lap: Optional[int] = None
         self._total_race_laps: Optional[int] = None
@@ -141,6 +145,13 @@ class LapTimingProcessor(Processor):
         laps = self._laps.setdefault(num, {})
         new_c = self._completed(new_nol)
         prev_c = self._completed(prev)
+        # Same-time recovery: a previously-completed lap still timeless means
+        # its LastLapTime was omitted because it equalled the prior lap (sticky
+        # F1 delta) — no standalone ever arrived. Fill it from the carried value
+        # BEFORE this message's bundled time updates the sticky value.
+        if (prev_c >= 1 and laps.get(prev_c, {}).get("time") is None
+                and num in self._sticky_ll):
+            self._set_time(num, prev_c, self._sticky_ll[num], clock_time)
         # Create a slot for every newly-completed lap (skipped laps get an
         # empty slot — driven but not recorded by the source).
         for lap in range(max(prev_c, 0) + 1, new_c + 1):
@@ -168,6 +179,7 @@ class LapTimingProcessor(Processor):
         ms = _parse_ms(ll["time"])
         if ms is None:
             return
+        self._sticky_ll[num] = dict(ll)   # carry forward for same-time recovery
         # Best lap from F1's (sticky) personal/overall-fastest flag — this
         # excludes out/in/cool laps (F1 flags PersonalFastest False on the first
         # non-improving lap). PersonalFastest alone is insufficient: a lap that
