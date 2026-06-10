@@ -272,7 +272,7 @@ class SessionPreProcessor:
         self._init_processors()
         if self._scheduled_start_utc and self._playback_event_proc:
             self._playback_event_proc.set_effective_start_utc(self._scheduled_start_utc)
-        self._bus.on("*", self._capture_output)
+        self._bus.set_persist_sink(self._capture_output)
 
         total_lines = 0
         if on_progress:
@@ -796,36 +796,8 @@ class SessionPreProcessor:
         # referencing in DB exports.
         wall_clock = clock_time.strftime("%H:%M:%S.") + f"{clock_time.microsecond // 1000:03d}"
 
-        # Lap telemetry goes to its own table, queried on demand.
-        if topic.startswith("lapTelemetry:"):
-            parts = topic.split(":")
-            if len(parts) == 3:
-                driver, lap_str = parts[1], parts[2]
-                try:
-                    lap = int(lap_str)
-                except ValueError:
-                    return
-                # Each lapTelemetry payload is a list of samples; each
-                # sample is [dp, speed, rpm, gear, thr, brk, t_ms_rel].
-                # t_ms_rel is relative to lap start, so the lap start
-                # wall-clock = clock_time - last_sample.t_ms_rel.
-                end_wall_clock = wall_clock
-                if isinstance(data, list) and data:
-                    from datetime import timedelta
-                    start_ts = clock_time - timedelta(milliseconds=int(data[-1][6]))
-                    start_wall_clock = (
-                        start_ts.strftime("%H:%M:%S.")
-                        + f"{start_ts.microsecond // 1000:03d}"
-                    )
-                else:
-                    start_wall_clock = end_wall_clock  # empty placeholder lap
-                self._db.save_telemetry(
-                    driver, lap, offset_ms,
-                    _json.dumps(data, default=str),
-                    start_wall_clock=start_wall_clock,
-                    end_wall_clock=end_wall_clock,
-                )
-            return
+        # Completed-lap telemetry (telemetryLap:{driver}:{lap}) is persisted as
+        # a normal message row, fetched on demand by topic.
 
         json_str = _json.dumps(data, default=str)
         if self._last_emitted.get(topic) == json_str:
