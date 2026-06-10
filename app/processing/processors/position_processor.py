@@ -3,12 +3,14 @@ Position Processor — car positions projected onto track geometry.
 
 Subscribes to: Position.z, SessionInfo
 Emits:
-  - trackGeometry   (corners and sectors as % of lap distance) — once
-  - position        (all cars: x, y, distPct) — on each Position.z change
+  - trackGeometry   (corners and sectors as % of lap distance) — once, persisted
+  - position        { num: [x, y, distPct] } on each Position.z change —
+                    persist=False (high-rate live stream, consumed live; not
+                    replayed/rebuilt on seek, like liveTelemetry)
 
 Loads the track SVG on SessionInfo to build the track polyline, then
-projects each car's X,Y onto it to compute distance as % of lap.
-Skips messages where no car has moved.
+projects each car's X,Y onto it to compute distance as % of lap. Each emit is a
+full snapshot of the cars that moved; skips messages where no car has moved.
 """
 
 import logging
@@ -136,4 +138,4 @@ class PositionProcessor(Processor):
             changed = True
 
         if changed and cars:
-            self._bus.emit("position", cars, clock_time)
+            self._bus.emit("position", cars, clock_time, persist=False)
