@@ -12,13 +12,13 @@ Seeking is instant via DB lookups — no message replay.
 import asyncio
 import json
 import logging
-import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import WebSocket
 
+from app.config import REPLAY_DEBUG
 from app.processing.clock import PlaybackClock, ClockState
 from app.processing.database import SessionDatabase
 from app.processing.file_reader import read_jsonl, load_subscribe_json
@@ -31,7 +31,7 @@ TICK_INTERVAL = 0.016  # ~60fps tick rate
 
 # Keep the transient scratch DB after the last client disconnects (for
 # inspection) instead of deleting it.
-_DEBUG = os.getenv("REPLAY_DEBUG") == "1"
+_DEBUG = REPLAY_DEBUG
 
 
 class SessionEngine:

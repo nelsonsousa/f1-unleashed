@@ -8,7 +8,6 @@ and stores them locally for replay.
 import asyncio
 import json
 import logging
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,6 +15,7 @@ from typing import Any, Optional
 
 import aiohttp
 
+from app.config import REPLAY_DEBUG
 from app.processing.database import transient_db_path
 from app.processing.preprocessor import SessionPreProcessor
 
@@ -735,7 +735,7 @@ class LiveTimingFetcher:
             # persist results to data/analysis/ before the DB is deleted.
         finally:
             pre.close()
-        if os.getenv("REPLAY_DEBUG") != "1":
+        if not REPLAY_DEBUG:
             db_path = transient_db_path(cache_dir)
             for suffix in ("", "-wal", "-shm"):
                 db_path.with_name(db_path.name + suffix).unlink(missing_ok=True)
