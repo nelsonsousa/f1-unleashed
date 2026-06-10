@@ -416,15 +416,9 @@ class SessionPreProcessor:
                 except Exception:
                     logger.exception("Timing processor finalize_session failed")
 
-            # End-of-session flush for lap_classification — ensures every
-            # lap 1..NL_max has a classification entry (trailing in-progress
-            # lap gets IN if no explicit classification was emitted).
-            if self._lap_class_proc is not None and self._start_time is not None:
-                last_dt = filtered.timestamp if filtered else self._start_time
-                try:
-                    self._lap_class_proc.finalize_session(last_dt)
-                except Exception:
-                    logger.exception("LapClassif finalize_session failed")
+            # lap_classification needs no end-of-session flush — the rewritten
+            # processor reclassifies live (and Rule 1 retroactively), so the
+            # latest emitted state is already correct.
 
             # End-of-session flush for the telemetry processor — emits
             # the in-flight IN lap that may not have triggered a PIT
@@ -724,16 +718,17 @@ class SessionPreProcessor:
         self._playback_event_proc = PlaybackEventProcessor(self._bus, self._session_type)
         telem_proc = TelemetryProcessor(self._bus, self._session_type)
         self._telem_proc = telem_proc  # stash for end-of-session finalize
-        # Pace processor — per-session team quali + race pace extraction.
-        # Writes pace.json to data/analysis/{year}/{event}/{session}/ at
-        # finalize. Does NOT emit on the bus; consumers (race-control
-        # tile, cohort detection) read previous events' analysis files.
-        from app.processing.processors.pace_processor import PaceProcessor
-        self._pace_proc = PaceProcessor(
-            self._bus, self._session_type,
-            session_path=self._session_path,
-            session_name=self._session_path.name,
-        )
+        # Pace processor — COMMENTED OUT (placeholder, to be reintroduced /
+        # reworked as pace_prediction). While disabled, the finalize block
+        # gated on `if self._pace_proc:` (pace.json + tyre_phases +
+        # pecking_order + strategy_prediction) is skipped.
+        # from app.processing.processors.pace_processor import PaceProcessor
+        # self._pace_proc = PaceProcessor(
+        #     self._bus, self._session_type,
+        #     session_path=self._session_path,
+        #     session_name=self._session_path.name,
+        # )
+        self._pace_proc = None
         # LapClassificationProcessor's TimingData handler MUST run
         # BEFORE DriverStatusProcessor's (= so _timing_lap is updated
         # before driverStatus is emitted to wildcard subscribers).
@@ -767,7 +762,7 @@ class SessionPreProcessor:
             LapPredictionProcessor(self._bus, self._session_type),
             TrackStatusProcessor(self._bus, self._session_type),
             WeatherProcessor(self._bus, self._session_type),
-            self._pace_proc,
+            # self._pace_proc,  # COMMENTED OUT — pace placeholder (see _init above)
             self._playback_event_proc,  # Must be last — listens to other processors' output
         ]
         for p in self._processors:
