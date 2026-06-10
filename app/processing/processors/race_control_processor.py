@@ -3,8 +3,10 @@ Race Control Processor — race control messages, sector flags, driver flags.
 
 Subscribes to: RaceControlMessages
 Emits:
-  - raceControlMessages  (timestamp, color, message)
-  - yellowFlag           (list of sectors currently under yellow)
+  - raceControlMessage   one {timestamp, color, message} per NEW message
+                         (single message, not an accumulating list — the client
+                         appends; each is one DB row)
+  - yellowFlag           (list of sectors currently under yellow — current state)
   - driverFlag           (driver number, flag colour)
 
 Tracks last seen message index to avoid re-processing accumulated history.
@@ -83,7 +85,6 @@ class RaceControlProcessor(Processor):
         super().__init__(bus, session_type)
         self._yellow_sectors: set[int] = set()
         self._last_key: int = -1
-        self._all_messages: list[dict] = []  # Accumulated for cumulative emit
 
     def subscribe(self) -> None:
         self._bus.on("RaceControlMessages", self._handle)
@@ -126,7 +127,7 @@ class RaceControlProcessor(Processor):
         scope = (msg.get("Scope") or "").upper()
         flag = msg.get("Flag", "")
 
-        # raceControlMessages — emit full accumulated list each time.
+        # raceControlMessage — one message per new RCM (the client appends).
         # Colour is fully server-computed: Flag carries the flag colour,
         # SafetyCar is yellow, and "Other" (stewards/penalties — no structured
         # field) is text-matched (see _other_message_color).
@@ -137,12 +138,11 @@ class RaceControlProcessor(Processor):
         else:
             color = _other_message_color(message)
 
-        self._all_messages.append({
+        self._bus.emit("raceControlMessage", {
             "timestamp": timestamp,
             "color": color,
             "message": message,
-        })
-        self._bus.emit("raceControlMessages", list(self._all_messages), clock_time)
+        }, clock_time)
 
         # Sector flags
         if category == "Flag":
