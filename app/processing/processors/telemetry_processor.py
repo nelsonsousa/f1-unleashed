@@ -264,8 +264,7 @@ class TelemetryProcessor(Processor):
                 live["lap"] = drv.live_lap
                 live["lapElapsedMs"] = (abs_ms - _epoch_ms(drv.live_zero_ts)
                                         if drv.live_zero_ts is not None else None)
-                # Live-only: consumed in real time, never replayed → not persisted.
-                self._bus.emit(f"liveTelemetry:{num}", live, pos_ts, persist=False)
+                self._bus.emit(f"liveTelemetry:{num}", live, pos_ts)
 
     # ── STOP / Retired ────────────────────────────────────────────────────
     def _handle_stop(self, num: str, ts: datetime) -> None:

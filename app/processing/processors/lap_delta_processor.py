@@ -2,7 +2,7 @@
 Lap Delta Processor — live time delta vs the driver's best lap (P/Q only).
 
 Subscribes to: liveTelemetry:{num}, telemetryLap:{num}:{lap}, driverLaps:{num}
-Emits: driverDelta:{num}  { deltaMs, lap, trackPct }   (persist=False)
+Emits: driverDelta:{num}  { deltaMs, lap, trackPct }
 
 For every live telemetry sample, compares the current lap's elapsed time to the
 driver's best lap at the SAME track point:
@@ -21,7 +21,7 @@ Gates (no emit):
   - no best lap yet, or its telemetryLap not cached yet;
   - elapsed < MIN_ELAPSED_MS (the first seconds of a lap are meaningless);
   - bracketing best-lap samples > 1% track distance away either side (outage).
-Delta is never persisted (live-only). Does not run for race sessions.
+Does not run for race sessions.
 """
 
 from datetime import datetime
@@ -109,7 +109,7 @@ class LapDeltaProcessor(Processor):
             "deltaMs": int(elapsed - best_t),
             "lap": data.get("lap"),
             "trackPct": dp,
-        }, clock_time, persist=False)
+        }, clock_time)
 
     @staticmethod
     def _interp(curve: list, dp: float) -> Optional[float]:
