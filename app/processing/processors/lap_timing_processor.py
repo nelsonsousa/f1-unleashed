@@ -6,7 +6,12 @@ Emits:
   driverLaps:{num}  per-driver lap record:
       { currentLap, laps:{ "n":{time, personalBest, overallBest} },
         lastLap:{lap,time,personalBest,overallBest}|null, bestLap:{lap,time}|null }
+      bestLap is the driver's fastest lap flagged PersonalFastest OR
+      OverallFastest by F1 — this excludes out/in/cool laps (never flagged), so
+      a driver with only an out-lap done has bestLap=null (no valid reference).
   raceLaps          (race only) { currentLap, totalLaps }  — from LapCount
+  fastestLap        { num, lap, time }  — emitted when a lap is OverallFastest
+                    (the session-global fastest; client colours it purple)
 
 Model (validated against 2026 data):
   - NumberOfLaps (NoL) is the authoritative per-driver lap counter and
@@ -98,12 +103,12 @@ class LapTimingProcessor(Processor):
             return
         changed = set()
         for num, d in lines.items():
-            if isinstance(d, dict) and self._process(num, d):
+            if isinstance(d, dict) and self._process(num, d, clock_time):
                 changed.add(num)
         for num in changed:
             self._emit(num, clock_time)
 
-    def _process(self, num: str, d: dict) -> bool:
+    def _process(self, num: str, d: dict, clock_time: datetime) -> bool:
         ll = None
         llt = d.get("LastLapTime")
         if isinstance(llt, dict) and llt.get("Value"):
@@ -112,13 +117,14 @@ class LapTimingProcessor(Processor):
                   "overallBest": bool(llt.get("OverallFastest"))}
         changed = False
         if "NumberOfLaps" in d:
-            changed |= self._advance(num, int(d["NumberOfLaps"]), ll)
+            changed |= self._advance(num, int(d["NumberOfLaps"]), ll, clock_time)
             ll = None   # consumed as the bundled time
         if ll is not None:
-            changed |= self._standalone(num, ll)
+            changed |= self._standalone(num, ll, clock_time)
         return changed
 
-    def _advance(self, num: str, new_nol: int, bundled_ll: Optional[dict]) -> bool:
+    def _advance(self, num: str, new_nol: int, bundled_ll: Optional[dict],
+                 clock_time: datetime) -> bool:
         prev = self._nol.get(num)
         self._nol[num] = new_nol
         laps = self._laps.setdefault(num, {})
@@ -131,26 +137,37 @@ class LapTimingProcessor(Processor):
         # Assign the time of the just-completed (highest) lap.
         if new_c >= 1:
             if bundled_ll:
-                self._set_time(num, new_c, bundled_ll)
+                self._set_time(num, new_c, bundled_ll, clock_time)
             elif num in self._pending:
-                self._set_time(num, new_c, self._pending.pop(num))
+                self._set_time(num, new_c, self._pending.pop(num), clock_time)
         return True
 
-    def _standalone(self, num: str, ll: dict) -> bool:
+    def _standalone(self, num: str, ll: dict, clock_time: datetime) -> bool:
         c = self._completed(self._nol.get(num))
         laps = self._laps.get(num, {})
         if c >= 1 and laps.get(c, {}).get("time") is None:
-            self._set_time(num, c, ll)   # the just-completed lap was still timeless
+            self._set_time(num, c, ll, clock_time)  # the just-completed lap was still timeless
             return True
         # the prev lap already has a time -> this is the in-progress lap; hold it
         self._pending[num] = ll
         return False
 
-    def _set_time(self, num: str, lap: int, ll: dict) -> None:
+    def _set_time(self, num: str, lap: int, ll: dict, clock_time: datetime) -> None:
         self._laps[num][lap] = dict(ll)
         ms = _parse_ms(ll["time"])
-        if ms is not None and (num not in self._best or ms < self._best[num]["ms"]):
+        if ms is None:
+            return
+        # Best lap from F1's personal/overall-fastest flag — this excludes
+        # out/in/cool laps (F1 never flags them). PersonalFastest alone is
+        # insufficient: a lap that is BOTH a PB and the overall best is often
+        # flagged OverallFastest-only (PersonalFastest False), so accept either.
+        if (ll.get("personalBest") or ll.get("overallBest")) \
+                and (num not in self._best or ms < self._best[num]["ms"]):
             self._best[num] = {"lap": lap, "time": ll["time"], "ms": ms}
+        # Overall fastest → session-global fastestLap (client colours it purple).
+        if ll.get("overallBest"):
+            self._bus.emit("fastestLap",
+                           {"num": num, "lap": lap, "time": ll["time"]}, clock_time)
 
     def _emit(self, num: str, clock_time: datetime) -> None:
         laps = self._laps.get(num, {})
