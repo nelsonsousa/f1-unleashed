@@ -41,6 +41,7 @@ from app.processing.processors.standings_processor import StandingsProcessor
 from app.processing.processors.telemetry_processor import TelemetryProcessor
 from app.processing.processors.timing_processor import TimingProcessor
 from app.processing.processors.lap_timing_processor import LapTimingProcessor
+from app.processing.processors.lap_delta_processor import LapDeltaProcessor
 from app.processing.processors.driver_gap_processor import DriverGapProcessor
 from app.processing.processors.sector_timing_processor import SectorTimingProcessor
 from app.processing.processors.tyre_processor import TyreProcessor
@@ -762,6 +763,7 @@ class SessionPreProcessor:
               if self._session_type in ("race", "sprint") else []),
             PositionProcessor(self._bus, self._session_type),
             telem_proc,
+            LapDeltaProcessor(self._bus, self._session_type),
             LapPredictionProcessor(self._bus, self._session_type, telemetry_processor=telem_proc),
             TrackStatusProcessor(self._bus, self._session_type),
             WeatherProcessor(self._bus, self._session_type),

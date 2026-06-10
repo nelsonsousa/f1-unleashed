@@ -73,6 +73,7 @@ class DriverData:
     crossings: list = field(default_factory=list)
     # Lap tracking.
     lap_start_ts: Optional[datetime] = None  # start of the current open lap
+    live_zero_ts: Optional[datetime] = None  # current lap's S/F crossing (live elapsed zero)
     committed: int = 0                       # highest emitted lap number
     completed_target: int = 0                # latest driverLaps.lastLap.lap
     live_lap: Optional[int] = None           # driverLaps currentLap (live)
@@ -117,6 +118,7 @@ class TelemetryProcessor(Processor):
                     if not drv.activated:
                         drv.activated = True
                         drv.lap_start_ts = clock_time
+                        drv.live_zero_ts = clock_time
                 return
 
     # ── Wildcard: driverLaps (lap numbers) + driverStatus (STOP/RET) ──────
@@ -137,6 +139,7 @@ class TelemetryProcessor(Processor):
             if not self._is_race and not drv.activated and cur >= 1:
                 drv.activated = True
                 drv.lap_start_ts = clock_time
+                drv.live_zero_ts = clock_time
         last = data.get("lastLap")
         m = last.get("lap") if isinstance(last, dict) else None
         if isinstance(m, int) and m > drv.completed_target:
@@ -166,6 +169,7 @@ class TelemetryProcessor(Processor):
             if prev > WRAP_HIGH and dp < WRAP_LOW:
                 # S/F wrap → lap boundary; the post-crossing sample is valid.
                 drv.crossings.append(clock_time)
+                drv.live_zero_ts = clock_time   # live elapsed zero for the new lap
                 drv.pending_pos = (dp, clock_time)
                 drv.last_dp = dp
             elif dp > prev:
@@ -222,6 +226,8 @@ class TelemetryProcessor(Processor):
                 drv.samples.append(sample)
                 live["ts"] = abs_ms
                 live["lap"] = drv.live_lap
+                live["lapElapsedMs"] = (abs_ms - _epoch_ms(drv.live_zero_ts)
+                                        if drv.live_zero_ts is not None else None)
                 # Live-only: consumed in real time, never replayed → not persisted.
                 self._bus.emit(f"liveTelemetry:{num}", live, pos_ts, persist=False)
 
