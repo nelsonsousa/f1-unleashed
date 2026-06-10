@@ -551,27 +551,19 @@ function renderSessionPopoverHtml(year, ev) {
     return cards;
 }
 
-// Three status pips per session card: JSON (jsonl on disk), DB
-// (session.db present + status='complete'), audio (commentary.aac
-// present). Lit on / muted off colour depending on the entry flags.
+// Two status pips per session card: recording (live.jsonl present and
+// complete — captured the whole session start-to-end) and audio
+// (commentary.aac present). Lit on / muted off depending on the flags.
 function renderSessionStatusIcons(entry) {
     const has = (k) => !!(entry && entry[k]);
     const json = has('has_jsonl');
-    const db   = has('has_db_complete');
     const aud  = has('has_audio');
     return `
         <div class="ses-icons">
-            <span class="ses-ico ${json ? 'on' : 'off'}" title="${json ? 'jsonl cached' : 'no jsonl'}">
+            <span class="ses-ico ${json ? 'on' : 'off'}" title="${json ? 'recording complete' : 'recording missing or incomplete'}">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                     <polyline points="14 2 14 8 20 8"/>
-                </svg>
-            </span>
-            <span class="ses-ico ${db ? 'on' : 'off'}" title="${db ? 'session.db complete' : 'no db / incomplete'}">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <ellipse cx="12" cy="5" rx="9" ry="3"/>
-                    <path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
-                    <path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6"/>
                 </svg>
             </span>
             <span class="ses-ico ${aud ? 'on' : 'off'}" title="${aud ? 'commentary audio cached' : 'no audio'}">

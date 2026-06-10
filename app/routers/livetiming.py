@@ -65,7 +65,6 @@ class CachedSessionResponse(BaseModel):
     size_mb: Optional[float] = None
     modified: Optional[str] = None
     has_jsonl: Optional[bool] = None
-    has_db_complete: Optional[bool] = None
     has_audio: Optional[bool] = None
 
 

@@ -255,27 +255,3 @@ class SessionDatabase:
             (key,),
         ).fetchone()
         return row[0] if row else None
-
-
-def is_db_complete(session_path: Path) -> bool:
-    """True if the session's processed DB exists and finished building.
-
-    Used to decide whether a session counts as fully downloaded — a
-    session.db whose status is not 'complete' is still being built (or
-    its build was interrupted).
-    """
-    db_path = session_path / "session.db"
-    if not db_path.exists():
-        return False
-    conn = None
-    try:
-        conn = sqlite3.connect(str(db_path))
-        row = conn.execute(
-            "SELECT value FROM processing_meta WHERE key = 'status'"
-        ).fetchone()
-        return row is not None and row[0] == "complete"
-    except sqlite3.Error:
-        return False
-    finally:
-        if conn is not None:
-            conn.close()

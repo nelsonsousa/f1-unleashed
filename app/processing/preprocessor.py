@@ -107,20 +107,6 @@ def _extract_session_key(folder_name: str) -> Optional[int]:
     return None
 
 
-def is_testing_session(session_path: Path) -> bool:
-    """True for F1 pre-season testing sessions (folder name 'Day_N').
-
-    Testing sessions run ~8 h and are rarely replayed, so they are
-    exempt from eager session.db building (backfill / download) — a DB
-    is built on demand only if such a session is actually opened.
-    """
-    name = session_path.name
-    parts = name.split("_", 1)
-    if parts[0].isdigit() and len(parts) > 1:
-        name = parts[1]
-    return name.startswith("Day_")
-
-
 def _filter_payload_timestamps(topic: str, data: Any, cutoff: datetime) -> Optional[Any]:
     """Filter stale entries from payloads that contain timestamps.
 
