@@ -18,6 +18,12 @@ class SessionMessageBus:
 
     def __init__(self):
         self._handlers: dict[str, list[Handler]] = {}
+        self._persist_sink: Callable[[str, Any, datetime], None] | None = None
+
+    def set_persist_sink(self, sink: Callable[[str, Any, datetime], None]) -> None:
+        """Register the single sink that persists emits to the DB. It is
+        invoked (topic, data, clock_time) for every emit with persist=True."""
+        self._persist_sink = sink
 
     def on(self, topic: str, handler: Handler) -> None:
         """Subscribe to a topic."""
@@ -33,8 +39,14 @@ class SessionMessageBus:
             except ValueError:
                 pass
 
-    def emit(self, topic: str, data: Any, clock_time: datetime) -> None:
-        """Emit a message to all handlers for the topic."""
+    def emit(self, topic: str, data: Any, clock_time: datetime,
+             persist: bool = True) -> None:
+        """Emit a message to all handlers for the topic.
+
+        persist=False emits to subscribers as normal but skips the DB persist
+        sink — for high-rate, live-only topics (e.g. liveTelemetry) that the
+        client consumes live and never needs to replay/rebuild on seek.
+        """
         if topic in self._handlers:
             for handler in self._handlers[topic]:
                 try:
@@ -49,6 +61,9 @@ class SessionMessageBus:
                     handler(topic, data, clock_time)
                 except Exception:
                     logger.exception(f"Error in wildcard handler for topic '{topic}'")
+
+        if persist and self._persist_sink is not None:
+            self._persist_sink(topic, data, clock_time)
 
     def clear(self) -> None:
         """Remove all handlers."""
