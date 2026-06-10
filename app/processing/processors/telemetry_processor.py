@@ -77,7 +77,8 @@ class DriverData:
     live_zero_ts: Optional[datetime] = None  # current lap's S/F crossing (live elapsed zero)
     committed: int = 0                       # highest emitted lap number
     completed_target: int = 0                # latest driverLaps.lastLap.lap
-    live_lap: Optional[int] = None           # driverLaps currentLap (live)
+    live_lap: int = 0                        # current driving lap (crossing-driven, NoL-resynced)
+    in_pit: bool = False                     # driverStatus PIT → crossings are spurious
     emitted: set = field(default_factory=set)
 
 
@@ -120,14 +121,19 @@ class TelemetryProcessor(Processor):
                         drv.activated = True
                         drv.lap_start_ts = clock_time
                         drv.live_zero_ts = clock_time
+                        drv.live_lap = 1
                 return
 
-    # ── Wildcard: driverLaps (lap numbers) + driverStatus (STOP/RET) ──────
+    # ── Wildcard: driverLaps (lap numbers) + driverStatus ──────
     def _handle_wildcard(self, topic: str, data: Any, clock_time: datetime) -> None:
         if topic.startswith("driverLaps:"):
             self._handle_driver_laps(topic.split(":", 1)[1], data, clock_time)
-        elif topic.startswith("driverStatus:") and data in ("STOP", "RET"):
-            self._handle_stop(topic.split(":", 1)[1], clock_time)
+        elif topic.startswith("driverStatus:") and isinstance(data, str):
+            num = topic.split(":", 1)[1]
+            # PIT → crossings are spurious (unreliable pit-lane projection).
+            self._drv(num).in_pit = (data == "PIT")
+            if data in ("STOP", "RET"):
+                self._handle_stop(num, clock_time)
 
     def _handle_driver_laps(self, num: str, data: Any, clock_time: datetime) -> None:
         if not isinstance(data, dict):
@@ -135,17 +141,26 @@ class TelemetryProcessor(Processor):
         drv = self._drv(num)
         cur = data.get("currentLap")
         if isinstance(cur, int):
-            drv.live_lap = cur
             # Practice/qualifying activation: first lap started (PitOut).
             if not self._is_race and not drv.activated and cur >= 1:
                 drv.activated = True
                 drv.lap_start_ts = clock_time
                 drv.live_zero_ts = clock_time
+                drv.live_lap = 1
         last = data.get("lastLap")
         m = last.get("lap") if isinstance(last, dict) else None
-        if isinstance(m, int) and m > drv.completed_target:
-            drv.completed_target = m
-            self._close_laps_up_to(drv, m, clock_time)
+        if isinstance(m, int):
+            # NoL is authoritative for the lap number; telemetry bumps the live
+            # lap at the S/F crossing (NoL lags), and every NoL message re-syncs
+            # it. authoritative driving lap = completed + 1. If NoL is ahead,
+            # telemetry missed crossing(s) (outage) — jump the live lap and drop
+            # the zero so the delta is suppressed until the next clean crossing.
+            if drv.activated and m + 1 > drv.live_lap:
+                drv.live_lap = m + 1
+                drv.live_zero_ts = None
+            if m > drv.completed_target:
+                drv.completed_target = m
+                self._close_laps_up_to(drv, m, clock_time)
 
     # ── Position ──────────────────────────────────────────────────────────
     def _handle_position(self, data: Any, clock_time: datetime) -> None:
@@ -169,12 +184,16 @@ class TelemetryProcessor(Processor):
                 drv.last_pos_ts = clock_time
                 continue
             if prev > WRAP_HIGH and dp < WRAP_LOW:
-                # S/F wrap → lap boundary. Use the INTERPOLATED time at the line
-                # (dp 0/100) as the zero — consistent across laps regardless of
-                # where the post-crossing sample lands (0.1% vs 0.8%).
-                line_ts = self._line_ts(prev, drv.last_pos_ts, dp, clock_time)
-                drv.crossings.append(line_ts)
-                drv.live_zero_ts = line_ts
+                if not drv.in_pit:
+                    # S/F wrap → lap boundary. Bump the live lap now (NoL lags);
+                    # zero = the INTERPOLATED time at the line (dp 0/100),
+                    # consistent across laps regardless of where the post-crossing
+                    # sample lands. A wrap while in PIT is a spurious pit-lane
+                    # projection artefact and is ignored.
+                    line_ts = self._line_ts(prev, drv.last_pos_ts, dp, clock_time)
+                    drv.crossings.append(line_ts)
+                    drv.live_lap += 1
+                    drv.live_zero_ts = line_ts
                 drv.pending_pos = (dp, clock_time)
                 drv.last_dp = dp
                 drv.last_pos_ts = clock_time

@@ -7,15 +7,21 @@ Emits: driverDelta:{num}  { deltaMs, lap, trackPct }   (persist=False)
 For every live telemetry sample, compares the current lap's elapsed time to the
 driver's best lap at the SAME track point:
   - current elapsed = liveTelemetry.lapElapsedMs (zeroed at the lap's S/F crossing);
-  - best elapsed   = the best lap's t_ms interpolated at the live sample's dp
+  - best elapsed    = the best lap's t_ms interpolated at the live sample's dp
     (telemetryLap sample = [dp, …, t_ms]);
   - deltaMs = currentElapsed - bestElapsed.
 
-Reliability gate: do NOT interpolate (→ no emit) if the bracketing best-lap
-samples are more than 1% track distance away on either side of the live dp.
-If the driver has no best lap yet, delta is null → no emit. Delta is never
-persisted (live-only); lap_classification re-derives the percentage from the
-published best-lap time. Does not run for race sessions.
+Reference selection (avoids a race condition): driverLaps gives the best lap
+NUMBER, but when the best lap is a fresh personal best its NoL/bestLap update can
+arrive at (or slightly before) the telemetry samples that close it. So the
+reference curve is rebuilt only once BOTH the best lap is known AND that lap's
+telemetryLap has been cached — never against a stale lap.
+
+Gates (no emit):
+  - no best lap yet, or its telemetryLap not cached yet;
+  - elapsed < MIN_ELAPSED_MS (the first seconds of a lap are meaningless);
+  - bracketing best-lap samples > 1% track distance away either side (outage).
+Delta is never persisted (live-only). Does not run for race sessions.
 """
 
 from datetime import datetime
@@ -25,6 +31,7 @@ from app.processing.message_bus import SessionMessageBus
 from app.processing.processors.base import Processor
 
 RELIABILITY_GAP_PCT = 1.0
+MIN_ELAPSED_MS = 5_000
 
 
 class LapDeltaProcessor(Processor):
@@ -34,8 +41,9 @@ class LapDeltaProcessor(Processor):
         super().__init__(bus, session_type)
         self._enabled = session_type in ("practice", "qualifying")
         self._laps: dict[str, dict[int, list]] = {}    # num -> {lap: [(dp, t_ms)]}
-        self._best_num: dict[str, int] = {}             # num -> best lap number
+        self._best_num: dict[str, int] = {}             # num -> best lap number (driverLaps)
         self._best_curve: dict[str, list] = {}          # num -> sorted [(dp, t_ms)]
+        self._best_curve_lap: dict[str, int] = {}       # num -> lap the curve was built for
 
     def subscribe(self) -> None:
         if self._enabled:
@@ -57,39 +65,46 @@ class LapDeltaProcessor(Processor):
     def _on_lap(self, num: str, lap: int, samples: Any) -> None:
         if not isinstance(samples, list):
             return
-        curve = [(s[0], s[6]) for s in samples
-                 if len(s) >= 7 and s[0] is not None and s[6] is not None]
-        self._laps.setdefault(num, {})[lap] = curve
-        if self._best_num.get(num) == lap:
-            self._build_curve(num)
+        self._laps.setdefault(num, {})[lap] = [
+            (s[0], s[6]) for s in samples
+            if len(s) >= 7 and s[0] is not None and s[6] is not None
+        ]
 
     def _on_driver_laps(self, num: str, data: Any) -> None:
         if not isinstance(data, dict):
             return
         bl = data.get("bestLap")
         b = bl.get("lap") if isinstance(bl, dict) else None
-        if isinstance(b, int) and b != self._best_num.get(num):
+        if isinstance(b, int):
             self._best_num[num] = b
-            self._build_curve(num)
 
-    def _build_curve(self, num: str) -> None:
-        curve = self._laps.get(num, {}).get(self._best_num.get(num))
-        if curve:
-            self._best_curve[num] = sorted(curve, key=lambda x: x[0])
+    def _ref_curve(self, num: str) -> Optional[list]:
+        """The current best lap's curve, rebuilt only once its telemetryLap is
+        cached — so a freshly-set best never resolves to a stale reference."""
+        bn = self._best_num.get(num)
+        if bn is None:
+            return None
+        if self._best_curve_lap.get(num) != bn:
+            c = self._laps.get(num, {}).get(bn)
+            if not c:
+                return None   # best lap known but its telemetry not cached yet
+            self._best_curve[num] = sorted(c, key=lambda x: x[0])
+            self._best_curve_lap[num] = bn
+        return self._best_curve[num]
 
     def _on_live(self, num: str, data: Any, clock_time: datetime) -> None:
         if not isinstance(data, dict):
             return
-        curve = self._best_curve.get(num)
-        if not curve:
-            return   # no best lap yet → delta null, not emitted
         dp = data.get("dp")
         elapsed = data.get("lapElapsedMs")
-        if dp is None or elapsed is None:
+        if dp is None or elapsed is None or elapsed < MIN_ELAPSED_MS:
+            return
+        curve = self._ref_curve(num)
+        if not curve:
             return
         best_t = self._interp(curve, dp)
         if best_t is None:
-            return   # bracketing best samples too far → unreliable, not emitted
+            return
         self._bus.emit(f"driverDelta:{num}", {
             "deltaMs": int(elapsed - best_t),
             "lap": data.get("lap"),

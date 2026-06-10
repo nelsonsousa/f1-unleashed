@@ -61,6 +61,11 @@ class LapTimingProcessor(Processor):
         self._laps: dict[str, dict[int, dict]] = {}          # num -> {lap -> {time,pb,ob}}
         self._pending: dict[str, dict] = {}                  # num -> held lap-time
         self._best: dict[str, dict] = {}                     # num -> {lap,time,ms}
+        # PersonalFastest/OverallFastest are STICKY F1 deltas — carry forward
+        # until the field reappears (it flips False on the first non-improving lap).
+        self._pb: dict[str, bool] = {}
+        self._ob: dict[str, bool] = {}
+        self._overall_best_ms: Optional[int] = None
         self._current_race_lap: Optional[int] = None
         self._total_race_laps: Optional[int] = None
 
@@ -111,10 +116,16 @@ class LapTimingProcessor(Processor):
     def _process(self, num: str, d: dict, clock_time: datetime) -> bool:
         ll = None
         llt = d.get("LastLapTime")
-        if isinstance(llt, dict) and llt.get("Value"):
-            ll = {"time": llt["Value"],
-                  "personalBest": bool(llt.get("PersonalFastest")),
-                  "overallBest": bool(llt.get("OverallFastest"))}
+        if isinstance(llt, dict):
+            # Update the sticky flags whenever they appear (carry forward otherwise).
+            if "PersonalFastest" in llt:
+                self._pb[num] = bool(llt["PersonalFastest"])
+            if "OverallFastest" in llt:
+                self._ob[num] = bool(llt["OverallFastest"])
+            if llt.get("Value"):
+                ll = {"time": llt["Value"],
+                      "personalBest": self._pb.get(num, False),
+                      "overallBest": self._ob.get(num, False)}
         changed = False
         if "NumberOfLaps" in d:
             changed |= self._advance(num, int(d["NumberOfLaps"]), ll, clock_time)
@@ -157,17 +168,21 @@ class LapTimingProcessor(Processor):
         ms = _parse_ms(ll["time"])
         if ms is None:
             return
-        # Best lap from F1's personal/overall-fastest flag — this excludes
-        # out/in/cool laps (F1 never flags them). PersonalFastest alone is
-        # insufficient: a lap that is BOTH a PB and the overall best is often
-        # flagged OverallFastest-only (PersonalFastest False), so accept either.
+        # Best lap from F1's (sticky) personal/overall-fastest flag — this
+        # excludes out/in/cool laps (F1 flags PersonalFastest False on the first
+        # non-improving lap). PersonalFastest alone is insufficient: a lap that
+        # is BOTH a PB and the overall best is sometimes flagged
+        # OverallFastest-only, so accept either.
         if (ll.get("personalBest") or ll.get("overallBest")) \
                 and (num not in self._best or ms < self._best[num]["ms"]):
             self._best[num] = {"lap": lap, "time": ll["time"], "ms": ms}
-        # Overall fastest → session-global fastestLap (client colours it purple).
-        if ll.get("overallBest"):
-            self._bus.emit("fastestLap",
-                           {"num": num, "lap": lap, "time": ll["time"]}, clock_time)
+            # Session-global fastest → fastestLap (client colours it purple).
+            # Computed from the per-driver bests, not the (per-driver, sticky)
+            # OverallFastest flag, which can read True for more than one car.
+            if self._overall_best_ms is None or ms < self._overall_best_ms:
+                self._overall_best_ms = ms
+                self._bus.emit("fastestLap",
+                               {"num": num, "lap": lap, "time": ll["time"]}, clock_time)
 
     def _emit(self, num: str, clock_time: datetime) -> None:
         laps = self._laps.get(num, {})
