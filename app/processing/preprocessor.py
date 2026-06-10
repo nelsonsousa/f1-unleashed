@@ -219,6 +219,13 @@ class SessionPreProcessor:
         force: bool = False,
     ) -> None:
         self._running = True
+        # Reprocess (offline --force): delete the existing DB and recreate it
+        # fresh, so the rebuild never inherits the old file's page allocation
+        # (a pre-redesign DB is mostly stale free pages — ~10x larger). Live /
+        # tail-follow builds keep their growing DB (reset() clears rows).
+        if force and not tail_follow:
+            for suffix in ("", "-wal", "-shm"):
+                (self._session_path / f"session.db{suffix}").unlink(missing_ok=True)
         self._db.open()
 
         status = self._db.get_meta("status")
