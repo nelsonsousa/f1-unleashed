@@ -12,6 +12,25 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# Processed DBs are TRANSIENT scratch — built on demand, deleted when no client
+# is viewing (kept in DEBUG). live.jsonl in the cache is the only permanent
+# source. Each session gets a unique scratch file under ./tmp.
+TRANSIENT_DB_DIR = Path("tmp")
+
+# Topics excluded from the seek/connect state-restore snapshot. These are
+# either per-lap on-demand fetches or high-rate / append-only histories that
+# latest-per-topic restore can't represent (handled separately by the engine).
+_RESTORE_EXCLUDE_PREFIXES = ("telemetryLap:", "liveTelemetry:")
+_RESTORE_EXCLUDE_EXACT = frozenset({"position", "raceControlMessage"})
+
+
+def transient_db_path(session_path: Path) -> Path:
+    """Unique scratch DB path for a session: ./tmp/{year}_{event}_{session}.db."""
+    name = "_".join(session_path.parts[-3:]) or session_path.name
+    safe = "".join(c if (c.isalnum() or c in "._-") else "_" for c in name)
+    return TRANSIENT_DB_DIR / f"{safe}.db"
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
     offset_ms    INTEGER NOT NULL,
@@ -54,8 +73,11 @@ EXPECTED_COLUMNS = {
 class SessionDatabase:
     """SQLite database for a single session."""
 
-    def __init__(self, session_path: Path):
-        self._db_path = session_path / "session.db"
+    def __init__(self, session_path: Path, db_path: Optional[Path] = None):
+        # Default to the transient scratch path; callers may override (e.g.
+        # debug/inspection to a fixed location).
+        self._db_path = db_path or transient_db_path(session_path)
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn: Optional[sqlite3.Connection] = None
 
     def open(self) -> None:
@@ -129,7 +151,14 @@ class SessionDatabase:
                )""",
             (offset_ms,),
         ).fetchall()
-        return {topic: {"data": json.loads(data), "offset_ms": ofs} for topic, data, ofs in rows}
+        out = {}
+        for topic, data, ofs in rows:
+            if topic in _RESTORE_EXCLUDE_EXACT:
+                continue
+            if any(topic.startswith(p) for p in _RESTORE_EXCLUDE_PREFIXES):
+                continue
+            out[topic] = {"data": json.loads(data), "offset_ms": ofs}
+        return out
 
     def get_messages_in_range(
         self, from_ms: int, to_ms: int

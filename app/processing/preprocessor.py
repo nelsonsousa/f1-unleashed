@@ -224,8 +224,9 @@ class SessionPreProcessor:
         # (a pre-redesign DB is mostly stale free pages — ~10x larger). Live /
         # tail-follow builds keep their growing DB (reset() clears rows).
         if force and not tail_follow:
+            base = self._db._db_path
             for suffix in ("", "-wal", "-shm"):
-                (self._session_path / f"session.db{suffix}").unlink(missing_ok=True)
+                base.with_name(base.name + suffix).unlink(missing_ok=True)
         self._db.open()
 
         status = self._db.get_meta("status")
