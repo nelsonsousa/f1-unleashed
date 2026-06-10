@@ -6,7 +6,9 @@ Emits:
   driverSectors:{num}      [ {value, overallFastest, personalFastest} x3 ]
   driverMiniSectors:{num}  [ [segment-colour|None, ...] x3 ]  (the segment dots)
 
-Both reset at each new lap (NumberOfLaps change). Split out of the old
+Sector times are STICKY (F1 deltas): a completed lap's sectors keep showing
+until F1 clears them with per-sector Value="" at the new lap (a same-time sector
+omits Value, so it stays visible). No NoL-driven reset. Split out of the old
 timing_processor's bundled driverTiming topic.
 """
 
@@ -46,7 +48,6 @@ class SectorTimingProcessor(Processor):
     def __init__(self, bus: SessionMessageBus, session_type: str):
         super().__init__(bus, session_type)
         self._sectors: dict[str, list] = {}
-        self._nol: dict[str, int] = {}
 
     def subscribe(self) -> None:
         self._bus.on("TimingData", self._handle)
@@ -60,9 +61,11 @@ class SectorTimingProcessor(Processor):
                 continue
             sectors = self._sectors.setdefault(num, _empty_sectors())
 
-            # Apply sector deltas BEFORE the rollover reset, so a final S3
-            # arriving in the same message as the lap bump lands on the
-            # completed lap.
+            # Sector times are STICKY: a completed lap's sectors stay shown
+            # until F1 clears them. At the new lap F1 sends Value="" per sector
+            # to clear it (a same-time sector simply omits Value, so it keeps
+            # showing). There is NO NoL-driven reset — the empty-Value clears
+            # drive the rollover, so a same-time lap is still seen.
             changed = False
             sp = d.get("Sectors")
             if sp:
@@ -74,8 +77,16 @@ class SectorTimingProcessor(Processor):
                     if i >= 3:
                         continue
                     s = sectors[i]
-                    if sec.get("Value"):
-                        s["value"] = sec["Value"]; changed = True
+                    if "Value" in sec:
+                        if sec["Value"]:
+                            s["value"] = sec["Value"]
+                        else:
+                            # Explicit clear (lap rollover) — reset this sector.
+                            s["value"] = None
+                            s["overallFastest"] = False
+                            s["personalFastest"] = False
+                            s["segments"] = []
+                        changed = True
                     if "OverallFastest" in sec:
                         s["overallFastest"] = bool(sec["OverallFastest"]); changed = True
                     if "PersonalFastest" in sec:
@@ -92,12 +103,6 @@ class SectorTimingProcessor(Processor):
                             if "Status" in seg:
                                 s["segments"][si] = _segment_color(seg["Status"]); changed = True
             if changed:
-                self._emit(num, clock_time)
-
-            # New lap -> reset sectors for the fresh lap.
-            if "NumberOfLaps" in d and self._nol.get(num) != d["NumberOfLaps"]:
-                self._nol[num] = d["NumberOfLaps"]
-                self._sectors[num] = _empty_sectors()
                 self._emit(num, clock_time)
 
     def _emit(self, num: str, clock_time: datetime) -> None:
