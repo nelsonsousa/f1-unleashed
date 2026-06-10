@@ -67,6 +67,7 @@ class DriverData:
     # Pairing.
     pending_pos: Optional[tuple] = None      # (dp, ts) awaiting next CarData
     last_dp: Optional[float] = None
+    last_pos_ts: Optional[datetime] = None   # ts of the previous position sample
     # Captured samples since session start: [dp, speed, rpm, gear, thr, brk, abs_ms].
     samples: list = field(default_factory=list)
     # S/F crossing timestamps (datetimes), consumed as laps close.
@@ -165,17 +166,33 @@ class TelemetryProcessor(Processor):
             if prev is None:
                 drv.pending_pos = (dp, clock_time)
                 drv.last_dp = dp
+                drv.last_pos_ts = clock_time
                 continue
             if prev > WRAP_HIGH and dp < WRAP_LOW:
-                # S/F wrap → lap boundary; the post-crossing sample is valid.
-                drv.crossings.append(clock_time)
-                drv.live_zero_ts = clock_time   # live elapsed zero for the new lap
+                # S/F wrap → lap boundary. Use the INTERPOLATED time at the line
+                # (dp 0/100) as the zero — consistent across laps regardless of
+                # where the post-crossing sample lands (0.1% vs 0.8%).
+                line_ts = self._line_ts(prev, drv.last_pos_ts, dp, clock_time)
+                drv.crossings.append(line_ts)
+                drv.live_zero_ts = line_ts
                 drv.pending_pos = (dp, clock_time)
                 drv.last_dp = dp
+                drv.last_pos_ts = clock_time
             elif dp > prev:
                 drv.pending_pos = (dp, clock_time)
                 drv.last_dp = dp
+                drv.last_pos_ts = clock_time
             # else: stale (dp == prev) or backward jump → skip, keep last_dp.
+
+    @staticmethod
+    def _line_ts(prev_dp: float, prev_ts: Optional[datetime],
+                 dp: float, now_ts: datetime) -> datetime:
+        """Interpolate the timestamp at which dp crossed the S/F line (100→0)."""
+        total = (100.0 - prev_dp) + dp
+        if prev_ts is None or total <= 0:
+            return now_ts
+        frac = (100.0 - prev_dp) / total
+        return prev_ts + (now_ts - prev_ts) * frac
 
     # ── CarData ───────────────────────────────────────────────────────────
     def _handle_car_data(self, data: Any, clock_time: datetime) -> None:
@@ -301,8 +318,11 @@ class TelemetryProcessor(Processor):
         bracketing seam_ts — only if both bracket samples exist AND their
         across-S/F dp gap <= SYNTH_MAX_GAP_PCT. Else None."""
         seam_ms = _epoch_ms(seam_ts)
-        before = next((s for s in reversed(drv.samples) if s[6] <= seam_ms), None)
-        after = next((s for s in drv.samples if s[6] > seam_ms), None)
+        # The crossing sample (ts == seam_ms, dp ~0) belongs AFTER the seam, so
+        # `before` must be strictly pre-seam (the pre-S/F dp ~99) — else the
+        # across-S/F gap reads ~100% and interpolation is wrongly skipped.
+        before = next((s for s in reversed(drv.samples) if s[6] < seam_ms), None)
+        after = next((s for s in drv.samples if s[6] >= seam_ms), None)
         if before is None or after is None:
             return None
         # Across-S/F gap: before.dp is near 100, after.dp near 0.
