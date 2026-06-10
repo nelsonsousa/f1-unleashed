@@ -119,7 +119,6 @@ class LiveCaptureService:
         session_id = self._generate_session_id()
 
         # Build cache directory path
-        is_testing = "test" in meeting_name.lower()
         event_num = (
             str(meeting_key) if meeting_key > 0
             else (f"{round_number:02d}" if round_number > 0 else "00")
@@ -127,10 +126,6 @@ class LiveCaptureService:
         event_name = meeting_name.replace(" ", "_")
 
         folder_name = (session_name or session_type).replace(" ", "_")
-
-        if is_testing and "practice" in session_type.lower():
-            day_num = session_type.split()[-1] if session_type.split()[-1].isdigit() else "1"
-            folder_name = f"Day_{day_num}"
 
         # Prefix folder with session key for unique identification
         if session_key:

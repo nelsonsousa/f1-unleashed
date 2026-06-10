@@ -39,13 +39,14 @@ async def _chequered_grace_expired(session_id: str, now_utc: datetime) -> bool:
     flaky DB read can't accidentally kill a live capture.
     """
     import sqlite3
+    from app.processing.database import transient_db_path
     capture = live_capture._captures.get(session_id)
     if not capture:
         return False
     cache_path = capture.get("cache_path")
     if not cache_path:
         return False
-    db_path = cache_path / "session.db"
+    db_path = transient_db_path(cache_path)   # live DB is the transient scratch file
     if not db_path.exists():
         return False
     try:
@@ -393,49 +394,6 @@ async def live_session_monitor():
             await asyncio.sleep(60)
 
 
-async def backfill_session_dbs():
-    """Build session.db for any cached session missing a complete one.
-
-    Covers sessions downloaded before eager DB-building existed, and
-    self-heals interrupted builds. Runs once at startup, sequentially and
-    at low priority so it never competes with an active capture.
-    """
-    from pathlib import Path
-    from app.processing.database import is_db_complete
-    from app.processing.preprocessor import SessionPreProcessor, is_testing_session
-
-    await asyncio.sleep(15)  # let startup settle
-
-    cache_root = Path("data/livetiming_cache")
-    if not cache_root.exists():
-        return
-
-    built = 0
-    for live_file in sorted(cache_root.rglob("live.jsonl")):
-        session_dir = live_file.parent
-        if is_db_complete(session_dir):
-            continue
-        if is_testing_session(session_dir):
-            continue  # pre-season testing DBs are not built eagerly
-        if live_capture.is_capturing_path(session_dir):
-            continue  # an active capture already owns this DB
-        try:
-            logger.info(f"Backfilling session DB: {session_dir}")
-            pre = SessionPreProcessor(session_dir, "")
-            try:
-                await pre.run()
-            finally:
-                pre.close()
-            built += 1
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception(f"Session DB backfill failed for {session_dir}")
-
-    if built:
-        logger.info(f"Session DB backfill complete: built {built} database(s)")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan - start background tasks on startup."""
@@ -447,28 +405,17 @@ async def lifespan(app: FastAPI):
     live_monitor_task = asyncio.create_task(live_session_monitor())
     logger.info("Started live session monitor")
 
-    # SKIP_BACKFILL=1 disables the startup DB-backfill task (useful
-    # when a live session is imminent and you don't want backfill IO
-    # competing with capture). Unset it on the next restart to resume.
-    if os.getenv("SKIP_BACKFILL", "0") == "1":
-        backfill_task = None
-        logger.info("Session DB backfill SKIPPED (SKIP_BACKFILL=1)")
-    else:
-        backfill_task = asyncio.create_task(backfill_session_dbs())
-        logger.info("Started session DB backfill")
+    # No startup DB backfill: session DBs are transient scratch files built on
+    # demand (engine connect / live capture) and deleted when no longer viewed.
 
     yield
 
     # Cleanup on shutdown
     live_monitor_task.cancel()
-    if backfill_task is not None:
-        backfill_task.cancel()
-
-    for task in (live_monitor_task, backfill_task):
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    try:
+        await live_monitor_task
+    except asyncio.CancelledError:
+        pass
 
     # Stop any active live capture
     if _active_live_capture["session_id"]:

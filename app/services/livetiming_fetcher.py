@@ -16,10 +16,32 @@ from typing import Any, Optional
 
 import aiohttp
 
-from app.processing.database import is_db_complete
-from app.processing.preprocessor import SessionPreProcessor, is_testing_session
+from app.processing.database import transient_db_path
+from app.processing.preprocessor import SessionPreProcessor
 
 logger = logging.getLogger(__name__)
+
+
+def is_jsonl_complete(live_file: Path) -> bool:
+    """True if the recording captured a whole session start-to-end.
+
+    F1 closes every session with a SessionStatus ``{"Status": "Ends"}``
+    message; a capture cut short (crash, interrupted download) lacks it.
+    The marker sits near the tail, so only the last chunk is read.
+    """
+    try:
+        size = live_file.stat().st_size
+    except OSError:
+        return False
+    if size == 0:
+        return False
+    try:
+        with live_file.open("rb") as fh:
+            fh.seek(max(0, size - 65536))
+            tail = fh.read().decode("utf-8", "ignore")
+    except OSError:
+        return False
+    return '"Status": "Ends"' in tail
 
 # Base URL for F1 live timing static data
 LIVETIMING_BASE_URL = "https://livetiming.formula1.com/static"
@@ -356,12 +378,11 @@ class LiveTimingFetcher:
     def _dir_downloaded(session_dir: Path) -> bool:
         """True if the SESSION DATA is downloaded (live.jsonl present).
 
-        Whether the session.db has finished processing is reported
-        separately via the per-session `has_db_complete` flag in the
-        cached-session response — that drives the DB-status icon in
-        the UI. Gating cache visibility on jsonl alone means a session
-        whose DB is mid-rebuild still appears (just with a muted DB
-        icon).
+        Whether that recording captured the whole session is reported
+        separately via the per-session `has_jsonl` flag (see
+        `is_jsonl_complete`) which drives the recording-status icon in
+        the UI; a partial capture still appears here, just with a muted
+        icon.
         """
         live = session_dir / "live.jsonl"
         return live.exists() and live.stat().st_size > 0
@@ -486,14 +507,9 @@ class LiveTimingFetcher:
         info["size_mb"] = round(stat.st_size / (1024 * 1024), 2)
         info["modified"] = datetime.fromtimestamp(stat.st_mtime).isoformat()
 
-        # Per-file presence flags so the UI can show JSON / DB / audio
+        # Per-file presence flags so the UI can show recording / audio
         # status icons without hitting a second endpoint.
-        info["has_jsonl"] = live_file.exists() and live_file.stat().st_size > 0
-        try:
-            from app.processing.database import is_db_complete
-            info["has_db_complete"] = is_db_complete(session_dir)
-        except Exception:
-            info["has_db_complete"] = (session_dir / "session.db").exists()
+        info["has_jsonl"] = live_file.exists() and is_jsonl_complete(live_file)
         info["has_audio"] = any(
             (session_dir / f).exists() and (session_dir / f).stat().st_size > 0
             for f in ("commentary.aac", "commentary.001.aac")
@@ -697,31 +713,33 @@ class LiveTimingFetcher:
 
         logger.info(f"Session data saved to {cache_dir}")
 
-        # Build session.db now — a download is only "complete" once the
-        # processed DB is ready, so the session loads instantly and
-        # only then shows up as cached. Pre-season testing sessions are
-        # exempt (8 h long, rarely replayed); their DB is built on
-        # demand if the session is opened.
-        if is_testing_session(cache_dir):
-            logger.info(f"Skipping eager DB build for testing session {cache_dir}")
-        else:
-            if progress_callback:
-                progress_callback("Processing", "building session database")
-            pre = SessionPreProcessor(cache_dir, "")
-            try:
-                # force=True so a re-download (status was already 'complete'
-                # from a prior build) actually rebuilds the DB from the new
-                # live.jsonl rather than early-returning.
-                await pre.run(
-                    force=True,
-                    on_progress=(
-                        (lambda pct: progress_callback("Processing", f"{pct:.0f}%"))
-                        if progress_callback else None
-                    )
+        # Build and process the session even when nobody watches it, so pace
+        # analysis and the (later-stage) session summary can run offline and
+        # be persisted for reading afterwards. The processed DB itself is
+        # transient: it is built in ./tmp, analysis results are persisted to
+        # data/analysis/, and the DB is then deleted (kept in DEBUG mode).
+        if progress_callback:
+            progress_callback("Processing", "building session database")
+        pre = SessionPreProcessor(cache_dir, "")
+        try:
+            # force=True so a re-download rebuilds from the new live.jsonl
+            # rather than early-returning on a prior 'complete' status.
+            await pre.run(
+                force=True,
+                on_progress=(
+                    (lambda pct: progress_callback("Processing", f"{pct:.0f}%"))
+                    if progress_callback else None
                 )
-            finally:
-                pre.close()
-            logger.info(f"Session database built for {cache_dir}")
+            )
+            # TODO(analysis, item 4): run the analysis pipeline here and
+            # persist results to data/analysis/ before the DB is deleted.
+        finally:
+            pre.close()
+        if os.getenv("REPLAY_DEBUG") != "1":
+            db_path = transient_db_path(cache_dir)
+            for suffix in ("", "-wal", "-shm"):
+                db_path.with_name(db_path.name + suffix).unlink(missing_ok=True)
+        logger.info(f"Session processed for {cache_dir}")
 
         return cache_dir
 

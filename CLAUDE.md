@@ -30,16 +30,18 @@ For what the app does and the UI, see [README.md](README.md),
 
 ```
 F1 SignalR (live)  ─┐
-                    ├─► SessionPreProcessor ─► session.db ─► FastAPI (SSE) ─► browser message bus ─► tiles
-live.jsonl (replay)─┘   (runs processors,      (per-topic
-                         snapshots for seek)     rows + snapshots)
+                    ├─► SessionPreProcessor ─► transient DB ─► FastAPI (SSE) ─► browser message bus ─► tiles
+live.jsonl (replay)─┘   (runs processors,      (scratch file in
+                         snapshots for seek)     ./tmp, per session)
 ```
 
-- **Capture/replay share the same processors.** Live capture and offline
-  reprocessing both feed `app/processing/processors/*`, so behaviour matches.
-- **`session.db` is derived.** It is rebuilt from `live.jsonl`. After changing a
-  server-side processor, the affected sessions must be **reprocessed** (rebuild
-  the DB) before the change is visible in replay.
+- **Capture/replay share the same processors.** Live capture and replay both
+  feed `app/processing/processors/*`, so behaviour matches.
+- **The processed DB is transient.** It is a scratch file under `./tmp`
+  (one per event/session), built on demand from `live.jsonl` when a client
+  connects and deleted on disconnect (kept in DEBUG mode). On connect any
+  existing scratch DB is deleted and rebuilt, so replay always runs the latest
+  processor code — there is no persisted `session.db` to reprocess.
 - **Seek-safety:** each processor implements `snapshot()`/`restore()`; the player
   restores latest-state-per-topic on seek, so client tiles must not keep
   edge-triggered state that a seek can't reconstruct.
@@ -81,13 +83,13 @@ live.jsonl (replay)─┘   (runs processors,      (per-topic
 data/livetiming_cache/{year}/{NN_event}/{session}/
     live.jsonl       # one JSON message per line: {"Type","DateTime","Json"}
     subscribe.json   # initial state snapshot
-    session.db       # processed, derived (rebuilt by the preprocessor)
 data/analysis/{year}/{event}/{session}/*.json   # analysis outputs
+tmp/{year}_{event}_{session}.db   # transient processed DB (built on demand, deleted on disconnect)
 ```
 
 ### `utils/scripts/` — tooling
 Track-SVG generation (`generate_track_svgs.py`, `fetch_circuit_data.py`) and
-reprocessing (`reprocess_year.py`, `reprocess_event.py`, `reprocess_session.py`).
+audio-sync application (`apply_audio_sync.py`).
 
 ## Client message bus
 
@@ -107,7 +109,6 @@ snapshots for seeking, 1×–50× replay (1× live).
 ```bash
 ./service.sh start|stop|restart|status          # server on :1950
 python -m app.cli.login                          # browser-based F1 login
-venv/bin/python utils/scripts/reprocess_year.py 2026   # rebuild a year's DBs
 ```
 
 Branching: `main` is the release branch.
