@@ -195,12 +195,41 @@ class SessionDatabase:
         self._conn.commit()
 
     def get_telemetry(self, driver: str, lap: int) -> Optional[Any]:
-        """Fetch a completed lap's telemetry samples, or None."""
+        """Fetch a completed lap's telemetry samples from the messages table
+        (topic telemetryLap:{driver}:{lap}), or None."""
         row = self._conn.execute(
-            "SELECT data FROM telemetry WHERE driver = ? AND lap = ?",
-            (driver, lap),
+            "SELECT data FROM messages WHERE topic = ? ORDER BY offset_ms DESC LIMIT 1",
+            (f"telemetryLap:{driver}:{lap}",),
         ).fetchone()
         return json.loads(row[0]) if row else None
+
+    def get_topic_history(self, topic: str, max_offset_ms: int) -> list[Any]:
+        """All payloads for a topic at or before offset, chronological — for
+        append-only histories (e.g. raceControlMessage) that the latest-per-
+        topic restore can't represent."""
+        rows = self._conn.execute(
+            "SELECT data FROM messages WHERE topic = ? AND offset_ms <= ? ORDER BY offset_ms",
+            (topic, max_offset_ms),
+        ).fetchall()
+        return [json.loads(r[0]) for r in rows]
+
+    def list_lap_telemetry(self, max_offset_ms: int) -> list[tuple[str, int, int]]:
+        """(driver, lap, data_length) for every telemetryLap row at or before
+        offset — feeds the client's telemetry-availability map."""
+        rows = self._conn.execute(
+            "SELECT topic, length(data) FROM messages "
+            "WHERE topic LIKE 'telemetryLap:%' AND offset_ms <= ?",
+            (max_offset_ms,),
+        ).fetchall()
+        out = []
+        for topic, dlen in rows:
+            parts = topic.split(":")
+            if len(parts) == 3:
+                try:
+                    out.append((parts[1], int(parts[2]), dlen or 0))
+                except ValueError:
+                    pass
+        return out
 
     def get_all_topics(self) -> list[str]:
         """Get list of all distinct topics."""

@@ -12,6 +12,7 @@ Seeking is instant via DB lookups — no message replay.
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -27,6 +28,10 @@ from app.services.live_capture import live_capture
 logger = logging.getLogger(__name__)
 
 TICK_INTERVAL = 0.016  # ~60fps tick rate
+
+# Keep the transient scratch DB after the last client disconnects (for
+# inspection) instead of deleting it.
+_DEBUG = os.getenv("REPLAY_DEBUG") == "1"
 
 
 class SessionEngine:
@@ -113,8 +118,18 @@ class SessionEngine:
             else:
                 self._session_type = "practice"
 
-        # Open database
+        # The processed DB is a TRANSIENT scratch file (./tmp). live.jsonl is
+        # the only permanent source.
+        #  - live capture in progress → its preprocessor is populating the
+        #    scratch DB as data arrives; the engine just reads it.
+        #  - replay → always delete any prior scratch DB and rebuild fresh, so
+        #    it's reprocessed by the latest code each time.
         self._db = SessionDatabase(self._session_path)
+        capturing = live_capture.is_capturing_path(self._session_path)
+        if not capturing:
+            base = self._db._db_path
+            for suffix in ("", "-wal", "-shm"):
+                base.with_name(base.name + suffix).unlink(missing_ok=True)
         self._db.open()
 
         # Determine session time bounds from JSONL file
@@ -122,21 +137,11 @@ class SessionEngine:
 
         self._running = True
 
-        # The session DB is owned by the data source, not the viewer:
-        #  - live capture in progress → its preprocessor is populating
-        #    the DB as data arrives; the engine just reads it.
-        #  - status == complete       → downloaded/processed already.
-        #  - otherwise                → no usable DB and nothing building
-        #    it (missing/corrupt/interrupted); rebuild it once here.
-        status = self._db.get_meta("status")
-        if live_capture.is_capturing_path(self._session_path):
+        if capturing:
             self._preprocess_done.set()
             logger.info(f"Session DB built live by capture: {self._session_name}")
-        elif status == "complete":
-            self._preprocess_done.set()
-            logger.info(f"Session already pre-processed: {self._session_name}")
         else:
-            logger.info(f"No complete DB for {self._session_name} — rebuilding")
+            logger.info(f"Building transient DB for {self._session_name}")
             self._preprocessor = SessionPreProcessor(
                 self._session_path, self._session_type,
             )
@@ -262,7 +267,13 @@ class SessionEngine:
                 pass
 
         if self._db:
+            db_path = self._db._db_path
             self._db.close()
+            # Transient scratch DB: remove it once no one's viewing, unless
+            # DEBUG (keep for inspection) or a live capture still owns it.
+            if not _DEBUG and not live_capture.is_capturing_path(self._session_path):
+                for suffix in ("", "-wal", "-shm"):
+                    db_path.with_name(db_path.name + suffix).unlink(missing_ok=True)
 
         for ws in list(self._clients.values()):
             try:
@@ -345,40 +356,7 @@ class SessionEngine:
                     "offset_ms": offset_ms,
                 })
 
-            # Tell the client which (driver, lap) pairs have a telemetry
-            # row on disk so the lap-pill list only renders clickable
-            # pills for laps that can actually display a trace. Sent as
-            # a single fan-out payload after restore so it's available
-            # immediately on connect / seek.
-            try:
-                # Also send length(data) so the client can flag empty
-                # laps (= laps where the position-data outage spanned the
-                # whole window) with a "NO DATA" placeholder up front.
-                # An empty lap's data column equals the literal string
-                # "[]" (2 bytes); any non-empty payload is longer.
-                rows = self._db._conn.execute(
-                    "SELECT driver, lap, length(data) FROM telemetry "
-                    "WHERE offset_ms <= ? ORDER BY driver, lap",
-                    (offset_ms,),
-                ).fetchall()
-                by_driver: dict[str, list[int]] = {}
-                empty_by_driver: dict[str, list[int]] = {}
-                for driver, lap, dlen in rows:
-                    by_driver.setdefault(driver, []).append(lap)
-                    if dlen is not None and dlen <= 2:
-                        empty_by_driver.setdefault(driver, []).append(lap)
-                if by_driver:
-                    await self._send_to_client(ws, {
-                        "topic": "telemetryAvailable",
-                        "data": by_driver,
-                    })
-                if empty_by_driver:
-                    await self._send_to_client(ws, {
-                        "topic": "telemetryEmpty",
-                        "data": empty_by_driver,
-                    })
-            except Exception:
-                logger.exception("Failed to send telemetry availability map")
+            await self._send_restore_extras(offset_ms, ws)
 
         logger.info(f"Client {client_id} connected to {self._session_name} ({len(self._clients)} total)")
         return client_id
@@ -511,23 +489,8 @@ class SessionEngine:
             "offset_ms": offset_ms,
         })
 
-        # Refresh telemetry-availability map for the new offset.
-        try:
-            rows = self._db._conn.execute(
-                "SELECT driver, lap FROM telemetry "
-                "WHERE offset_ms <= ? ORDER BY driver, lap",
-                (offset_ms,),
-            ).fetchall()
-            by_driver: dict[str, list[int]] = {}
-            for driver, lap in rows:
-                by_driver.setdefault(driver, []).append(lap)
-            if by_driver:
-                await self._broadcast({
-                    "topic": "telemetryAvailable",
-                    "data": by_driver,
-                })
-        except Exception:
-            logger.exception("Failed to broadcast telemetry availability on seek")
+        # Refresh telemetry-availability map + replay RC-message history.
+        await self._send_restore_extras(offset_ms)
 
         self._last_offset_ms = offset_ms
 
@@ -548,6 +511,44 @@ class SessionEngine:
             },
         })
 
+    async def _send_restore_extras(self, offset_ms: int, ws=None) -> None:
+        """After a state:restore, send the things latest-per-topic can't cover:
+        the telemetry-availability map (which driver/lap pairs have a stored
+        trace, + which are empty) and the append-only raceControlMessage
+        history up to the offset. Per-client (ws) on connect; broadcast on seek.
+        """
+        if not self._db:
+            return
+
+        async def _send(msg):
+            if ws:
+                await self._send_to_client(ws, msg)
+            else:
+                await self._broadcast(msg)
+
+        # Telemetry availability (empty laps = data length <= 2, i.e. "[]").
+        try:
+            by_driver: dict[str, list[int]] = {}
+            empty: dict[str, list[int]] = {}
+            for driver, lap, dlen in self._db.list_lap_telemetry(offset_ms):
+                by_driver.setdefault(driver, []).append(lap)
+                if dlen <= 2:
+                    empty.setdefault(driver, []).append(lap)
+            if by_driver:
+                await _send({"topic": "telemetryAvailable", "data": by_driver})
+            if empty:
+                await _send({"topic": "telemetryEmpty", "data": empty})
+        except Exception:
+            logger.exception("Failed to send telemetry availability map")
+
+        # Race-control message history — append-only, so replay all up to the
+        # offset (latest-per-topic restore would only carry the last one).
+        try:
+            for m in self._db.get_topic_history("raceControlMessage", offset_ms):
+                await _send({"topic": "raceControlMessage", "data": m})
+        except Exception:
+            logger.exception("Failed to replay race control messages")
+
     async def _send_lap_telemetry(self, driver: str, lap: int, ws=None) -> None:
         """Query lap telemetry from DB and send to requesting client."""
         if not self._db or not driver or not lap:
@@ -555,7 +556,7 @@ class SessionEngine:
         data = self._db.get_telemetry(driver, lap)
         if data is None:
             return
-        msg = {"topic": f"lapTelemetry:{driver}:{lap}", "data": data}
+        msg = {"topic": f"telemetryLap:{driver}:{lap}", "data": data}
         if ws:
             await self._send_to_client(ws, msg)
         else:
@@ -573,42 +574,38 @@ class SessionEngine:
             return
         playback_ms = int(self._clock.offset_seconds * 1000) if self._clock else 0
 
-        if self._session_type == "race":
-            row = self._db._conn.execute(
-                "SELECT lap, data FROM telemetry WHERE driver=? AND offset_ms <= ? "
-                "ORDER BY offset_ms DESC LIMIT 1",
-                (driver, playback_ms),
-            ).fetchone()
-        else:
-            # Latest classification snapshot up to playback offset gives
-            # us the per-lap status map. Pick the highest lap that is
-            # PUSH/LONG and has a telemetry row at or before playback.
-            cls_row = self._db._conn.execute(
-                "SELECT data FROM messages WHERE topic=? AND offset_ms <= ? "
-                "ORDER BY offset_ms DESC LIMIT 1",
-                (f"lapClassification:{driver}", playback_ms),
-            ).fetchone()
-            if not cls_row:
-                return
-            laps_map = (json.loads(cls_row[0]) or {}).get("laps") or {}
-            fast_laps = sorted(
-                (int(k) for k, v in laps_map.items() if v in ("PUSH", "LONG")),
-                reverse=True,
-            )
-            row = None
-            for lap_num in fast_laps:
-                row = self._db._conn.execute(
-                    "SELECT lap, data FROM telemetry "
-                    "WHERE driver=? AND lap=? AND offset_ms <= ?",
-                    (driver, lap_num, playback_ms),
-                ).fetchone()
-                if row:
-                    break
-
-        if not row:
+        # Completed laps with telemetry up to the playback offset, newest first.
+        rows = self._db._conn.execute(
+            "SELECT topic FROM messages WHERE topic LIKE ? AND offset_ms <= ? "
+            "ORDER BY offset_ms DESC",
+            (f"telemetryLap:{driver}:%", playback_ms),
+        ).fetchall()
+        if not rows:
             return
-        lap, data_json = row
-        msg = {"topic": f"lapTelemetry:{driver}:{lap}", "data": json.loads(data_json)}
+        laps = [int(t.split(":")[2]) for (t,) in rows]
+
+        if self._session_type == "race":
+            lap = laps[0]
+        else:
+            # P/Q: only PUSH laps are representative. Build the latest per-lap
+            # classification up to the offset, pick the newest PUSH lap.
+            cls_rows = self._db._conn.execute(
+                "SELECT data FROM messages WHERE topic=? AND offset_ms <= ? "
+                "ORDER BY offset_ms",
+                (f"driverLapClassification:{driver}", playback_ms),
+            ).fetchall()
+            types: dict[int, str] = {}
+            for (d,) in cls_rows:
+                p = json.loads(d)
+                types[p["lap"]] = p.get("type")
+            lap = next((l for l in laps if types.get(l) == "PUSH"), None)
+            if lap is None:
+                return
+
+        data = self._db.get_telemetry(driver, lap)
+        if data is None:
+            return
+        msg = {"topic": f"telemetryLap:{driver}:{lap}", "data": data}
         if ws:
             await self._send_to_client(ws, msg)
         else:
@@ -625,30 +622,22 @@ class SessionEngine:
         if not self._db or not driver:
             return
         playback_ms = int(self._clock.offset_seconds * 1000) if self._clock else 0
-        # Latest fastestLaps snapshot up to playback offset
+        # The driver's best lap as of the playback offset comes from the latest
+        # driverLaps snapshot (bestLap.lap), not the old fastestLaps topic.
         row = self._db._conn.execute(
-            "SELECT data FROM messages WHERE topic='fastestLaps' "
+            "SELECT data FROM messages WHERE topic=? "
             "AND offset_ms <= ? ORDER BY offset_ms DESC LIMIT 1",
-            (playback_ms,),
+            (f"driverLaps:{driver}", playback_ms),
         ).fetchone()
         if not row:
             return
-        best_lap = None
-        for e in json.loads(row[0]):
-            if e.get("driver") == driver:
-                best_lap = e.get("lap")
-                break
-        if not best_lap:
+        best = (json.loads(row[0]).get("bestLap") or {}).get("lap")
+        if not best:
             return
-        # Telemetry for that specific lap
-        trow = self._db._conn.execute(
-            "SELECT lap, data FROM telemetry WHERE driver=? AND lap=?",
-            (driver, best_lap),
-        ).fetchone()
-        if not trow:
+        data = self._db.get_telemetry(driver, best)
+        if data is None:
             return
-        lap, data_json = trow
-        msg = {"topic": f"lapTelemetry:{driver}:{lap}", "data": json.loads(data_json)}
+        msg = {"topic": f"telemetryLap:{driver}:{best}", "data": data}
         if ws:
             await self._send_to_client(ws, msg)
         else:
