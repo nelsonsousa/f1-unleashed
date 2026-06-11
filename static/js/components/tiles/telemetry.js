@@ -753,7 +753,17 @@
     // Driver Selector (toggle each driver on/off)
     // =========================================================================
 
+    // Throttle the lap-pill rebuild — driverLaps/driverLapClassification fire
+    // for 20 cars many times a second; rebuilding the pill DOM on each floods
+    // the main thread. Coalesce to once per animation frame.
+    let _selectorPending = false;
     function renderDriverSelector() {
+        if (_selectorPending) return;
+        _selectorPending = true;
+        requestAnimationFrame(() => { _selectorPending = false; renderDriverSelectorNow(); });
+    }
+
+    function renderDriverSelectorNow() {
         const el = document.getElementById('telemetryDriverSelector');
         if (!el) return;
         const sorted = getSortedDrivers();

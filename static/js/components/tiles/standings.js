@@ -1188,7 +1188,18 @@
         });
     }
 
+    // Throttle: the row data is assembled from ~12 per-driver topics, each
+    // firing for 20 cars many times a second. Rendering on every one floods
+    // the main thread (whole-table innerHTML rebuild) and freezes the UI, so
+    // coalesce all updates within a frame into a single render.
+    let _renderPending = false;
     function render() {
+        if (_renderPending) return;
+        _renderPending = true;
+        requestAnimationFrame(() => { _renderPending = false; renderNow(); });
+    }
+
+    function renderNow() {
         const container = document.getElementById('driverList');
         if (!container) return;
 
