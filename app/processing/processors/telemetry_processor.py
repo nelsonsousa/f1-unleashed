@@ -328,6 +328,16 @@ class TelemetryProcessor(Processor):
         end_ms = _epoch_ms(end_ts)
         in_lap = [s for s in drv.samples if start_ms <= s[6] < end_ms]
 
+        # A lap's samples ascend dp 0→100. A boundary that lands a hair before
+        # the S/F line leaves a pre-S/F straggler (dp~100) at the front, or a
+        # next-lap straggler (dp~0) at the back — either draws a line straight
+        # across the chart. Strip leading/trailing samples that jump backward
+        # across the seam so the trace is monotonic in dp.
+        while len(in_lap) >= 2 and in_lap[0][0] > in_lap[1][0]:
+            in_lap.pop(0)
+        while len(in_lap) >= 2 and in_lap[-1][0] < in_lap[-2][0]:
+            in_lap.pop()
+
         out = []
         synth_start = self._synthetic_at_seam(drv, start_ts, 0.0)
         if synth_start is not None:
