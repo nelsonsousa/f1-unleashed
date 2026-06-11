@@ -30,6 +30,19 @@ Working autonomously 2026-06-11 night; user to review in the morning.
 - [ ] Tile: race_control
 - [ ] header (clocks, track status, playback/audio controls)
 
+## Additional requests received overnight (queued, in order)
+1. [DONE] signalr reconnection — backoff reconnect + re-subscribe; terminal
+   `_SessionEnd` only on real stop; live_capture uses `is_alive` not
+   `is_connected`. **UNTESTED against a live server** — validate at next live
+   session. Verified via a stubbed reconnect-loop simulation.
+2. [TODO] signalr dynamic topic discovery + alert for topics we don't process
+   (ntfy on new ones; seed on first run). Implementing at the bus/preprocessor
+   level (sees every raw topic, knows handlers, works live + replay).
+3. [TODO] move cache out of the app folder to a standard OS data dir
+   (~/.local/share or platform equivalent; Windows %LOCALAPPDATA%).
+4. [TODO] Windows startup script (service.sh is mac/linux only).
+5. [TODO — the main task] frontend rewire (full item #2).
+
 ## Decisions made (running)
 
 ### D1 — backend cleanup ordering (deviates slightly from "backend fully before frontend")

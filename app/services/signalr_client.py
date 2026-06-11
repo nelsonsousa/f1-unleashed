@@ -83,6 +83,9 @@ class F1SignalRClient:
         message_callback: Optional[Callable[[dict], None]] = None,
         no_auth: bool = False,
         timeout: int = 120,
+        reconnect_base: float = 5.0,
+        reconnect_max: float = 60.0,
+        max_reconnect_attempts: int = 0,
     ):
         """
         Initialize the SignalR client.
@@ -91,7 +94,13 @@ class F1SignalRClient:
             cache_path: Directory to store cached data
             message_callback: Optional callback for received messages
             no_auth: If True, connect without F1 authentication (limited data)
-            timeout: Seconds without data before auto-disconnect
+            timeout: Seconds without data before auto-disconnect (0 = disabled)
+            reconnect_base: Backoff base (s); delay = base * consecutive_failures
+            reconnect_max: Backoff cap (s)
+            max_reconnect_attempts: Consecutive-failure cap before giving up
+                (0 = unlimited while running; the lifecycle is bounded by the
+                live-session monitor / stop()). A successful reconnect that
+                receives data resets the counter.
         """
         self.cache_path = Path(cache_path)
         self.cache_path.mkdir(parents=True, exist_ok=True)
@@ -99,6 +108,9 @@ class F1SignalRClient:
         self._message_callback = message_callback
         self._no_auth = no_auth
         self._timeout = timeout
+        self._reconnect_base = reconnect_base
+        self._reconnect_max = reconnect_max
+        self._max_reconnect_attempts = max_reconnect_attempts
 
         self._connection: Optional[Any] = None
         self._is_connected = False
@@ -217,27 +229,29 @@ class F1SignalRClient:
             except Exception as e:
                 logger.warning(f"Failed to queue message: {e}")
 
+    def _queue_status(self, status: str) -> None:
+        """Push a status message to the async consumer (live_capture)."""
+        if self._message_queue and self._loop:
+            self._loop.call_soon_threadsafe(
+                self._message_queue.put_nowait,
+                {"type": "status", "status": status}
+            )
+
     def _on_connect(self):
         """Handle connection established."""
         self._is_connected = True
         logger.info("SignalR connection established")
-
-        if self._message_queue and self._loop:
-            self._loop.call_soon_threadsafe(
-                self._message_queue.put_nowait,
-                {"type": "status", "status": "connected"}
-            )
+        self._queue_status("connected")
 
     def _on_close(self):
-        """Handle connection closed."""
+        """Handle connection closed.
+
+        Sets the flag so the serve loop exits; does NOT queue a terminal
+        'disconnected' status — the reconnect loop owns that decision and
+        only finalizes (terminal 'disconnected') when truly stopping.
+        """
         self._is_connected = False
         logger.info("SignalR connection closed")
-
-        if self._message_queue and self._loop:
-            self._loop.call_soon_threadsafe(
-                self._message_queue.put_nowait,
-                {"type": "status", "status": "disconnected"}
-            )
 
     def _on_error(self, error):
         """Handle connection error."""
@@ -250,9 +264,66 @@ class F1SignalRClient:
             )
 
     def _run_connection(self):
-        """Run the SignalR connection (in a separate thread)."""
-        headers = {}
+        """Run the SignalR connection with reconnection (separate thread).
 
+        Opens live.jsonl once (append) and drives a reconnect loop:
+        each `_connect_and_serve()` runs one connection until it drops,
+        idles out, or is stopped. A 'dropped'/'error' outcome while still
+        running triggers a backoff reconnect (re-negotiate + re-subscribe);
+        only an intentional stop or idle-timeout — or exhausting the
+        consecutive-failure cap — finalizes the capture (writes the
+        terminal _SessionEnd marker, closes the file, terminal status).
+        """
+        live_file = self.cache_path / "live.jsonl"
+        self._output_file = open(live_file, "a", encoding="utf-8")
+
+        consecutive_failures = 0
+        try:
+            while self._is_running:
+                count_before = self._message_count
+                try:
+                    reason = self._connect_and_serve()
+                except Exception as e:
+                    logger.error(f"SignalR connection error: {e}")
+                    reason = "error"
+                self._teardown_connection()
+
+                # A connection that delivered data is "healthy" — reset backoff.
+                if self._message_count > count_before:
+                    consecutive_failures = 0
+
+                if not self._is_running or reason in ("stopped", "idle"):
+                    break
+
+                # reason in ("dropped", "error") -> reconnect with backoff
+                consecutive_failures += 1
+                if 0 < self._max_reconnect_attempts < consecutive_failures:
+                    logger.error(
+                        "SignalR reconnect attempts exhausted "
+                        f"({consecutive_failures}); ending capture"
+                    )
+                    break
+                delay = min(self._reconnect_base * consecutive_failures,
+                            self._reconnect_max)
+                logger.warning(
+                    f"SignalR connection lost ({reason}); reconnecting in "
+                    f"{delay:.0f}s (attempt {consecutive_failures})"
+                )
+                self._queue_status("reconnecting")
+                slept = 0.0
+                while slept < delay and self._is_running:
+                    time.sleep(0.5)
+                    slept += 0.5
+        finally:
+            self._finalize_capture()
+
+    def _connect_and_serve(self) -> str:
+        """Establish one connection, subscribe, and serve until it ends.
+
+        Returns the outcome: 'stopped' (intentional), 'idle' (timeout),
+        'dropped' (connection lost), or 'error' (failed to connect).
+        """
+        headers = {}
         try:
             # Pre-negotiate to get AWSALBCORS cookie
             logger.info("Pre-negotiating SignalR connection...")
@@ -263,17 +334,13 @@ class F1SignalRClient:
         except Exception as e:
             logger.warning(f"Pre-negotiate failed: {e}")
 
-        # Configure connection options
         options = {
             "verify_ssl": True,
             "headers": headers,
         }
-
-        # Add auth token factory if authentication is enabled
         if not self._no_auth:
             options["access_token_factory"] = self._get_auth_token
 
-        # Build connection
         logger.info("Building SignalR connection...")
         self._connection = HubConnectionBuilder() \
             .with_url(SIGNALR_CONNECTION_URL, options=options) \
@@ -285,22 +352,18 @@ class F1SignalRClient:
         self._connection.on_error(self._on_error)
         self._connection.on("feed", self._on_message)
 
-        # Open cache file
-        live_file = self.cache_path / "live.jsonl"
-        self._output_file = open(live_file, "a", encoding="utf-8")
-
-        # Start connection
         logger.info("Starting SignalR connection...")
         self._connection.start()
 
         # Wait for connection
         timeout_count = 0
-        while not self._is_connected and timeout_count < 100:
+        while not self._is_connected and timeout_count < 100 and self._is_running:
             time.sleep(0.1)
             timeout_count += 1
 
         if not self._is_connected:
-            raise ConnectionError("Failed to establish SignalR connection")
+            logger.warning("Failed to establish SignalR connection")
+            return "error"
 
         # Subscribe to topics
         logger.info(f"Subscribing to {len(LIVE_TOPICS)} topics...")
@@ -315,24 +378,28 @@ class F1SignalRClient:
         # Monitor connection
         while self._is_running and self._is_connected:
             time.sleep(1)
-
-            # Check for timeout
             if self._timeout > 0 and time.time() - self._t_last_message > self._timeout:
                 logger.warning(f"No data for {self._timeout}s, disconnecting...")
-                break
+                return "idle"
 
-        # Cleanup
-        self._cleanup()
+        return "stopped" if not self._is_running else "dropped"
 
-    def _cleanup(self):
-        """Clean up SignalR connection resources."""
+    def _teardown_connection(self):
+        """Stop the current connection instance (per reconnect attempt).
+
+        Does NOT touch the cache file or write the terminal marker — that
+        is the reconnect loop's job once it decides to stop for good.
+        """
         if self._connection:
             try:
                 self._connection.stop()
             except Exception:
                 pass
             self._connection = None
+        self._is_connected = False
 
+    def _finalize_capture(self):
+        """Finalize the capture: terminal marker, close file, save state."""
         # Write end marker before closing the file
         if self._output_file:
             try:
@@ -362,6 +429,8 @@ class F1SignalRClient:
                 logger.error(f"Failed to save subscribe data: {e}")
 
         self._is_connected = False
+        # Terminal status — live_capture ends the capture loop on this.
+        self._queue_status("disconnected")
         logger.info(f"SignalR client stopped. Received {self._message_count} messages.")
 
     def start(self, loop: Optional[asyncio.AbstractEventLoop] = None) -> asyncio.Queue:
@@ -397,6 +466,16 @@ class F1SignalRClient:
     def is_connected(self) -> bool:
         """Check if currently connected."""
         return self._is_connected
+
+    @property
+    def is_alive(self) -> bool:
+        """True while the capture thread is running (incl. between reconnects).
+
+        Distinct from `is_connected`, which is briefly False during a
+        reconnect. Consumers should use this (not is_connected) to decide
+        whether the capture has truly ended.
+        """
+        return bool(self._thread and self._thread.is_alive())
 
     @property
     def message_count(self) -> int:
