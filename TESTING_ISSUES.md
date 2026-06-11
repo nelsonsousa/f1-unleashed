@@ -8,11 +8,14 @@ Root-cause notes from read-only investigation of the kept transient DBs (REPLAY_
 ### I1 — Driver TLA/colour styling: row 1 vs row 2 differ
 1st row TLA text + team-colour swatch smaller than 2nd row's (should match).
 Likely the `p1` class on idx 0 (`buildRow`) styled differently in standings.css.
-→ DEFERRED: no `.p1` or per-row sizing rule exists in standings.css (the only
-CSS the session page loads), and `.driver-tla`/`.driver-color` are uniform — so
-rows should render identically. Can't repro from CSS alone; need a screenshot or
-the computed styles of the two TLA/colour elements to find the real cause
-(likely grid auto-sizing or an inherited parent style).
+→ CLARIFIED: it's the START identifier (.driver-tla/.driver-color) vs the END
+mirror (.driver-tla-end/.driver-color-end). Current source has NO `-end` CSS
+rule anywhere, identical markup, identical grid tracks (14px colour / 5fr tla
+both ends) → fresh assets cannot differ. LIKELY CAUSE: stale cached standings.css
+(it was loaded with NO ?v= cache-buster, so cached indefinitely; an older version
+had `-end` sizing). FIX applied: added ?v=2026-06-11a to all tile CSS + bumped
+all JS/CSS cache-busters → hard-refresh and re-check. If it persists, send the
+computed font-size/height of the two TLA spans.
 
 ### I2 — Replay scrubber shows a "LIVE" marker at the end
 The `scrubberLive` element in renderEventMarkers is gated on `!hasSessionEnd`,
