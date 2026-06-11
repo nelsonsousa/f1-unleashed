@@ -328,7 +328,11 @@
 
         // Best-lap display (purple/green decided at render via fastestLap).
         const e = ensureData(num);
-        if (data.bestLap) { e.bestLap = data.bestLap.time; e.bestLapPersonal = true; }
+        if (data.bestLap) {
+            e.bestLap = data.bestLap.time;
+            e.bestLapPersonal = true;
+            e.bestLapNum = data.bestLap.lap;   // for out/in suppression at render
+        }
 
         // Completed-lap snapshot — capture the live sectors (still holding
         // the just-finished lap's S1/S2/S3 at this instant) plus lastLap's
@@ -587,6 +591,12 @@
     function bestLapCell(num) {
         const e = state.driverData[num] || {};
         const t = state.timing[num] || {};
+        // Don't surface an out/in/stopped lap as a "best lap" (can happen
+        // when it's the only completed lap and F1 flags it personal-best).
+        const bt = lapTypeAt(num, e.bestLapNum);
+        if (bt === 'OUT' || bt === 'PIT' || bt === 'STOP') {
+            return `<span class="lap-time lap-empty">--:--.---</span>`;
+        }
         const txt = e.bestLap || t.bestLapTime || '';
         let cls = 'lap-empty';
         if (txt) {
@@ -626,6 +636,13 @@
     function isSlowLapClass(num) {
         const cls = state.lapCls[num] && state.lapCls[num].status;
         return cls === 'SLOW' || cls === 'OUT';
+    }
+
+    // Per-lap classification type (from driverLapClassification). Used to
+    // suppress rendering a lap TIME for out/in/stopped laps — those aren't
+    // representative timed laps even though F1 reports a time for them.
+    function lapTypeAt(num, lapNum) {
+        return lapNum != null ? (state.lapClsByLap[num] || {})[lapNum] : undefined;
     }
 
     // Pick the lap object whose data we should display in the last-lap +
@@ -698,6 +715,13 @@
             }
         }
 
+        // An out lap / stopped "lap" isn't a representative timed lap —
+        // suppress its time even though F1 reports one. (In-pit laps in race
+        // are intentionally kept per the source-selection above.)
+        const st = source ? lapTypeAt(num, source.lap) : undefined;
+        if (st === 'OUT' || st === 'STOP') {
+            return `<span class="lap-time lap-last lap-empty">--:--.---</span>`;
+        }
         const last = (source && source.lapTime) || '';
         let cls = 'lap-empty';
         if (last) {

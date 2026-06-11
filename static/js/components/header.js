@@ -525,10 +525,6 @@
         if (!container || state.duration <= 0) return;
 
         let html = '';
-        const hasSessionEnd = events.some(e => {
-            const d = typeof e.data === 'string' ? e.data : (e.data?.event || '');
-            return d === 'sessionEnd';
-        });
 
         // Each event position uses the non-linear scrubber mapping so
         // the visible scrubber width is dominated by the 5-min-before-
@@ -601,21 +597,9 @@
             html += marker;
         }
 
-        // Live marker — only in a live session (and while it hasn't ended).
-        if (messageBus.isLive && !hasSessionEnd) {
-            html += `<div class="scrubber-live" id="scrubberLive" title="Jump to live">LIVE</div>`;
-        }
-
+        // (The old scrubber "LIVE" marker is gone — the header LIVE button,
+        // which replaces the speed button in live, is the single live control.)
         container.innerHTML = html;
-
-        // Bind live button
-        const liveBtn = document.getElementById('scrubberLive');
-        if (liveBtn) {
-            liveBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                seekToOffset(state.duration);
-            });
-        }
     }
 
     // Live mode: periodically update duration from latest message offset
