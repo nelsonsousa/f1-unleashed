@@ -171,14 +171,24 @@ class DriverGapProcessor(Processor):
             return
         # Recompute the whole field — one driver's lap can flip another's zone.
         cutoff_pos = self._cutoff_position()
+        # Best lap of the car in the last ADVANCING position (P16 in Q1 /
+        # P10 in Q2). KO-zone drivers' gap is measured to it — how far they
+        # are from safety. (F1's CutOffTime = 107% of P1 is not meaningful
+        # for this and is no longer used for the gap value.)
+        cutoff_best_ms = None
+        if cutoff_pos is not None:
+            for n, p in self._pos.items():
+                if p == cutoff_pos:
+                    cutoff_best_ms = self._best_ms.get(n)
+                    break
         for num in self._seen:
             in_zone = (cutoff_pos is not None
                        and not self._knocked.get(num)
                        and self._pos.get(num, 0) > cutoff_pos)
             if in_zone:
                 bms = self._best_ms.get(num)
-                gap = (_fmt_gap(bms - self._cutoff_time_ms)
-                       if bms is not None and self._cutoff_time_ms is not None else "")
+                gap = (_fmt_gap(bms - cutoff_best_ms)
+                       if bms is not None and cutoff_best_ms is not None else "")
             else:
                 gap = self._gap_p1.get(num, "")
             self._emit_gap(num, gap, in_zone, clock_time)

@@ -524,16 +524,18 @@
     // 16 × 14 chequered-flag SVG. Aspect ratio matches the scrubber
     // flag emoji (= shorter than tall feels more like a real flag).
     // 4 cols × 4 rows (= 4px × 3.5px cells, rounded to 4×3 visually).
-    const CHEQUERED_SVG = '<svg class="st-chequered-svg" width="16" height="14" viewBox="0 0 16 14" stroke="rgba(0,0,0,0.7)" stroke-width="0.5">'
-        + '<rect width="16" height="14" fill="white"/>'
-        + '<rect x="0"  y="0"  width="4" height="3.5" fill="black"/>'
-        + '<rect x="8"  y="0"  width="4" height="3.5" fill="black"/>'
-        + '<rect x="4"  y="3.5" width="4" height="3.5" fill="black"/>'
-        + '<rect x="12" y="3.5" width="4" height="3.5" fill="black"/>'
-        + '<rect x="0"  y="7"  width="4" height="3.5" fill="black"/>'
-        + '<rect x="8"  y="7"  width="4" height="3.5" fill="black"/>'
-        + '<rect x="4"  y="10.5" width="4" height="3.5" fill="black"/>'
-        + '<rect x="12" y="10.5" width="4" height="3.5" fill="black"/>'
+    // 16 × 12, 4 cols × 4 rows (cells 4 × 3), with a 0.5px border around it.
+    const CHEQUERED_SVG = '<svg class="st-chequered-svg" width="16" height="12" viewBox="0 0 16 12">'
+        + '<rect width="16" height="12" fill="white"/>'
+        + '<rect x="0"  y="0" width="4" height="3" fill="black"/>'
+        + '<rect x="8"  y="0" width="4" height="3" fill="black"/>'
+        + '<rect x="4"  y="3" width="4" height="3" fill="black"/>'
+        + '<rect x="12" y="3" width="4" height="3" fill="black"/>'
+        + '<rect x="0"  y="6" width="4" height="3" fill="black"/>'
+        + '<rect x="8"  y="6" width="4" height="3" fill="black"/>'
+        + '<rect x="4"  y="9" width="4" height="3" fill="black"/>'
+        + '<rect x="12" y="9" width="4" height="3" fill="black"/>'
+        + '<rect x="0.25" y="0.25" width="15.5" height="11.5" fill="none" stroke="rgba(0,0,0,0.7)" stroke-width="0.5"/>'
         + '</svg>';
 
     function statusCell(num) {

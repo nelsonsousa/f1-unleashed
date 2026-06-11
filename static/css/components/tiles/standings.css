@@ -144,6 +144,7 @@
 .status::-webkit-scrollbar { display: none; }  /* Chrome/Safari/Webkit: hide scrollbar */
 
 .status.st-out,
+.status.st-slow,
 .status.st-cool { color: #ffffff; }
 .status.st-push { color: #00ff88; }
 .status.st-chequered { color: #ffffff; }

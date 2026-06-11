@@ -601,8 +601,8 @@
             html += marker;
         }
 
-        // Live button if session end hasn't arrived
-        if (!hasSessionEnd) {
+        // Live marker — only in a live session (and while it hasn't ended).
+        if (messageBus.isLive && !hasSessionEnd) {
             html += `<div class="scrubber-live" id="scrubberLive" title="Jump to live">LIVE</div>`;
         }
 
