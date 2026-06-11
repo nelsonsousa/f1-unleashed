@@ -83,7 +83,17 @@ in the garage) inherently can't be bounded → those remain missing/merged. Expe
 
 ### I6 — Chequered flag / session-finished not shown as a scrubber event
 The CHEQUERED (and session end) marker isn't appearing on the playback scrubber.
-→ FIXED: the old mapping put chequered at the section-2/3 boundary ~at the
+→ ACTUAL ROOT CAUSE of "chequered missing + inconsistent events across reloads":
+the client renders the scrubber from a PARTIAL DB — FP1's full build takes ~89s
+but add_client only waits 60s, so late events (chequered @4500s, sessionEnd
+@5430s) aren't built yet when state:full is sent. Non-determinism = how far the
+build got in 60s. DEFERRED: this fixes itself for free once data ships to the
+client as the DB builds (stream-immediately). A re-broadcast-on-completion
+band-aid was implemented then reverted per user (don't accumulate code that
+stream-immediately supersedes).
+
+→ ALSO FIXED (separate, kept): the scrubber MAPPING — the old version put
+chequered at the section-2/3 boundary ~at the
 right edge (offset≈duration → pct≈100), so it clipped. Rewrote the scrubber
 mapping to the user's spec — piecewise-linear control points with regions
 [0,T1-5min]→[0,5px], [T1-5min,T2+5min]→[5px,X-5px], [T2+5min,end]→[X-5px,X].
