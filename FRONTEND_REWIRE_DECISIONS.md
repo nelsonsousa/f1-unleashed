@@ -49,7 +49,18 @@ Working autonomously 2026-06-11 night; user to review in the morning.
 - [x] track_map — NO CHANGE NEEDED (topics/payloads unchanged; already reads info.color/data.status)
 - [x] header — NO CHANGE NEEDED (Live button/scrubber-regions belong to Live-vs-Replay card)
 - [x] standings — adapter rewrite, per-driver join. commit 00339cd. NOT browser-tested.
-- [ ] telemetry — pending (liveTelemetry replaces raw CarData.z; telemetryLap rename; driverLaps)
+- [x] telemetry — rewired. commit f2ad653. NOT browser-tested.
+  - liveTelemetry:{num} (server-decoded) replaces raw CarData.z + position-derived
+    distance; new-lap reset keyed on sample.lap. liveTelemetry is persisted
+    (streams in replay) + restore-excluded (no seek flood).
+  - telemetryLap rename; driverLaps.laps for lap times; driverLapClassification
+    {lap,type}; pill/fade vocab COOL/ABORT/IN/LONG → SLOW/PIT/PUSH.
+  - DROPPED (no source topic): per-lap Q-segment pill grouping (lapSegments) +
+    SC/VSC pill colouring (lapAffectedBy). Flag for review.
+
+## UI REWIRE COMPLETE (6/6) — all committed on review/frontend-rewire, NOT browser-tested.
+Next agenda item per user: "Live vs Replay client view" (separate card) — Live
+button + 1x speed-lock + scrubber regions + no-spoiler past-only events.
 
 ### Standings rewrite — decisions + known follow-ups (for review)
 - Predicted position now = standings position − server `placesGained` (dropped
