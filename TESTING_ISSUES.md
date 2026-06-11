@@ -80,6 +80,8 @@ out→flying transition). Client needed NO change — all pills are already
 clickable; "L2 not selectable" was just the missing/misnumbered telemetryLap row.
 CAVEAT: garage-heavy laps with no clean S/F crossing (e.g. NOR L2=10:28 sitting
 in the garage) inherently can't be bounded → those remain missing/merged. Expected.
+→ UPDATE: reworked again to crossing-buffer BACK-FILL with a report-time tolerance defer. lastLap.lap=N closes lap N at the latest S/F crossing and back-fills preceding windows to N,N-1,… (numbers a no-time out lap that never got its own lastLap; absorbs a spurious pre-out-lap crossing); the 30s tolerance defers until the lap's closing crossing actually arrives (fixes the OCO case where lastLap was reported 0.3s before its crossing → was off-by-one). Verified LAW/OCO/NOR: all running + out laps align with driverLaps. RESIDUAL (inherent): garage laps with no S/F crossing (NOR L2=10:28, OCO L3=3:56) stay missing and the adjacent lap absorbs the garage time (a long blob). Can't bound a lap that never crossed S/F.
+
 
 ### I6 — Chequered flag / session-finished not shown as a scrubber event
 The CHEQUERED (and session end) marker isn't appearing on the playback scrubber.
