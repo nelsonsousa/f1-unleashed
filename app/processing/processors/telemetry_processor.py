@@ -85,6 +85,9 @@ class DriverData:
     completed_target: int = 0                  # latest driverLaps.lastLap.lap
     live_lap: int = 0                          # current driving lap (live elapsed only)
     in_pit: bool = False                       # driverStatus PIT → crossings are spurious
+    pit_close_pending: bool = False            # entered pit → close the in-lap at next NoL bump
+    pit_entry_ts: Optional[datetime] = None    # when the driver went into the pit (in-lap end)
+    in_garage: bool = False                    # in-lap closed; no telemetry until OUT
     emitted: set = field(default_factory=set)
 
 
@@ -136,8 +139,24 @@ class TelemetryProcessor(Processor):
             self._handle_driver_laps(topic.split(":", 1)[1], data, clock_time)
         elif topic.startswith("driverStatus:") and isinstance(data, str):
             num = topic.split(":", 1)[1]
-            # PIT → crossings are spurious (unreliable pit-lane projection).
-            self._drv(num).in_pit = (data == "PIT")
+            drv = self._drv(num)
+            if data == "PIT":
+                # Entering the pit: ignore in-pit S/F crossings, and mark the
+                # current lap (the in-lap) to be CLOSED at the next NoL bump
+                # (it has no S/F crossing — it ends at pit entry, partial).
+                if not drv.in_pit:
+                    drv.in_pit = True
+                    drv.pit_close_pending = True
+                    drv.pit_entry_ts = clock_time
+            elif data == "OUT":
+                # Pit exit: a new (out-)lap starts here (partial, starts >0%).
+                drv.in_pit = False
+                drv.in_garage = False
+                drv.pit_close_pending = False
+                drv.crossings = [clock_time]
+                drv.live_zero_ts = clock_time
+            else:
+                drv.in_pit = False
             if data in ("STOP", "RET"):
                 self._handle_stop(num, clock_time)
 
@@ -157,13 +176,41 @@ class TelemetryProcessor(Processor):
         m = last.get("lap") if isinstance(last, dict) else None
         if isinstance(m, int) and m > drv.completed_target:
             drv.completed_target = m
-            if drv.activated and m > drv.committed:
+            if not drv.activated:
+                return
+            if drv.pit_close_pending:
+                # The in-lap completed (NoL bumped) — close it at pit entry, no
+                # S/F crossing. Then we're in the garage: no telemetry until OUT.
+                self._close_in_lap(drv, m)
+                drv.pit_close_pending = False
+                drv.in_garage = True
+                return
+            if drv.in_garage:
+                # Garage laps: NoL counts them but there's no telemetry. Keep
+                # the lap number aligned so the out-lap closes with the right N.
+                drv.committed = m
+                return
+            if m > drv.committed:
                 self._try_close(drv, m, clock_time)
 
-    # Lap m's S/F crossing lands within ~this of the lastLap report; the
-    # PREVIOUS crossing is a full lap (≥60s) earlier, so this cleanly tells
-    # "the closing crossing has arrived" from "still pending".
-    _CLOSE_TOL = timedelta(seconds=30)
+    def _close_in_lap(self, drv: DriverData, m: int) -> None:
+        """Close the lap the driver took INTO the pits, bounded by pit entry
+        (no S/F crossing; partial lap, ends before 100%)."""
+        start = drv.crossings[-1] if drv.crossings else None
+        if (start is not None and drv.pit_entry_ts is not None
+                and m > drv.committed):
+            self._emit_lap(drv, m, start, drv.pit_entry_ts)
+        drv.committed = m
+        drv.crossings = []          # no open lap during the garage
+        drv.pending_lap = None
+
+    # Lap m's S/F crossing lands within ~this of the lastLap report (timing can
+    # report a completed lap up to ~tens of seconds AFTER the crossing — RUS FP1
+    # lagged 35s). The PREVIOUS crossing is a full lap (≥65s at Melbourne)
+    # earlier, so 60s cleanly separates "the closing crossing has arrived (use
+    # it)" from "still pending (defer)". Too small → a lagged report defers and
+    # closes against the NEXT crossing, cascading into empty + double laps.
+    _CLOSE_TOL = timedelta(seconds=60)
 
     def _try_close(self, drv: DriverData, m: int, report_ts: datetime) -> None:
         """Close completed laps up to authoritative lap m using buffered S/F
