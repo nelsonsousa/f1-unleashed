@@ -65,6 +65,14 @@ class SessionMessageBus:
         if persist and self._persist_sink is not None:
             self._persist_sink(topic, data, clock_time)
 
+    def has_subscriber(self, topic: str) -> bool:
+        """True if a specific (non-wildcard) handler is registered for topic.
+
+        Used for topic discovery: a raw F1 topic with no specific subscriber
+        is captured but not processed by any processor.
+        """
+        return bool(self._handlers.get(topic))
+
     def clear(self) -> None:
         """Remove all handlers."""
         self._handlers.clear()
