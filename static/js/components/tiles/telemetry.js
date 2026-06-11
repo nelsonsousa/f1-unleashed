@@ -27,14 +27,12 @@
         mode: 'live',         // 'live'|'last'|'best'|'selection'
         selectedLaps: {},     // "num:lap" -> {driver, lap, samples, color, tla}
         liveSamples: {},      // num -> [[distPct, spd, rpm, gear, thr, brk], ...]
-        lastDistPct: {},      // num -> most recent distPct from position
-        lastSampledPct: {},   // num -> last distPct a sample was emitted at (dedup)
-        driverStatus: {},     // num -> "PIT"|"OUT"|"TRACK"
-        collecting: {},       // num -> bool (true once OUT seen, false on PIT)
+        liveLap: {},          // num -> current lap of the live trace (from liveTelemetry)
+        driverStatus: {},     // num -> "PIT"|"OUT"|"TRACK"|...
         lapTimes: {},         // num -> {lapNum -> "1:23.456"}
-        lapCls: {},           // num -> {lapNum -> status}
-        lapSegments: {},      // num -> {lapNum -> qualSegment 1|2|3}
-        lapAffected: {},      // num -> {lapNum -> 'SC' | 'VSC'}  (lapAffectedBy topic)
+        lapCls: {},           // num -> {lapNum -> type}
+        lapSegments: {},      // num -> {lapNum -> qualSegment} (unused: no source topic now)
+        lapAffected: {},      // num -> {lapNum -> 'SC'|'VSC'} (unused: no source topic now)
         lapNoData: {},        // num -> Set(lapNum) — laps that came in empty
         telemetryLaps: {},    // num -> Set(laps that have telemetry on disk)
         hiddenDrivers: new Set(),
@@ -348,78 +346,43 @@
     // Live Telemetry
     // =========================================================================
 
-    function handlePosition(data) {
+    // One server-decoded sample: {dp, speed, rpm, gear, throttle, brake,
+    // ts, lap, lapElapsedMs}. dp is the track distance %. A change in `lap`
+    // marks an S/F crossing → start a fresh live-lap trace. Samples with a
+    // null dp (position outage) are skipped.
+    function handleLiveTelemetry(num, data) {
         if (!data || typeof data !== 'object') return;
-        for (const [num, coords] of Object.entries(data)) {
-            if (Array.isArray(coords) && coords.length >= 3) {
-                const newPct = coords[2];
-                const prevPct = state.lastDistPct[num];
-                // S/F wrap: distPct went from >90 to <10 — start a new live lap trace
-                if (prevPct !== undefined && prevPct > 90 && newPct < 10 && state.collecting[num]) {
-                    state.liveSamples[num] = [];
-                    state.lastSampledPct[num] = undefined;
-                }
-                state.lastDistPct[num] = newPct;
-            }
+        if (data.dp == null) return;
+
+        // New lap → reset the live trace so it shows the current lap only.
+        if (state.liveLap[num] !== undefined && data.lap !== state.liveLap[num]) {
+            state.liveSamples[num] = [];
+        }
+        state.liveLap[num] = data.lap;
+
+        const sample = [
+            data.dp,
+            data.speed || 0,
+            data.rpm || 0,
+            data.gear || 0,
+            data.throttle || 0,
+            data.brake || 0,
+        ];
+        if (!state.liveSamples[num]) state.liveSamples[num] = [];
+        state.liveSamples[num].push(sample);
+        if (state.liveSamples[num].length > 500) {
+            state.liveSamples[num] = state.liveSamples[num].slice(-400);
         }
         scheduleRender();
     }
 
     function handleDriverStatus(num, status) {
         state.driverStatus[num] = status;
-        if (status === 'PIT') {
+        // Clear the live trace when the driver pits or starts an out-lap so
+        // the next flying lap starts clean. (The live samples themselves now
+        // arrive via liveTelemetry; the server gates pit-lane samples.)
+        if (status === 'PIT' || status === 'OUT') {
             state.liveSamples[num] = [];
-            state.lastSampledPct[num] = undefined;
-            state.collecting[num] = false;
-        } else if (status === 'OUT') {
-            state.liveSamples[num] = [];
-            state.lastSampledPct[num] = undefined;
-            state.collecting[num] = true;
-        } else if (status === 'TRACK') {
-            // Resume collecting after seek/restore when driver is already on track.
-            state.collecting[num] = true;
-        }
-        scheduleRender();
-    }
-
-    function handleCarData(data) {
-        if (!data || typeof data !== 'object') return;
-        const entries = data.Entries;
-        if (!Array.isArray(entries)) return;
-
-        for (const entry of entries) {
-            const cars = entry && entry.Cars;
-            if (!cars || typeof cars !== 'object') continue;
-
-            for (const [num, car] of Object.entries(cars)) {
-                const ch = car && car.Channels;
-                if (!ch) continue;
-
-                // Only trace once we've seen the driver leave the pit (OUT)
-                if (!state.collecting[num]) continue;
-
-                const dist = state.lastDistPct[num];
-                if (dist === undefined) continue;
-
-                // Dedup: skip if position unchanged since last sample
-                if (state.lastSampledPct[num] === dist) continue;
-                state.lastSampledPct[num] = dist;
-
-                const sample = [
-                    dist,
-                    ch['2'] || 0,  // speed
-                    ch['0'] || 0,  // rpm
-                    ch['3'] || 0,  // gear
-                    ch['4'] || 0,  // throttle
-                    ch['5'] || 0,  // brake
-                ];
-
-                if (!state.liveSamples[num]) state.liveSamples[num] = [];
-                state.liveSamples[num].push(sample);
-                if (state.liveSamples[num].length > 500) {
-                    state.liveSamples[num] = state.liveSamples[num].slice(-400);
-                }
-            }
         }
         scheduleRender();
     }
@@ -517,15 +480,15 @@
         return maxLap > 0 ? map[maxLap] : null;
     }
 
-    // Cool-lap fade: once a driver's lap classification flips to COOL or
-    // ABORT, the trace alpha decays from 1.0 → 0.0 over COOL_FADE_MS and
+    // Cool-lap fade: once a driver's lap classification flips to SLOW
+    // (cool-down) the trace alpha decays 1.0 → 0.0 over COOL_FADE_MS and
     // then the trace stops rendering entirely. Resets when the driver
-    // returns to a non-cool classification.
+    // returns to a non-slow classification.
     const COOL_FADE_MS = 4000;
     state.coolFadeStart = {}; // num → performance.now() when fade began
     function coolFadeAlpha(num) {
         const cls = currentLapClass(num);
-        const fading = (cls === 'COOL' || cls === 'ABORT');
+        const fading = (cls === 'SLOW');
         if (!fading) {
             delete state.coolFadeStart[num];
             return 1.0;
@@ -1028,24 +991,25 @@
             }
             const status = cls[lap] || '';
             const seg = segOfLap(lap);
-            const isIn = (status === 'IN' || status === 'PIT');
+            // driverLapClassification type ∈ PUSH / SLOW / OUT / PIT / STOP / "".
+            const isIn = (status === 'PIT' || status === 'STOP');
             const isOut = (status === 'OUT');
             const isInOrOut = isIn || isOut;
-            const scvsc = affected[lap]; // 'SC' or 'VSC' or undefined
+            const scvsc = affected[lap]; // SC/VSC source dropped → always undefined
             // Color precedence (per SME 2026-06-01):
-            //   1) IN/OUT → grey (overrides SC/VSC even during caution)
+            //   1) IN-pit/STOP/OUT → grey
             //   2) No-data lap → distinct dashed style
-            //   3) SC/VSC (Race) → yellow
-            //   4) PUSH or LONG (P/Q) or green-flag TIMED (Race) → green
-            //   5) COOL / ABORT → white
+            //   3) SC/VSC (Race) → yellow  (currently no source topic)
+            //   4) PUSH (P/Q) or green-flag TIMED (Race) → green
+            //   5) SLOW (cool-down) → white
             //   6) anything else → unknown (white)
             let colorCls;
             if (isInOrOut) colorCls = 'lap-skip';
             else if (noData.has(lap)) colorCls = 'lap-no-data';
             else if (isRace && scvsc) colorCls = (scvsc === 'VSC' ? 'lap-vsc' : 'lap-sc');
-            else if (status === 'PUSH' || status === 'LONG') colorCls = 'lap-push';
+            else if (status === 'PUSH') colorCls = 'lap-push';
             else if (isRace && !scvsc && status) colorCls = 'lap-push';   // green-flag race lap
-            else if (status === 'COOL' || status === 'ABORT') colorCls = 'lap-cool';
+            else if (status === 'SLOW') colorCls = 'lap-cool';
             else colorCls = 'lap-unknown';
             let bestTypeCls = '';
             if (bestPushBySeg[seg] && lap === bestPushBySeg[seg].lap) bestTypeCls = ' lap-best-push';
@@ -1142,12 +1106,12 @@
         renderDriverSelector();
     });
 
-    messageBus.on('position', (data) => {
-        handlePosition(data);
-    });
-
-    messageBus.on('CarData.z', (data) => {
-        handleCarData(data);
+    // Live trace: the server now emits a fully-decoded per-driver sample
+    // (dp = track %, channels, lap) — no more client-side CarData.z decode
+    // or position-derived distance. One sample per emit.
+    messageBus.on('liveTelemetry:', (topic, data) => {
+        const num = topic.split(':')[1];
+        if (num) handleLiveTelemetry(num, data);
     });
 
     messageBus.on('driverStatus:', (topic, data) => {
@@ -1155,64 +1119,34 @@
         if (num) handleDriverStatus(num, data);
     });
 
-    messageBus.on('driverLapTimes:', (topic, data) => {
+    // Per-lap times now come from driverLaps.laps {n:{time,…}}; pull the
+    // time strings into the lap-time map the pill list expects. Replace
+    // (not merge) so a backward seek's smaller snapshot drops stale laps.
+    messageBus.on('driverLaps:', (topic, data) => {
         const num = topic.split(':')[1];
-        if (!data || typeof data !== 'object') return;
-        // Replace, don't merge — server sends the full snapshot per lap,
-        // and on a backward seek the snapshot has fewer laps; merging
-        // would leave stale entries from the previous (later) playback
-        // position. Re-render the side panel so pills appear / disappear.
-        state.lapTimes[num] = {};
-        for (const [lap, time] of Object.entries(data)) {
-            state.lapTimes[num][parseInt(lap)] = time;
+        if (!num || !data || typeof data.laps !== 'object') return;
+        const m = {};
+        for (const [lap, rec] of Object.entries(data.laps)) {
+            if (rec && rec.time) m[parseInt(lap)] = rec.time;
         }
+        state.lapTimes[num] = m;
         renderDriverSelector();
     });
 
-    messageBus.on('lapClassification:', (topic, data) => {
+    // driverLapClassification:{num} {lap, trackPct, type}. Builds the
+    // per-lap class map incrementally (no .laps snapshot in the new topic,
+    // and no per-lap Q-segment — pill grouping by Q-segment is dropped).
+    messageBus.on('driverLapClassification:', (topic, data) => {
         const num = topic.split(':')[1];
-        if (!data || typeof data !== 'object') return;
-        // Replace the per-lap classification map for the same reason
-        // (backward seek would leave stale higher-lap entries behind).
-        const next = {};
-        if (data.laps && typeof data.laps === 'object') {
-            for (const [lap, status] of Object.entries(data.laps)) {
-                next[parseInt(lap)] = status;
-            }
-        }
-        if (data.lap) next[data.lap] = data.status;
-        state.lapCls[num] = next;
-        // Per-lap qualifying segment (1=Q1, 2=Q2, 3=Q3). Used by
-        // renderLapList to group pills into Q1/Q2/Q3 sections.
-        const segs = {};
-        if (data.lapSegments && typeof data.lapSegments === 'object') {
-            for (const [lap, seg] of Object.entries(data.lapSegments)) {
-                segs[parseInt(lap)] = seg;
-            }
-        }
-        if (data.lap && data.segment) segs[data.lap] = data.segment;
-        state.lapSegments[num] = segs;
+        if (!num || !data || data.lap == null) return;
+        const map = state.lapCls[num] || {};
+        map[data.lap] = data.type;
+        state.lapCls[num] = map;
         renderDriverSelector();
     });
 
-    messageBus.on('lapTelemetry:', (topic, data, offset_ms) => {
+    messageBus.on('telemetryLap:', (topic, data, offset_ms) => {
         handleLapTelemetry(topic, data);
-    });
-
-    // SC/VSC affected-lap snapshot from telemetry processor. Replaces
-    // the per-driver map on every emit (latest snapshot wins).
-    messageBus.on('lapAffectedBy:', (topic, data) => {
-        const num = topic.split(':')[1];
-        if (!data || typeof data !== 'object') return;
-        const next = {};
-        if (data.laps && typeof data.laps === 'object') {
-            for (const [lap, status] of Object.entries(data.laps)) {
-                if (status) next[parseInt(lap)] = status;
-            }
-        }
-        if (data.lap && data.status) next[data.lap] = data.status;
-        state.lapAffected[num] = next;
-        renderDriverSelector();
     });
 
     // Server tells us which laps actually have a telemetry row on disk
@@ -1222,17 +1156,6 @@
         if (!data || typeof data !== 'object') return;
         for (const [num, laps] of Object.entries(data)) {
             if (Array.isArray(laps)) state.telemetryLaps[num] = new Set(laps);
-        }
-        renderDriverSelector();
-    });
-
-    // Empty laps (= rows in the telemetry table with no samples — caused
-    // by F1 position-data outages spanning a full lap window). Renders
-    // with the lap-no-data class and shows "NO DATA" in the legend.
-    messageBus.on('telemetryEmpty', (data) => {
-        if (!data || typeof data !== 'object') return;
-        for (const [num, laps] of Object.entries(data)) {
-            if (Array.isArray(laps)) state.lapNoData[num] = new Set(laps);
         }
         renderDriverSelector();
     });
@@ -1324,12 +1247,11 @@
 
     messageBus.on('state:reset', () => {
         state.liveSamples = {};
-        state.lastDistPct = {};
-        state.lastSampledPct = {};
+        state.liveLap = {};
         state.driverStatus = {};
-        state.collecting = {};
         state.lapTimes = {};
         state.lapCls = {};
+        state.lapSegments = {};
         state.lapAffected = {};
         state.lapNoData = {};
         state.telemetryLaps = {};
