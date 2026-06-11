@@ -40,6 +40,13 @@ explicitly (fixed length, nulls for not-yet-set) so the layout is fixed. Client
 layout should be width-invariant regardless of how many are coloured.
 (Currently client derives SEGMENT_LAYOUT from miniSectors lengths — contributes
 to the oscillation; real fix is fixed-length backend payload.)
+→ FIXED (backend): sector_timing now tracks the max segment count seen per
+sector (track-wide) and pads every driverMiniSectors emit to it → fixed-length
+arrays, width-invariant render. Stable after the first complete lap.
+→ REFINEMENT (later): user notes trackGeometry carries mini-sector info — but
+its `sectors` field is the 20 marshal sectors with pct ranges, without the
+S1/S2/S3 split, so using it for per-timing-sector counts needs marshal→timing
+mapping. Would make the layout stable from lap 1 (vs after lap 1). Deferred.
 
 ### I5 — Telemetry lap misidentification (BACKEND data bug) — happens a LOT
 CONFIRMED via FP1 DB. telemetryLap lap numbering is off by +1 from lap ~4 on,
