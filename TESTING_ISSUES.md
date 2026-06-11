@@ -62,9 +62,15 @@ no telemetryLap:30:2 row.
 authoritative just-ended lap number (align with driverLaps lastLap.lap / NoL
 P-Q semantics, i.e. N−1 of the starting NoL), and not emit spurious degenerate
 laps at the out→flying transition. Re-derive crossing→lap assignment.
-→ FIX (client): also remove any "only fast/PUSH laps clickable" gate so every
-lap that has telemetry is selectable (telemetry.js renderLapList). Verify no
-leftover ±1 lap hacks in telemetry.js.
+→ FIXED (backend, telemetry_processor): completed-lap telemetry is now keyed
+on the authoritative driverLaps.lastLap.lap with emit-or-defer matching to the
+latest S/F crossing (absorbs a spurious extra crossing; survives the
+timing/position arrival-order race). Verified on FP1: LAW + NOR flying laps now
+align exactly with driverLaps (was +1 with a missing/degenerate lap at the
+out→flying transition). Client needed NO change — all pills are already
+clickable; "L2 not selectable" was just the missing/misnumbered telemetryLap row.
+CAVEAT: garage-heavy laps with no clean S/F crossing (e.g. NOR L2=10:28 sitting
+in the garage) inherently can't be bounded → those remain missing/merged. Expected.
 
 ### I6 — Chequered flag / session-finished not shown as a scrubber event
 The CHEQUERED (and session end) marker isn't appearing on the playback scrubber.

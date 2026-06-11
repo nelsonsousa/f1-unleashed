@@ -70,15 +70,20 @@ class DriverData:
     last_pos_ts: Optional[datetime] = None   # ts of the previous position sample
     # Captured samples since session start: [dp, speed, rpm, gear, thr, brk, abs_ms].
     samples: list = field(default_factory=list)
-    # S/F crossing timestamps (datetimes), consumed as laps close.
-    crossings: list = field(default_factory=list)
-    # Lap tracking.
-    lap_start_ts: Optional[datetime] = None  # start of the current open lap
-    live_zero_ts: Optional[datetime] = None  # current lap's S/F crossing (live elapsed zero)
-    committed: int = 0                       # highest emitted lap number
-    completed_target: int = 0                # latest driverLaps.lastLap.lap
-    live_lap: int = 0                        # current driving lap (crossing-driven, NoL-resynced)
-    in_pit: bool = False                     # driverStatus PIT → crossings are spurious
+    # Lap tracking. Completed-lap telemetry is keyed on the AUTHORITATIVE
+    # driverLaps.lastLap.lap and bounded by S/F crossings: a lap's window runs
+    # from the previous boundary to the latest crossing seen when timing
+    # reports that lap complete. This "emit-or-defer" matching absorbs spurious
+    # extra crossings and survives the timing/position arrival-order race that
+    # used to shift every lap number by +1.
+    lap_start_ts: Optional[datetime] = None    # start of the current open lap (last boundary)
+    latest_crossing_ts: Optional[datetime] = None  # most recent crossing not yet matched to a lap
+    pending_lap: Optional[int] = None          # timing said this lap completed; awaiting its crossing
+    live_zero_ts: Optional[datetime] = None    # current lap's S/F crossing (live elapsed zero)
+    committed: int = 0                         # highest emitted lap number
+    completed_target: int = 0                  # latest driverLaps.lastLap.lap
+    live_lap: int = 0                          # current driving lap (live elapsed only)
+    in_pit: bool = False                       # driverStatus PIT → crossings are spurious
     emitted: set = field(default_factory=set)
 
 
@@ -149,18 +154,25 @@ class TelemetryProcessor(Processor):
                 drv.live_lap = 1
         last = data.get("lastLap")
         m = last.get("lap") if isinstance(last, dict) else None
-        if isinstance(m, int):
-            # NoL is authoritative for the lap number; telemetry bumps the live
-            # lap at the S/F crossing (NoL lags), and every NoL message re-syncs
-            # it. authoritative driving lap = completed + 1. If NoL is ahead,
-            # telemetry missed crossing(s) (outage) — jump the live lap and drop
-            # the zero so the delta is suppressed until the next clean crossing.
-            if drv.activated and m + 1 > drv.live_lap:
-                drv.live_lap = m + 1
-                drv.live_zero_ts = None
-            if m > drv.completed_target:
-                drv.completed_target = m
-                self._close_laps_up_to(drv, m, clock_time)
+        if isinstance(m, int) and m > drv.completed_target:
+            drv.completed_target = m
+            if not drv.activated:
+                return
+            # Authoritative: lap m just completed. Its telemetry window is
+            # [last boundary, the crossing that ended it]. If that crossing has
+            # already been seen, emit now; otherwise defer until the crossing
+            # arrives (handles the timing-leads-position race). Matching to the
+            # LATEST crossing absorbs any spurious extra crossing inside the lap.
+            if (drv.latest_crossing_ts is not None
+                    and drv.lap_start_ts is not None
+                    and drv.latest_crossing_ts > drv.lap_start_ts
+                    and m > drv.committed):
+                self._emit_lap(drv, m, drv.lap_start_ts, drv.latest_crossing_ts)
+                drv.committed = m
+                drv.lap_start_ts = drv.latest_crossing_ts
+                drv.latest_crossing_ts = None
+            elif m > drv.committed:
+                drv.pending_lap = m
 
     # ── Position ──────────────────────────────────────────────────────────
     def _handle_position(self, data: Any, clock_time: datetime) -> None:
@@ -185,13 +197,22 @@ class TelemetryProcessor(Processor):
                 continue
             if prev > WRAP_HIGH and dp < WRAP_LOW:
                 if not drv.in_pit:
-                    # S/F wrap → lap boundary. Bump the live lap now (NoL lags);
-                    # zero = the INTERPOLATED time at the line (dp 0/100),
-                    # consistent across laps regardless of where the post-crossing
-                    # sample lands. A wrap while in PIT is a spurious pit-lane
-                    # projection artefact and is ignored.
+                    # S/F crossing. If timing has already told us a lap completed
+                    # (pending_lap), close it here — its window is [last boundary,
+                    # this crossing]. Otherwise just record this as the latest
+                    # crossing; the next driverLaps lastLap will match it. A wrap
+                    # while in PIT is a spurious pit-lane projection and ignored.
                     line_ts = self._line_ts(prev, drv.last_pos_ts, dp, clock_time)
-                    drv.crossings.append(line_ts)
+                    if (drv.pending_lap is not None
+                            and drv.lap_start_ts is not None
+                            and drv.pending_lap > drv.committed):
+                        self._emit_lap(drv, drv.pending_lap, drv.lap_start_ts, line_ts)
+                        drv.committed = drv.pending_lap
+                        drv.pending_lap = None
+                        drv.lap_start_ts = line_ts
+                        drv.latest_crossing_ts = None
+                    else:
+                        drv.latest_crossing_ts = line_ts
                     drv.live_lap += 1
                     drv.live_zero_ts = line_ts
                 drv.pending_pos = (dp, clock_time)
@@ -283,30 +304,6 @@ class TelemetryProcessor(Processor):
         drv.committed = n
         drv.lap_start_ts = None
 
-    # ── Lap close ─────────────────────────────────────────────────────────
-    def _close_laps_up_to(self, drv: DriverData, target_m: int,
-                          ref_ts: datetime) -> None:
-        while drv.committed < target_m:
-            target = drv.committed + 1
-            crossing = self._next_crossing(drv)
-            if crossing is None:
-                # Outage / no S/F crossing for this completion — skip the lap's
-                # telemetry; resync the open lap roughly at the timing ref.
-                drv.committed = target
-                drv.lap_start_ts = ref_ts
-                continue
-            if drv.lap_start_ts is not None and target not in drv.emitted:
-                self._emit_lap(drv, target, drv.lap_start_ts, crossing)
-            drv.lap_start_ts = crossing
-            drv.committed = target
-            drv.crossings = [c for c in drv.crossings if c > crossing]
-
-    def _next_crossing(self, drv: DriverData) -> Optional[datetime]:
-        """Earliest unconsumed crossing after the current lap start."""
-        start = drv.lap_start_ts
-        cand = sorted(c for c in drv.crossings
-                      if start is None or c > start)
-        return cand[0] if cand else None
 
     # ── Emit ──────────────────────────────────────────────────────────────
     def _emit_lap(self, drv: DriverData, n: int,
