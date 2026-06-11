@@ -289,17 +289,24 @@
         state.duration = data.duration || state.duration;
         updateScrubberPosition();
         updateGoLiveButton();
+        // LIVE: re-render markers as playback advances so events appear the
+        // moment they're reached (no-spoiler reveals them progressively).
+        if (messageBus.isLive && state.events) renderEventMarkers(state.events);
         startClockAnimation();
     }
 
-    // "LIVE" button — only meaningful in live mode. Highlights when the
-    // clock is at the live edge (within 3 s of duration), so the user
-    // can tell at a glance whether they're current or behind.
+    // In LIVE the speed button is replaced by the LIVE button; in REPLAY
+    // the LIVE button is hidden and the speed button is shown. isLive is
+    // server-authoritative (from state:full). The LIVE button is red when
+    // streaming the most recent data (within 3 s of the live edge) and
+    // black when lagging behind it; clicking it (seekLive) snaps to live.
     function updateGoLiveButton() {
         const btn = document.getElementById('goLiveBtn');
+        const speedBtn = document.getElementById('speedBtn');
+        const isLive = !!messageBus.isLive;
+        if (speedBtn) speedBtn.classList.toggle('hidden', isLive);
         if (!btn) return;
-        const isLiveMode = new URLSearchParams(window.location.search).get('mode') === 'live';
-        if (!isLiveMode) {
+        if (!isLive) {
             btn.classList.add('hidden');
             return;
         }
@@ -308,8 +315,8 @@
         btn.classList.toggle('at-live', lag >= 0 && lag <= 3);
     }
 
-    // Speed button
-    const SPEEDS = [1, 2, 5, 10, 30, 50];
+    // Speed button. Replay only; 60x = 1 min of session per real second.
+    const SPEEDS = [1, 2, 5, 10, 30, 60];
     function cycleSpeed() {
         const current = messageBus.speed || 1;
         const idx = SPEEDS.indexOf(current);
@@ -529,6 +536,10 @@
         // user-spec'd: 0.5 px dark stroke on each SVG handles the
         // visual separation).
         for (const ev of events) {
+            // No-spoiler rule: in LIVE, never reveal an event that is ahead
+            // of the current playback point (even if the data has already
+            // arrived because playback is lagging the live edge).
+            if (messageBus.isLive && ev.offset_ms > state.offset * 1000) continue;
             const pct = offsetToPct(ev.offset_ms);
             if (pct < 0 || pct > 100) continue;
 
@@ -1068,6 +1079,8 @@
         if (data.events) {
             state.events = data.events;
         }
+        // Set the transport controls now isLive is known (speed vs LIVE button).
+        updateGoLiveButton();
         // Start live tracking (will auto-stop when sessionEnd arrives)
         startLiveTracking();
     }

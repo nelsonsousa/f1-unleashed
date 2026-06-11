@@ -311,6 +311,7 @@ class SessionEngine:
             "topic": "state:full",
             "data": {
                 "sessionType": self._session_type,
+                "isLive": self._live,
                 "audioInfo": self._build_audio_info_for_client(),
                 "startTime": self._start_time.isoformat() if self._start_time else None,
                 "endTime": self._end_time.isoformat() if self._end_time else None,

@@ -502,29 +502,36 @@
     font-variant-numeric: tabular-nums;
 }
 
+/* Hidden in LIVE (the LIVE button takes its place). */
+.btn-speed.hidden {
+    display: none;
+}
+
 /* Go-Live button (live mode only) */
+/* Lagging behind the live edge: black + white text (click to catch up). */
 .btn-go-live {
     min-width: 56px;
     font-size: 12px;
     letter-spacing: 1px;
-    background: var(--bg-tertiary);
-    border-color: var(--border);
-    color: var(--text-secondary);
+    background: #1a1a1a;
+    border-color: #1a1a1a;
+    color: #fff;
 }
 
 .btn-go-live.hidden {
     display: none;
 }
 
+/* Streaming the most recent data: red + white text. */
 .btn-go-live.at-live {
-    background: var(--accent);
-    border-color: var(--accent);
+    background: #e10600;
+    border-color: #e10600;
     color: #fff;
     cursor: default;
 }
 
 .btn-go-live.at-live:hover {
-    background: var(--accent);
+    background: #e10600;
 }
 
 /* Scrubber */
