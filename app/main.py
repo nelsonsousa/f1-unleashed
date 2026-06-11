@@ -80,34 +80,7 @@ async def _chequered_grace_expired(session_id: str, now_utc: datetime) -> bool:
     # Token expiry checking is handled by live_session_monitor at milestone intervals.
 
 
-def send_notification(title: str, message: str, priority: str = "default", tags: str = "formula1") -> bool:
-    """Send a notification via configured webhook."""
-    import requests
-
-    webhook_url = os.getenv("NOTIFICATION_WEBHOOK_URL")
-    if not webhook_url:
-        return False
-
-    try:
-        if "ntfy.sh" in webhook_url or "ntfy." in webhook_url:
-            headers = {"Title": title, "Priority": priority, "Tags": tags}
-            response = requests.post(webhook_url, data=message, headers=headers, timeout=10)
-        elif "discord.com/api/webhooks" in webhook_url:
-            payload = {"content": f"**{title}**\n\n{message}"}
-            response = requests.post(webhook_url, json=payload, timeout=10)
-        elif "hooks.slack.com" in webhook_url:
-            payload = {"text": f"*{title}*\n\n{message}"}
-            response = requests.post(webhook_url, json=payload, timeout=10)
-        else:
-            payload = {"title": title, "message": message}
-            response = requests.post(webhook_url, json=payload, timeout=10)
-
-        response.raise_for_status()
-        logger.info(f"Notification sent: {title}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to send notification: {e}")
-        return False
+from app.notifications import send_notification  # noqa: E402  (re-exported)
 
 
 def get_session_duration_hours(session_type: str, is_testing: bool) -> int:

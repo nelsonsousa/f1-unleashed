@@ -68,6 +68,25 @@ RAW_F1_TOPICS = {
 }
 
 
+# Topic-discovery baseline: every topic name ever seen. Genuinely-new topics
+# (absent here) raise an alert; first run (file absent) seeds silently.
+KNOWN_TOPICS_FILE = Path("data/known_topics.json")
+
+
+def _load_known_topics() -> tuple[set, bool]:
+    """Return (known topic set, is_first_run). First run = baseline absent.
+
+    The baseline always includes RAW_F1_TOPICS (the topics we already know
+    about) so those never alert; the persisted file accumulates anything
+    discovered beyond that.
+    """
+    base = set(RAW_F1_TOPICS)
+    try:
+        return base | set(_json.loads(KNOWN_TOPICS_FILE.read_text())), False
+    except (FileNotFoundError, ValueError, OSError):
+        return base, True
+
+
 def _parse_lap_time_ms(s) -> Optional[int]:
     """Parse F1 lap-time string 'M:SS.mmm' into milliseconds."""
     if not isinstance(s, str):
@@ -194,6 +213,12 @@ class SessionPreProcessor:
 
         # Set to break out of tail-follow so the run can finalize.
         self._stop_follow = asyncio.Event()
+
+        # Topic discovery — alert on raw topics no processor handles.
+        self._known_topics, self._first_topic_run = _load_known_topics()
+        self._checked_topics: set = set()       # topics inspected this run
+        self._unprocessed_seen: set = set()     # seen this run with no handler
+        self._known_topics_dirty = False
 
     async def run(
         self,
@@ -339,6 +364,7 @@ class SessionPreProcessor:
                                     continue
                                 filtered = self._filter_message(buffered)
                                 if filtered:
+                                    self._discover_topic(filtered.topic)
                                     self._bus.emit(filtered.topic, filtered.data, filtered.timestamp)
                                     self._message_count += 1
                             self._gate_buffer = []
@@ -364,6 +390,7 @@ class SessionPreProcessor:
                 self._message_count += 1
                 offset_ms = int((filtered.timestamp - self._start_time).total_seconds() * 1000)
 
+                self._discover_topic(filtered.topic)
                 self._bus.emit(filtered.topic, filtered.data, filtered.timestamp)
 
                 if (self._message_count % BUFFER_FLUSH_MESSAGES == 0
@@ -585,6 +612,7 @@ class SessionPreProcessor:
         self._stop_follow.set()
 
     def close(self) -> None:
+        self._persist_known_topics(force=True)
         self._db.close()
 
     def _init_processors(self) -> None:
@@ -640,6 +668,61 @@ class SessionPreProcessor:
         for p in self._processors:
             p.skip_animations = True
             p.subscribe()
+
+    def _discover_topic(self, topic: str) -> None:
+        """Track raw topics; alert on genuinely-new ones no processor handles.
+
+        Runs for both live (tail-follow) and replay. First run (no baseline)
+        seeds silently; afterwards a new topic with no specific bus handler
+        logs a warning and fires a dev notification so a processor can be
+        added. New-but-already-handled topics are just logged.
+        """
+        if topic in self._checked_topics:
+            return
+        self._checked_topics.add(topic)
+        processed = self._bus.has_subscriber(topic)
+        if not processed:
+            self._unprocessed_seen.add(topic)
+        if topic in self._known_topics:
+            return
+
+        # First time this topic has ever been seen.
+        self._known_topics.add(topic)
+        self._known_topics_dirty = True
+        self._persist_known_topics()
+        if self._first_topic_run:
+            return  # seeding the baseline — don't alert
+        if processed:
+            logger.info(f"Topic discovery: new topic '{topic}' (already handled)")
+            return
+        logger.warning(
+            f"Topic discovery: NEW UNPROCESSED topic '{topic}' — no processor "
+            f"handles it ({self._session_path.name})"
+        )
+        try:
+            from app.notifications import send_notification
+            send_notification(
+                "F1Unleashed: new unprocessed topic",
+                f"'{topic}' arrived in {self._session_path.name} but no "
+                f"processor handles it.",
+                priority="high", tags="warning",
+            )
+        except Exception:
+            logger.exception("Topic-discovery notification failed")
+
+    def _persist_known_topics(self, force: bool = False) -> None:
+        """Persist topics discovered beyond RAW_F1_TOPICS. Writing the file
+        (even empty) establishes the baseline so the next run is not a
+        first run and genuinely-new topics then alert."""
+        if not (self._known_topics_dirty or force):
+            return
+        try:
+            KNOWN_TOPICS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            extra = sorted(self._known_topics - set(RAW_F1_TOPICS))
+            KNOWN_TOPICS_FILE.write_text(_json.dumps(extra))
+            self._known_topics_dirty = False
+        except OSError:
+            logger.exception("Failed to persist known topics")
 
     def _capture_output(self, topic: str, data: Any, clock_time: datetime) -> None:
         """Wildcard handler to capture processor output for DB."""
