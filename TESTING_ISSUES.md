@@ -83,13 +83,15 @@ in the garage) inherently can't be bounded → those remain missing/merged. Expe
 
 ### I6 — Chequered flag / session-finished not shown as a scrubber event
 The CHEQUERED (and session end) marker isn't appearing on the playback scrubber.
-→ STATUS: data + renderer are FINE — `event="CHEQUERED"` rows ARE persisted (Q
-has 3, Race has 1), state:full includes them, and renderEventMarkers has a
-CHEQUERED branch (🏁). So it's likely a POSITIONING/visibility issue: the
-chequered sits at the section-2/3 boundary (~the right edge), and may be clipped
-or off the visible scrubber, or its offset maps to pct≈100 (the `pct>100`
-guard). NEEDS a screenshot of the Q/Race scrubber to confirm. (Was also masked by
-stale cached header.js/CSS before the cache-bust — re-check after hard refresh.)
+→ FIXED: the old mapping put chequered at the section-2/3 boundary ~at the
+right edge (offset≈duration → pct≈100), so it clipped. Rewrote the scrubber
+mapping to the user's spec — piecewise-linear control points with regions
+[0,T1-5min]→[0,5px], [T1-5min,T2+5min]→[5px,X-5px], [T2+5min,end]→[X-5px,X].
+Chequered (T2) now lands at ~94.5% (well inside the bar, visible). Verified the
+math + round-trip. LIVE dynamic Y/Z movement (cases 1-3) is simplified — Y is
+fixed at T1-5min (always 5px) rather than starting right and sliding left as the
+live edge grows; region 3 correctly only appears once the edge passes T2+5min.
+Full live-edge animation is a refinement.
 
 ### I7 — Chequered flag icon in driver status (styling)
 Add a 0.5px border around the flag; change dimensions 16x14 → 16x12; adjust the

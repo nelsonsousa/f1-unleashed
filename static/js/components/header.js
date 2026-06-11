@@ -330,136 +330,83 @@
     // Scrubber
     // =========================================================================
 
-    // Scrubber is non-linear: the session is partitioned into three
-    // segments by the PRESTART5MIN and CHEQUERED anchors, with the
-    // outer two compressed to ~20 px each so the actual session content
-    // (= 5 min before lights-out → chequered) gets the bulk of the
-    // visible width.
-    //
-    //   [ start ─ pre5min ]  [ pre5min ─ chequered ]  [ chequered ─ end ]
-    //   ←—— 20 px ——→         ←—— rest of bar ——→     ←—— 20 px ——→
-    //
-    // When either anchor is absent (= FP/Q with no chequered), falls
-    // back to a fully linear [0, duration] mapping.
-    //
-    // scrubberRange() is kept linear-from-zero for callers that still
-    // need the dur_ms; offsetToPct + pctToOffset apply the non-linear
-    // mapping.
+    // Scrubber is piecewise-linear over up to 3 regions so the boring lead-in
+    // and post-session tail are each compressed to ~5px, leaving the bulk of
+    // the width for the actual session. Boundaries (session-offset ms):
+    //   region 1: [0, T1-5min]              -> [0px, 5px]
+    //   region 2: [T1-5min, T2+5min]        -> [5px, X-5px]
+    //   region 3: [T2+5min, end (= Tl/Tf)]  -> [X-5px, X]
+    // T1 = first playback event, T2 = last (chequered / session end). In LIVE,
+    // `end` is the live edge and grows; region 3 only appears once the edge
+    // passes T2+5min (until then region 2 runs to the edge). With no usable
+    // events it falls back to a linear [0, end] mapping. Built as sorted
+    // [timeMs, pct] control points; offsetToPct / pctToOffset interpolate.
+    const SIDE_PX = 5;
+    const FIVE_MIN_MS = 5 * 60 * 1000;
 
-    const SIDE_TARGET_PX = 20;
+    function scrubberCtrl() {
+        const end = state.duration * 1000;
+        if (end <= 0) return [[0, 0], [1, 100]];
+        const el = document.getElementById('scrubber');
+        const width = el && el.clientWidth > 0 ? el.clientWidth : 800;
+        const sidePct = Math.min(45, (SIDE_PX / width) * 100);
 
-    function scrubberRange() {
-        return { start_ms: 0, end_ms: state.duration * 1000 };
-    }
-
-    function scrubberAnchors() {
-        // Section 1 spans [0 → firstEvent_ms], section 3 spans
-        // [chequered_ms → duration], section 2 fills the rest.
-        //
-        // firstEvent is the SPECIFIC "start-of-interesting-content"
-        // marker for the session type:
-        //   - race / sprint : preStart2min (or preStart5min legacy)
-        //   - everything else (= P/Q): sessionStart
-        //
-        // SessionStart for a race is at offset 0 (= lights-out time),
-        // which would collapse section 1 to 0 width. The preStart2min
-        // marker is the *lead-in* anchor the user spec'd.
-        const dur_ms = state.duration * 1000;
-        const scrubberEl = document.getElementById('scrubber');
-        const widthPx = scrubberEl && scrubberEl.clientWidth > 0
-            ? scrubberEl.clientWidth : 800;
-        const sidePct = Math.min(45, (SIDE_TARGET_PX / widthPx) * 100);
         const sessionType = (window.SESSION_CONFIG?.sessionType || '').toLowerCase();
         const isRaceLike = sessionType === 'race' || sessionType === 'sprint';
-
-        // Track:
-        //   preStart_ms       — preStart2min (race) or preStart5min (legacy)
-        //   chequered_ms      — last chequered flag
-        //   firstVisible_ms   — earliest event that ACTUALLY RENDERS as a
-        //                       scrubber marker (= sessionStart and
-        //                       sessionEnd are filtered out in the
-        //                       renderer, so they don't count here).
-        let preStart_ms = null, chequered_ms = null, firstVisible_ms = null;
+        let preStart = null, chequered = null, firstVisible = null, lastVisible = null;
         for (const ev of state.events || []) {
-            const d = typeof ev.data === 'string'
-                ? ev.data : (ev.data?.event || '');
-            const upper = String(d).toUpperCase();
             if (typeof ev.offset_ms !== 'number') continue;
-            // Match the renderer's hidden-event set so the anchor lines up
-            // with what's actually painted on the strip. AUDIOSTART was
-            // retired 2026-06-06 — kept in state.events for legacy data
-            // but no longer rendered, so it must NOT count as the first
-            // visible event for the scrubber's section-1 boundary.
-            const isHidden = upper === 'SESSIONSTART'
-                || upper === 'SESSIONEND'
-                || upper === 'AUDIOSTART';
-            if ((upper === 'PRESTART2MIN' || upper === 'PRESTART5MIN')
-                    && preStart_ms === null) {
-                preStart_ms = ev.offset_ms;
-            }
-            if (upper === 'CHEQUERED') {
-                if (chequered_ms === null || ev.offset_ms > chequered_ms) {
-                    chequered_ms = ev.offset_ms;
-                }
-            }
-            if (!isHidden) {
-                if (firstVisible_ms === null
-                        || ev.offset_ms < firstVisible_ms) {
-                    firstVisible_ms = ev.offset_ms;
-                }
+            const d = typeof ev.data === 'string' ? ev.data : (ev.data?.event || '');
+            const upper = String(d).toUpperCase();
+            const hidden = upper === 'SESSIONSTART' || upper === 'AUDIOSTART';
+            if ((upper === 'PRESTART2MIN' || upper === 'PRESTART5MIN') && preStart === null)
+                preStart = ev.offset_ms;
+            if (upper === 'CHEQUERED')
+                chequered = (chequered === null) ? ev.offset_ms : Math.max(chequered, ev.offset_ms);
+            if (!hidden && upper !== 'SESSIONEND') {
+                if (firstVisible === null || ev.offset_ms < firstVisible) firstVisible = ev.offset_ms;
+                if (lastVisible === null || ev.offset_ms > lastVisible) lastVisible = ev.offset_ms;
             }
         }
-        const firstEvent_ms = isRaceLike
-            ? (preStart_ms != null ? preStart_ms : firstVisible_ms)
-            : firstVisible_ms;
-        return {
-            start_ms: 0,
-            end_ms: dur_ms,
-            firstEvent_ms,
-            chequered_ms,
-            sidePct,
-        };
+        const t1 = isRaceLike ? (preStart != null ? preStart : firstVisible) : firstVisible;
+        const t2 = chequered != null ? chequered : lastVisible;
+        if (t1 == null || t2 == null || t2 <= t1) return [[0, 0], [end, 100]];
+
+        const Y = Math.max(0, Math.min(t1 - FIVE_MIN_MS, end));
+        const Zraw = t2 + FIVE_MIN_MS;
+        const Z = Math.min(Zraw, end);
+        const hasR3 = Zraw < end - 1;
+        const rightPct = hasR3 ? (100 - sidePct) : 100;
+        const pts = [[0, 0]];
+        if (Y > 0) pts.push([Y, sidePct]);
+        if (Z > Y) pts.push([Z, rightPct]);
+        if (pts[pts.length - 1][0] < end) pts.push([end, 100]);
+        return pts;
+    }
+
+    // Monotonic piecewise interpolation over the control points. xi/yi select
+    // the input/output column (0 = timeMs, 1 = pct).
+    function _scrubInterp(pts, x, xi, yi) {
+        const lo = pts[0], hi = pts[pts.length - 1];
+        if (x <= lo[xi]) return lo[yi];
+        if (x >= hi[xi]) return hi[yi];
+        for (let i = 1; i < pts.length; i++) {
+            if (x <= pts[i][xi]) {
+                const a = pts[i - 1], b = pts[i];
+                const span = b[xi] - a[xi];
+                if (span <= 0) return b[yi];
+                return a[yi] + ((x - a[xi]) / span) * (b[yi] - a[yi]);
+            }
+        }
+        return hi[yi];
     }
 
     function offsetToPct(offset_ms) {
-        const a = scrubberAnchors();
-        if (a.end_ms <= a.start_ms) return 0;
-        if (a.firstEvent_ms == null || a.chequered_ms == null
-            || a.chequered_ms <= a.firstEvent_ms) {
-            const linPct = ((offset_ms - a.start_ms) / (a.end_ms - a.start_ms)) * 100;
-            return Math.max(0, Math.min(100, linPct));
-        }
-        const middlePct = Math.max(0, 100 - 2 * a.sidePct);
-        if (offset_ms <= a.firstEvent_ms) {
-            const span1 = Math.max(1, a.firstEvent_ms - a.start_ms);
-            return ((offset_ms - a.start_ms) / span1) * a.sidePct;
-        }
-        if (offset_ms <= a.chequered_ms) {
-            const span2 = a.chequered_ms - a.firstEvent_ms;
-            return a.sidePct + ((offset_ms - a.firstEvent_ms) / span2) * middlePct;
-        }
-        const span3 = Math.max(1, a.end_ms - a.chequered_ms);
-        const after = (offset_ms - a.chequered_ms) / span3;
-        return Math.min(100, a.sidePct + middlePct + after * a.sidePct);
+        return Math.max(0, Math.min(100, _scrubInterp(scrubberCtrl(), offset_ms, 0, 1)));
     }
 
     function pctToOffset(pct) {
-        const a = scrubberAnchors();
-        if (a.end_ms <= a.start_ms) return 0;
-        if (a.firstEvent_ms == null || a.chequered_ms == null
-            || a.chequered_ms <= a.firstEvent_ms) {
-            return Math.max(0, a.start_ms + (pct / 100) * (a.end_ms - a.start_ms));
-        }
-        const middlePct = Math.max(0, 100 - 2 * a.sidePct);
-        if (pct <= a.sidePct) {
-            return a.start_ms + (pct / a.sidePct) * (a.firstEvent_ms - a.start_ms);
-        }
-        if (pct <= a.sidePct + middlePct) {
-            const rel = (pct - a.sidePct) / middlePct;
-            return a.firstEvent_ms + rel * (a.chequered_ms - a.firstEvent_ms);
-        }
-        const rel = (pct - a.sidePct - middlePct) / a.sidePct;
-        return a.chequered_ms + rel * (a.end_ms - a.chequered_ms);
+        return Math.max(0, _scrubInterp(scrubberCtrl(), pct, 1, 0));
     }
 
     function updateScrubberPosition() {
