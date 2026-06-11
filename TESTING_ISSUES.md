@@ -26,10 +26,19 @@ not on `messageBus.isLive`. In replay it still renders.
 Out/in laps still show a lap time. The message should carry an out/in flag so
 the client doesn't render the time as a representative lap (still keep the time
 available).
-→ FIX (backend): driverLaps.laps records should include an out/in/pit flag per
-lap (lap_timing_processor). Client then suppresses the timed-lap rendering for
-flagged laps. (driverLapClassification has per-lap type but standings doesn't
-cross-ref it for the lap-time cell.)
+→ STATUS: PARTIALLY handled — lap 1 IS classified OUT (verified), and the
+standings lastLapCell already suppresses OUT/SLOW for P/Q. The residual is a
+RACE: the lap time can render in the brief window before the OUT classification
+arrives, and the best-lap edge when the only lap is the out lap.
+→ DECISION NEEDED on where the out/in flag lives:
+  (a) Add out/in to driverLaps.laps in lap_timing — but that duplicates
+      lap_classification's pit logic (TimingData has sticky InPit/PitOut, so
+      it's feasible, but DRY/risk on a critical processor).
+  (b) Client: standings already consumes driverLapClassification (lapClsByLap);
+      suppress the best/last lap-time render when the shown lap's type is
+      OUT/PIT (store bestLap.lap to check). Lower risk, no backend change.
+  Recommend (b) unless you specifically want the flag in driverLaps. Deferred
+  pending your call.
 
 ### I4 — Mini-sectors not width-invariant / jittery
 driverMiniSectors only carries the *defined* segments (sticky deltas → partial),
@@ -74,11 +83,13 @@ in the garage) inherently can't be bounded → those remain missing/merged. Expe
 
 ### I6 — Chequered flag / session-finished not shown as a scrubber event
 The CHEQUERED (and session end) marker isn't appearing on the playback scrubber.
-→ INVESTIGATE: track_status emits `event` "CHEQUERED"; playback_event emits
-`playbackEvent` sessionEnd. renderEventMarkers reads state.events (from state:full
-events = DB topics 'event','playbackEvent'). Check the chequered `event` row is
-present + that renderEventMarkers maps it (CHEQUERED branch exists). May be the
-event isn't emitted/persisted, or filtered.
+→ STATUS: data + renderer are FINE — `event="CHEQUERED"` rows ARE persisted (Q
+has 3, Race has 1), state:full includes them, and renderEventMarkers has a
+CHEQUERED branch (🏁). So it's likely a POSITIONING/visibility issue: the
+chequered sits at the section-2/3 boundary (~the right edge), and may be clipped
+or off the visible scrubber, or its offset maps to pct≈100 (the `pct>100`
+guard). NEEDS a screenshot of the Q/Race scrubber to confirm. (Was also masked by
+stale cached header.js/CSS before the cache-bust — re-check after hard refresh.)
 
 ### I7 — Chequered flag icon in driver status (styling)
 Add a 0.5px border around the flag; change dimensions 16x14 → 16x12; adjust the
