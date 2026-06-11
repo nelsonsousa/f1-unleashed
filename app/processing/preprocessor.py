@@ -35,7 +35,6 @@ from app.processing.processors.playback_event_processor import PlaybackEventProc
 from app.processing.processors.position_processor import PositionProcessor
 from app.processing.processors.race_control_processor import RaceControlProcessor
 from app.processing.processors.fia_stewards_processor import FiaStewardsProcessor
-from app.processing.processors.session_data_processor import SessionDataProcessor
 from app.processing.processors.session_info_processor import SessionInfoProcessor
 from app.processing.processors.standings_processor import StandingsProcessor
 from app.processing.processors.telemetry_processor import TelemetryProcessor
@@ -47,7 +46,6 @@ from app.processing.processors.sector_timing_processor import SectorTimingProces
 from app.processing.processors.tyre_processor import TyreProcessor
 from app.processing.processors.track_status_processor import TrackStatusProcessor
 from app.processing.processors.weather_processor import WeatherProcessor
-from app.processing.lap_reclassification import reclassify_session
 
 logger = logging.getLogger(__name__)
 
@@ -430,15 +428,10 @@ class SessionPreProcessor:
             # is finalised so PUSH / LONG / COOL labels are stable. The
             # final _flush_buffer() persists the peckingOrder row to DB.
             self._flush_buffer()
-            # _finalize_lap_reclassification: DISABLED 2026-06-03.
-            # The end-of-session reclassifier was needed by the OLD
-            # live classifier which couldn't see future lap times. The
-            # NEW lap_classification_processor does proper retroactive
-            # reclass when each lap_time arrives, so the live snapshot
-            # is already correct. Running the old reclassifier here
-            # corrupts race classifications (= it doesn't know about
-            # the RACE state and overwrites with PUSH/LONG/COOL).
-            # self._finalize_lap_reclassification()
+            # (End-of-session lap reclassification removed: the
+            # lap_classification_processor reclassifies retroactively as
+            # each lap time arrives, so the live snapshot is already
+            # correct.)
             if self._pace_proc:
                 try:
                     self._pace_proc.save_analysis()
@@ -558,120 +551,6 @@ class SessionPreProcessor:
         except Exception:
             logger.exception("Audio first-sound marker failed")
 
-    def _finalize_lap_reclassification(self) -> None:
-        """End-of-session pass: re-evaluate every lap's classification
-        against the whole session's lap-time pattern (see
-        ``app.processing.lap_reclassification``) and overwrite the live
-        classifier's per-driver ``lapClassification:NN`` topics with
-        the corrected ``laps`` snapshot. Downstream consumers read the
-        latest snapshot, so the corrections take effect."""
-        import json as _json
-        import sqlite3 as _sqlite3
-
-        if self._db._conn is None:
-            return
-
-        # Latest classification snapshot per driver. Also carry forward
-        # the per-lap qualifying-segment map so the rewrite below
-        # preserves it (otherwise the finalize row drops `lapSegments`
-        # and the frontend's segment-grouped lap-list breaks).
-        latest_cls: dict[str, dict[int, str]] = {}
-        latest_lap_segments: dict[str, dict[str, int]] = {}
-        for topic, data in self._db._conn.execute(
-            "SELECT topic, data FROM messages "
-            "WHERE topic LIKE 'lapClassification:%' "
-            "AND rowid IN (SELECT MAX(rowid) FROM messages "
-            "             WHERE topic LIKE 'lapClassification:%' GROUP BY topic)"
-        ):
-            num = topic.split(":", 1)[1]
-            try:
-                payload = _json.loads(data)
-            except _json.JSONDecodeError:
-                continue
-            laps_map = payload.get("laps")
-            if isinstance(laps_map, dict):
-                latest_cls[num] = {int(k): v for k, v in laps_map.items()}
-            lap_segs = payload.get("lapSegments")
-            if isinstance(lap_segs, dict):
-                latest_lap_segments[num] = dict(lap_segs)
-
-        if not latest_cls:
-            return
-
-        # Latest lap times per driver.
-        lap_times: dict[str, dict[int, int]] = {}
-        for topic, data in self._db._conn.execute(
-            "SELECT topic, data FROM messages "
-            "WHERE topic LIKE 'driverLapTimes:%' "
-            "AND rowid IN (SELECT MAX(rowid) FROM messages "
-            "             WHERE topic LIKE 'driverLapTimes:%' GROUP BY topic)"
-        ):
-            num = topic.split(":", 1)[1]
-            try:
-                payload = _json.loads(data)
-            except _json.JSONDecodeError:
-                continue
-            per_drv: dict[int, int] = {}
-            for lap_str, t_str in payload.items():
-                try:
-                    lap = int(lap_str)
-                except ValueError:
-                    continue
-                ms = _parse_lap_time_ms(t_str)
-                if ms is not None:
-                    per_drv[lap] = ms
-            lap_times[num] = per_drv
-
-        # Build per-driver lap records for the reclassifier.
-        per_driver: dict[str, list[dict]] = {}
-        for num, cls_map in latest_cls.items():
-            recs: list[dict] = []
-            for lap, status in sorted(cls_map.items()):
-                recs.append({
-                    "lap": lap,
-                    "lap_time_ms": lap_times.get(num, {}).get(lap),
-                    "current_class": status,
-                })
-            per_driver[num] = recs
-
-        corrected = reclassify_session(per_driver)
-
-        # Diff and write new lapClassification snapshots at offset_ms = max+1
-        # so the "latest snapshot" rule picks up the corrections.
-        max_offset = self._db._conn.execute(
-            "SELECT COALESCE(MAX(offset_ms), 0) FROM messages"
-        ).fetchone()[0]
-        finalize_offset = int(max_offset) + 1
-        changed = 0
-        rows = []
-        for num, new_map in corrected.items():
-            old_map = latest_cls.get(num, {})
-            if new_map == old_map:
-                continue
-            for lap, st in new_map.items():
-                if old_map.get(lap) != st:
-                    changed += 1
-            lap_segs = latest_lap_segments.get(num, {})
-            payload = {
-                "lap": max(new_map),
-                "status": new_map[max(new_map)],
-                "segment": int(lap_segs.get(str(max(new_map)), 0) or 0),
-                "laps": {str(k): v for k, v in new_map.items()},
-                "lapSegments": lap_segs,
-            }
-            rows.append((finalize_offset, f"lapClassification:{num}",
-                         _json.dumps(payload, default=str)))
-        if rows:
-            self._db._conn.executemany(
-                "INSERT INTO messages (offset_ms, topic, data) VALUES (?, ?, ?)",
-                rows,
-            )
-            self._db._conn.commit()
-        logger.info(
-            "Lap reclassification: %d drivers, %d lap labels updated",
-            len(rows), changed,
-        )
-
     def _filter_message(self, msg: RawMessage) -> Optional[RawMessage]:
         """Apply timestamp filtering to a message. Returns None to drop it."""
         if self._cutoff is None:
@@ -736,7 +615,6 @@ class SessionPreProcessor:
             ClockProcessor(self._bus, self._session_type),
             ChampionshipProcessor(self._bus, self._session_type),
             DriverListProcessor(self._bus, self._session_type),
-            SessionDataProcessor(self._bus, self._session_type),
             self._lap_class_proc,
             DriverStatusProcessor(self._bus, self._session_type),
             self._timing_proc,
