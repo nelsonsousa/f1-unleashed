@@ -1,18 +1,20 @@
 /**
  * Race-control tile — three tabs:
- *   - Race control  : F1 RC messages (= subscribes to raceControlMessages)
+ *   - Race control  : F1 RC messages — accumulates the `raceControlMessage`
+ *                     topic (one per message; server replays history on
+ *                     connect/seek).
  *   - Pecking order : team-rank prediction; fetched from the prior session's
  *                     pecking_order.json via /api/v1/livetiming/analysis/...
  *   - Championship  : drivers + constructors standings; updates from the
- *                     championshipPrediction topic during a race. Hidden
- *                     entirely outside race/sprint sessions.
+ *                     championshipDrivers / championshipConstructors topics
+ *                     during a race. Hidden outside race/sprint sessions.
  */
 
 (function() {
     let peckingHtml = '';
     let rcMessages = [];
-    let champPayload = null;
-    let driverList = {};   // num → {tla, teamColour, teamName}
+    let champDrivers = [];        // server-computed, fully self-contained rows
+    let champConstructors = [];
 
     function escapeHtml(s) {
         return String(s).replace(/[&<>"']/g, (c) => ({
@@ -112,20 +114,8 @@
         return t !== 'practice';
     }
 
-    function buildChampHtml(payload) {
-        if (!payload) return '';
-        const drivers = payload.drivers || [];
-        const constructors = payload.constructors || [];
-
-        // Build a team→colour lookup from the cached driverList so
-        // constructors can show their team colour bar too.
-        const teamColours = {};
-        for (const num of Object.keys(driverList)) {
-            const info = driverList[num] || {};
-            if (info.teamName && info.teamColour) {
-                teamColours[info.teamName] = info.teamColour;
-            }
-        }
+    function buildChampHtml(drivers, constructors) {
+        if (!drivers.length && !constructors.length) return '';
 
         function colourBar(hex) {
             const c = (hex || '').replace(/^#/, '');
@@ -146,33 +136,32 @@
                 + `${up ? '▲' : '▼'}${Math.abs(chg)}</span>`;
         }
         // Layout: colour | name | points-today | projected-total | ▲/▼ N.
-        // points-today is blank for drivers not expected to score today.
+        // All fields are server-computed (championship_processor): teamColour,
+        // name, predictedPoints, pointsGained (today), positionsGained.
         function rowHtml(rank, colourHex, name, row) {
-            const today = row.pointsToday > 0 ? `+${fmtPts(row.pointsToday)}` : '';
+            const today = row.pointsGained > 0 ? `+${fmtPts(row.pointsGained)}` : '';
             return `<div class="rc-champ-row">` +
                 `<span class="rc-champ-rank">${rank}</span>` +
                 colourBar(colourHex) +
                 `<span class="rc-champ-name">${escapeHtml(name)}</span>` +
                 `<span class="rc-champ-today">${today}</span>` +
                 `<span class="rc-champ-pts">${fmtPts(row.predictedPoints)}</span>` +
-                changeHtml(row.positionChange) +
+                changeHtml(row.positionsGained) +
                 `</div>`;
         }
 
         // ── Drivers column ────────────────────────────────────────
         let leftHtml = `<div class="rc-champ-col-title">Drivers</div>`;
         drivers.forEach((row, i) => {
-            if (row.num == null) return;
-            const info = driverList[row.num] || {};
-            const name = info.lastName || info.tla || `#${row.num}`;
-            leftHtml += rowHtml(i + 1, info.teamColour, name, row);
+            const name = row.driverName || `#${row.driverNumber}`;
+            leftHtml += rowHtml(i + 1, row.teamColour, name, row);
         });
 
         // ── Constructors column ───────────────────────────────────
         let rightHtml = `<div class="rc-champ-col-title">Constructors</div>`;
         constructors.forEach((row, i) => {
-            if (row.team == null) return;
-            rightHtml += rowHtml(i + 1, teamColours[row.team], row.team, row);
+            if (row.teamName == null) return;
+            rightHtml += rowHtml(i + 1, row.teamColour, row.teamName, row);
         });
 
         return `<div class="rc-champ-cols">` +
@@ -181,17 +170,13 @@
                `</div>`;
     }
 
-    function handleChampionship(data) {
-        if (!data || typeof data !== 'object') return;
-        champPayload = data;
-        renderAll();
-    }
-
     // ── Rendering ──────────────────────────────────────────────────
 
-    function handleMessages(data) {
-        if (!Array.isArray(data)) return;
-        rcMessages = data;
+    // One message per emit; the server replays history on connect/seek
+    // (after a state:reset), so we just accumulate.
+    function handleMessage(data) {
+        if (!data || typeof data !== 'object' || !data.message) return;
+        rcMessages.push(data);
         renderAll();
     }
 
@@ -227,7 +212,7 @@
                 || '<div class="rc-empty">Pecking order will appear after FP1 ends.</div>';
         }
         if (champ) {
-            champ.innerHTML = buildChampHtml(champPayload)
+            champ.innerHTML = buildChampHtml(champDrivers, champConstructors)
                 || '<div class="rc-empty">Championship standings appear once the race starts.</div>';
         }
     }
@@ -271,14 +256,12 @@
 
     // ── Wiring ─────────────────────────────────────────────────────
 
-    messageBus.on('raceControlMessages', handleMessages);
-    messageBus.on('championshipPrediction', handleChampionship);
-    // Capture driverList so the Championship tab can resolve num→TLA.
-    messageBus.on('driverList', (data) => {
-        if (data && typeof data === 'object') {
-            driverList = data;
-            renderAll();
-        }
+    messageBus.on('raceControlMessage', handleMessage);
+    messageBus.on('championshipDrivers', (data) => {
+        if (Array.isArray(data)) { champDrivers = data; renderAll(); }
+    });
+    messageBus.on('championshipConstructors', (data) => {
+        if (Array.isArray(data)) { champConstructors = data; renderAll(); }
     });
     // sessionInfo carries gmtOffset; once it arrives, re-render so
     // race-control timestamps switch from UTC to track-local.
@@ -287,8 +270,8 @@
     messageBus.on('state:reset', () => {
         peckingHtml = '';
         rcMessages = [];
-        champPayload = null;
-        driverList = {};
+        champDrivers = [];
+        champConstructors = [];
         renderAll();
     });
 
