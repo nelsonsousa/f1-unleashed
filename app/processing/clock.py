@@ -1,7 +1,7 @@
 """
 Playback Clock for session replay.
 
-Maintains current time, speed (1x-50x), play/pause state.
+Maintains current time, speed (1x-60x), play/pause state.
 The SessionEngine calls tick() on each iteration to advance the clock
 and determine which messages should be dispatched.
 """
@@ -69,7 +69,7 @@ class PlaybackClock:
             elapsed = now - self._last_tick_real
             self._current_time += timedelta(seconds=elapsed * self._speed)
             self._last_tick_real = now
-        self._speed = max(0.1, min(value, 50.0))
+        self._speed = max(0.1, min(value, 60.0))
 
     def play(self) -> None:
         """Start or resume playback."""

@@ -169,7 +169,11 @@ const messageBus = {
             const data = msg.data;
 
             if (topic === 'state:full') {
-                // Session metadata from server
+                // Session metadata from server. isLive is authoritative
+                // (server decides live vs replay); the header uses it to
+                // swap the speed control for a LIVE button and to hide
+                // future events (no-spoiler).
+                this.isLive = !!data.isLive;
                 if (data.startTime) {
                     this.startTime = new Date(data.startTime);
                 }
@@ -179,6 +183,7 @@ const messageBus = {
 
                 this.emit('session:loaded', {
                     sessionType: data.sessionType,
+                    isLive: this.isLive,
                     audioInfo: data.audioInfo || null,
                     duration: data.duration,
                     events: data.events || [],
