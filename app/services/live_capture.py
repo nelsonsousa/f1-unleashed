@@ -196,8 +196,13 @@ class LiveCaptureService:
 
                     if message.get("type") == "status":
                         status = message.get("status")
-                        if status == "disconnected":
-                            logger.info("SignalR disconnected")
+                        if status == "reconnecting":
+                            # Transient drop — the client is reconnecting and
+                            # will keep appending to live.jsonl. Do NOT end.
+                            logger.warning("SignalR reconnecting…")
+                        elif status == "disconnected":
+                            # Terminal — the client has stopped for good.
+                            logger.info("SignalR disconnected (terminal)")
                             break
                     elif message.get("type") == "error":
                         logger.error(f"SignalR error: {message.get('message')}")
@@ -226,8 +231,11 @@ class LiveCaptureService:
                             self._handle_audio_streams(message.get("data"), cache_path)
 
                 except asyncio.TimeoutError:
-                    if not signalr_client.is_connected:
-                        logger.warning("SignalR client disconnected during timeout")
+                    # Only end if the capture thread has truly died — a brief
+                    # is_connected==False happens during a reconnect and must
+                    # NOT end the capture (the client owns reconnection).
+                    if not signalr_client.is_alive:
+                        logger.warning("SignalR capture thread ended")
                         break
 
             capture["status"] = CaptureStatus.COMPLETED
