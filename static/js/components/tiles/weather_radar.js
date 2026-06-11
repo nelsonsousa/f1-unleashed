@@ -46,17 +46,17 @@
             if (el) el.textContent = val != null ? `${val}${suffix || ''}` : '--';
         };
 
-        set('liveAirTemp', w.AirTemp, '\u00b0');
-        set('liveTrackTemp', w.TrackTemp, '\u00b0');
-        set('liveHumidity', w.Humidity, '%');
-        set('livePressure', w.Pressure, '');
-        set('liveWind', w.WindSpeed ? `${w.WindSpeed} kph` : null);
+        set('liveAirTemp', w.airTemp, '\u00b0');
+        set('liveTrackTemp', w.trackTemp, '\u00b0');
+        set('liveHumidity', w.humidity, '%');
+        set('livePressure', w.pressure, '');
+        set('liveWind', w.windSpeed ? `${w.windSpeed} kph` : null);
 
         // Wind arrow
-        updateWindArrow(w.WindDirection, w.WindSpeed);
+        updateWindArrow(w.windDirection, w.windSpeed);
 
-        // Rainfall indicator
-        const rainfall = w.Rainfall === '1' || w.Rainfall === true || w.Rainfall === 1;
+        // Rainfall indicator (server emits `rain` as a number, 0 or 1)
+        const rainfall = Number(w.rain) > 0;
         const container = document.getElementById('weatherRadarMap');
         if (container) {
             container.classList.toggle('raining', rainfall);
