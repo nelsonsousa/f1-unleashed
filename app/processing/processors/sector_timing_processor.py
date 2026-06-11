@@ -48,6 +48,11 @@ class SectorTimingProcessor(Processor):
     def __init__(self, bus: SessionMessageBus, session_type: str):
         super().__init__(bus, session_type)
         self._sectors: dict[str, list] = {}
+        # Max segment count seen per sector (track-wide — all cars share the
+        # mini-sector layout). Mini-sector arrays are padded to this on every
+        # emit so the layout is fixed-length and the client render is
+        # width-invariant (no jitter as segments arrive within a lap).
+        self._seg_counts: list[int] = [0, 0, 0]
 
     def subscribe(self) -> None:
         self._bus.on("TimingData", self._handle)
@@ -111,4 +116,12 @@ class SectorTimingProcessor(Processor):
             {"value": s["value"], "overallFastest": s["overallFastest"],
              "personalFastest": s["personalFastest"]} for s in sec
         ], clock_time)
-        self._bus.emit(f"driverMiniSectors:{num}", [s["segments"] for s in sec], clock_time)
+        # Pad each sector's segments to the max count ever seen for that sector
+        # so the array length (and thus the client layout) is fixed; trailing
+        # not-yet-reached segments are None.
+        mini = []
+        for i, s in enumerate(sec):
+            self._seg_counts[i] = max(self._seg_counts[i], len(s["segments"]))
+            pad = self._seg_counts[i] - len(s["segments"])
+            mini.append(list(s["segments"]) + [None] * pad)
+        self._bus.emit(f"driverMiniSectors:{num}", mini, clock_time)
