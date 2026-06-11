@@ -43,6 +43,31 @@ Working autonomously 2026-06-11 night; user to review in the morning.
 4. [TODO] Windows startup script (service.sh is mac/linux only).
 5. [TODO — the main task] frontend rewire (full item #2).
 
+## Refactor UI — tile progress
+- [x] race_control — rewired (raceControlMessage singular; split championship). commit f0b962a
+- [x] weather — camelCase weatherData + numeric rain. commit 013ed18
+- [x] track_map — NO CHANGE NEEDED (topics/payloads unchanged; already reads info.color/data.status)
+- [x] header — NO CHANGE NEEDED (Live button/scrubber-regions belong to Live-vs-Replay card)
+- [x] standings — adapter rewrite, per-driver join. commit 00339cd. NOT browser-tested.
+- [ ] telemetry — pending (liveTelemetry replaces raw CarData.z; telemetryLap rename; driverLaps)
+
+### Standings rewrite — decisions + known follow-ups (for review)
+- Predicted position now = standings position − server `placesGained` (dropped
+  client computePredictedPosition); lapPrediction.delta is ms, only emitted for
+  improving PUSH laps.
+- Completed-lap sectors not in new topics → snapshot live driverSectors at
+  driverLaps rollover.
+- FINISHED + DSQ now read from driverStatus (deleted chequered/finishedDrivers
+  client logic). Overall-fastest holder from `fastestLap` topic.
+- Mini-sector layout derived from driverMiniSectors array lengths (segmentLayout
+  topic gone).
+- FOLLOW-UPS: CSS classes st-slow/st-stop may need adding; per-lap classification
+  history not restored on seek (driverLapClassification carries latest only) —
+  affects prevFastLap after backward seek; dead penaltyText/penaltiesCell
+  fallbacks left for cleanup.
+- weather tile still uses Date.now() for a radar-throttle heuristic (pre-existing
+  anti-pattern; out of scope, flagged).
+
 ## Decisions made (running)
 
 ### D1 — backend cleanup ordering (deviates slightly from "backend fully before frontend")
