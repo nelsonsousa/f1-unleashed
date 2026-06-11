@@ -1,7 +1,7 @@
 """
 Session Info Processor — session identity metadata + display badge.
 
-Subscribes to: SessionInfo, qualifyingPart
+Subscribes to: SessionInfo, SessionData
 Emits (each self-contained — restore = latest row per topic):
   meetingName    Event/meeting name string (e.g. "Monaco Grand Prix")
   sessionBadge   Display badge string (FP1 / Q / Q1 / SQ2 / S / R …)
@@ -9,6 +9,8 @@ Emits (each self-contained — restore = latest row per topic):
                  (accents dropped, spaces -> underscores; "Monte_Carlo")
   sessionInfo    Raw session metadata: sessionType, sessionName,
                  sessionNumber, qualifyingPart, gmtOffset, sessionStatus
+  qualifyingPart Chained topic (1/2/3) consumed by driver_status + standings
+                 to track the current qualifying segment.
 
 The badge mapping (formerly in header.js) is computed here:
   Practice    -> "FP" + session Number          (FP1, FP2, FP3)
@@ -16,17 +18,26 @@ The badge mapping (formerly in header.js) is computed here:
                  ("Qualifying" -> Q/Q1/Q2/Q3; "Sprint Qualifying" -> SQ/SQ1…)
   Race        -> initials(Name)                  ("Race" -> R; "Sprint" -> S)
 
-Filters out SessionInfo messages from a different session (can happen when
-the previous session's archive hasn't completed before the new one starts),
-keyed on the session Key from the first SessionInfo.
+The live SessionStatus (Started/Finished/Finalised) and QualifyingPart come
+from SessionData (StatusSeries / Series); SessionInfo carries the static
+identity metadata. Filters out SessionInfo from a different session (keyed on
+the first session Key) and SessionData entries >1h before the first valid one
+(stale rows from a previous session whose archive overlapped).
 """
 
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from app.processing.message_bus import SessionMessageBus
 from app.processing.processors.base import Processor
+
+
+def _parse_utc(utc_str: str) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+    except (ValueError, TypeError, AttributeError):
+        return None
 
 
 def _normalize_circuit(name: str) -> str:
@@ -55,6 +66,9 @@ class SessionInfoProcessor(Processor):
         self._meeting_name: str = ""
         self._circuit: str = ""
         self._qualifying_part: int = 0
+        # Stale-row guard for SessionData (entries >1h before the first valid
+        # one come from a previous session whose archive overlapped).
+        self._first_valid_time: Optional[datetime] = None
         # Last-emitted values per topic, for change-only emission.
         self._last_meeting_name: Optional[str] = None
         self._last_badge: Optional[str] = None
@@ -63,9 +77,8 @@ class SessionInfoProcessor(Processor):
 
     def subscribe(self) -> None:
         self._bus.on("SessionInfo", self._handle)
-        # qualifyingPart is emitted by SessionDataProcessor; it advances the
-        # badge (Q -> Q1 -> Q2 -> Q3) and feeds the sessionInfo payload.
-        self._bus.on("qualifyingPart", self._handle_qualifying_part)
+        # SessionData carries the live SessionStatus + QualifyingPart.
+        self._bus.on("SessionData", self._handle_session_data)
 
     def _handle(self, data: Any, clock_time: datetime) -> None:
         if not isinstance(data, dict):
@@ -103,15 +116,53 @@ class SessionInfoProcessor(Processor):
 
         self._emit(clock_time)
 
-    def _handle_qualifying_part(self, data: Any, clock_time: datetime) -> None:
-        try:
-            qp = int(data)
-        except (TypeError, ValueError):
+    def _handle_session_data(self, data: Any, clock_time: datetime) -> None:
+        if not isinstance(data, dict):
             return
-        if qp == self._qualifying_part:
-            return
-        self._qualifying_part = qp
-        self._emit(clock_time)
+        changed = False
+
+        # StatusSeries -> live SessionStatus (Started / Finished / Finalised).
+        status_series = data.get("StatusSeries")
+        if isinstance(status_series, (dict, list)):
+            items = status_series.values() if isinstance(status_series, dict) else status_series
+            for entry in items:
+                if not isinstance(entry, dict):
+                    continue
+                if not self._is_valid_time(_parse_utc(entry.get("Utc", ""))):
+                    continue
+                ss = entry.get("SessionStatus")
+                if ss and ss != self._session_status:
+                    self._session_status = ss
+                    changed = True
+
+        # Series -> QualifyingPart. Only 1/2/3 are real segments
+        # (0 = pre-session / post-session reset). Emit the chained topic
+        # (consumed by driver_status + standings) on change.
+        series = data.get("Series")
+        if isinstance(series, (dict, list)):
+            items = series.values() if isinstance(series, dict) else series
+            for entry in items:
+                if not isinstance(entry, dict):
+                    continue
+                if not self._is_valid_time(_parse_utc(entry.get("Utc", ""))):
+                    continue
+                qp = entry.get("QualifyingPart")
+                if qp is not None and 1 <= int(qp) <= 3 and int(qp) != self._qualifying_part:
+                    self._qualifying_part = int(qp)
+                    self._bus.emit("qualifyingPart", self._qualifying_part, clock_time)
+                    changed = True
+
+        if changed:
+            self._emit(clock_time)
+
+    def _is_valid_time(self, utc: Optional[datetime]) -> bool:
+        """Filter out entries >1h before the first valid SessionData time."""
+        if utc is None:
+            return True
+        if self._first_valid_time is None:
+            self._first_valid_time = utc
+            return True
+        return utc >= self._first_valid_time - timedelta(hours=1)
 
     def _compute_badge(self) -> str:
         name = self._session_name or ""
