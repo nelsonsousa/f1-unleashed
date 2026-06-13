@@ -376,6 +376,46 @@ def _ordered_audio_segments(session_path) -> list:
     return segs
 
 
+def _build_concat_aac(session_path, segments):
+    """Concatenate the replay segments into ONE range-seekable AAC, cached as
+    `_combined.aac`. Lets the client set audio.currentTime exactly (matching
+    clockToAudioSec's cumulative-duration map) instead of the imprecise
+    avg-bitrate ?t= byte estimate on the non-seekable chunked concat (which is
+    skewed by near-silent bookend segments → audio mis-positions on replay).
+
+    ffmpeg's concat demuxer with `-c copy` splices at ADTS frame boundaries
+    (clean seams, no re-encode). Rebuilt when any segment is newer than the
+    cache. Returns the cached path, or None on failure (caller falls back to
+    the chunked path). Replay-only — never used for live (single segment).
+    """
+    import subprocess
+    out = session_path / "_combined.aac"
+    try:
+        newest = max(s.stat().st_mtime for s in segments)
+        if out.exists() and out.stat().st_size > 0 and out.stat().st_mtime >= newest:
+            return out
+        list_path = session_path / "_combined.concat.txt"
+        list_path.write_text(
+            "".join(f"file '{s.resolve()}'\n" for s in segments)
+        )
+        try:
+            r = subprocess.run(
+                ["ffmpeg", "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
+                 "-f", "concat", "-safe", "0", "-i", str(list_path),
+                 "-c", "copy", str(out)],
+                capture_output=True, text=True, timeout=120,
+            )
+        finally:
+            list_path.unlink(missing_ok=True)
+        if r.returncode == 0 and out.exists() and out.stat().st_size > 0:
+            return out
+        logger.warning("concat AAC build failed (rc=%s) for %s: %s",
+                       r.returncode, session_path.name, (r.stderr or "")[:200])
+    except Exception:
+        logger.exception("concat AAC build error for %s", session_path.name)
+    return None
+
+
 @router.get("/audio/{session_name:path}")
 async def get_audio(session_name: str, request: Request):
     """Serve commentary audio for a cached session.
@@ -429,6 +469,20 @@ async def get_audio(session_name: str, request: Request):
             media_type="audio/aac",
             filename="commentary.aac",
         )
+
+    # Multi-segment REPLAY: serve ONE concatenated, range-seekable AAC so the
+    # client can set audio.currentTime exactly (matching clockToAudioSec's
+    # cumulative-duration map). The chunked concat below is non-seekable and
+    # the avg-bitrate ?t= estimate mis-positions audio (skewed by near-silent
+    # bookend segments). Falls through to the chunked path if the build fails.
+    if not is_live and len(segments) > 1 and start_t == 0:
+        combined = _build_concat_aac(session_path, segments)
+        if combined:
+            return FileResponse(
+                path=str(combined),
+                media_type="audio/aac",
+                filename="commentary.aac",
+            )
 
     chunk_size = 16 * 1024
     idle_timeout = 60.0
