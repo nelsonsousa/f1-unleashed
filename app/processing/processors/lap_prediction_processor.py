@@ -61,7 +61,10 @@ class LapPredictionProcessor(Processor):
     def _on_laps(self, num: str, data: Any) -> None:
         if not isinstance(data, dict):
             return
-        bl = data.get("bestLap")
+        # Session-wide best (overallBestLap): predicted = bestMs + deltaMs, and
+        # deltaMs is measured against the overall reference lap (lap_delta), so
+        # the benchmark here must match it (card 63).
+        bl = data.get("overallBestLap")
         if isinstance(bl, dict) and bl.get("time"):
             ms = _parse_ms(bl["time"])
             if ms is not None:

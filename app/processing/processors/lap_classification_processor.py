@@ -19,7 +19,7 @@ start and end at S/F is timed (PUSH/SLOW for P/Q, "" for race).
 
 TIMED laps (P/Q):
   - PUSH by default; SLOW when, between 10%–90% track distance, delta blows out:
-    deltaPct = driverDelta.deltaMs / driverLaps.bestLap.time × 100, SLOW iff
+    deltaPct = driverDelta.deltaMs / driverLaps.overallBestLap.time × 100, SLOW iff
     deltaPct > 20 AND deltaMs > 5000. Before 10% stays PUSH; after 90% no flips.
   - Rule 1 (multi-lap prep): at the start of a timed lap N, walking back from
     N-2 while each prior lap is PUSH, reclassify it SLOW if its lap time exceeds
@@ -174,7 +174,10 @@ class LapClassificationProcessor(Processor):
         if not isinstance(data, dict):
             return
         d = self._drv(num)
-        bl = data.get("bestLap")
+        # Session-wide best (overallBestLap): deltaPct = deltaMs / best_ms, and
+        # deltaMs is vs the overall reference lap (lap_delta), so the denominator
+        # must be that same lap (card 63).
+        bl = data.get("overallBestLap")
         if isinstance(bl, dict) and bl.get("time"):
             ms = _parse_ms(bl["time"])
             if ms is not None:

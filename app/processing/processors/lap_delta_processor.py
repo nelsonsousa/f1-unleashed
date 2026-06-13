@@ -73,7 +73,10 @@ class LapDeltaProcessor(Processor):
     def _on_driver_laps(self, num: str, data: Any) -> None:
         if not isinstance(data, dict):
             return
-        bl = data.get("bestLap")
+        # Reference the SESSION-WIDE best (overallBestLap), not the per-part
+        # bestLap — the delta predictor needs the overall benchmark lap, which
+        # is kept across qualifying parts (card 63). Equal outside quali.
+        bl = data.get("overallBestLap")
         b = bl.get("lap") if isinstance(bl, dict) else None
         if isinstance(b, int):
             self._best_num[num] = b

@@ -4,14 +4,21 @@ Lap Timing Processor — authoritative per-driver lap count + lap times.
 Subscribes to: SessionStatus, TimingData, LapCount (race)
 Emits:
   driverLaps:{num}  per-driver lap record (THIN — no accumulating history):
-      { currentLap, lastLap:{lap,time,personalBest,overallBest}|null,
-        bestLap:{lap,time}|null }
+      { currentLap,
+        lastLap:{lap,time,personalBest,overallBest,part}|null,
+        bestLap:{lap,time,part}|null,
+        overallBestLap:{lap,time}|null }
       currentLap is the lap the driver is on (NoL in P/Q, NoL+1 in race).
       Consumers needing per-lap history accumulate it from lastLap; seek/restore
       replays the full driverLaps history up to the offset.
       bestLap is the driver's fastest lap flagged PersonalFastest OR
       OverallFastest by F1 — this excludes out/in/cool laps (never flagged), so
       a driver with only an out-lap done has bestLap=null (no valid reference).
+      In QUALIFYING bestLap is scoped to the CURRENT part (Q1/Q2/Q3) and resets
+      each part (card 63); overallBestLap is the session-wide best, kept as the
+      delta-prediction reference. `part` (1/2/3, or null outside quali) tags the
+      lap's qualifying part so the client can group laps by part (card 66).
+      Outside qualifying bestLap == overallBestLap (no part resets).
   raceLaps          (race only) { currentLap, totalLaps }  — from LapCount
   fastestLap        { num, lap, time }  — emitted when a lap is OverallFastest
                     (the session-global fastest; client colours it purple)
@@ -63,7 +70,9 @@ class LapTimingProcessor(Processor):
         self._nol: dict[str, int] = {}                       # num -> current NoL
         self._laps: dict[str, dict[int, dict]] = {}          # num -> {lap -> {time,pb,ob}}
         self._pending: dict[str, dict] = {}                  # num -> held lap-time
-        self._best: dict[str, dict] = {}                     # num -> {lap,time,ms}
+        self._best: dict[str, dict] = {}                     # num -> {lap,time,ms,part} — CURRENT part (display), reset per part
+        self._session_best: dict[str, dict] = {}             # num -> {lap,time,ms} — session-wide, kept for delta prediction (card 63)
+        self._part: Optional[int] = None                     # current qualifying part (1/2/3); None outside quali
         # PersonalFastest/OverallFastest are STICKY F1 deltas — carry forward
         # until the field reappears (it flips False on the first non-improving lap).
         self._pb: dict[str, bool] = {}
@@ -72,15 +81,31 @@ class LapTimingProcessor(Processor):
         # when a lap equals the previous one exactly (F1 delta), so a completed
         # lap left timeless is recovered from this carried value.
         self._sticky_ll: dict[str, dict] = {}
-        self._overall_best_ms: Optional[int] = None
+        self._part_fastest_ms: Optional[int] = None          # current-part global fastest → purple; reset per part
         self._current_race_lap: Optional[int] = None
         self._total_race_laps: Optional[int] = None
 
     def subscribe(self) -> None:
         self._bus.on("SessionStatus", self._handle_session_status)
         self._bus.on("TimingData", self._handle_timing)
+        self._bus.on("qualifyingPart", self._handle_qualifying_part)
         if self._is_race:
             self._bus.on("LapCount", self._handle_lap_count)
+
+    # ── Qualifying part (Q1/Q2/Q3) ──
+    def _handle_qualifying_part(self, data: Any, clock_time: datetime) -> None:
+        """On a new qualifying part the DISPLAYED best resets to current-part
+        only (card 63); the session-wide best is kept as the delta-prediction
+        reference. Re-emit so each driver's shown best clears immediately,
+        before they set a lap in the new part."""
+        part = data if isinstance(data, int) else None
+        if part is None or part == self._part:
+            return
+        self._part = part
+        self._best = {}
+        self._part_fastest_ms = None
+        for num in list(self._laps.keys()):
+            self._emit(num, clock_time)
 
     # ── Session gate ──
     def _handle_session_status(self, data: Any, clock_time: datetime) -> None:
@@ -178,7 +203,9 @@ class LapTimingProcessor(Processor):
         return False
 
     def _set_time(self, num: str, lap: int, ll: dict, clock_time: datetime) -> None:
-        self._laps[num][lap] = dict(ll)
+        # Tag each lap with the qualifying part it was set in (None outside
+        # quali) so the client can group laps by part (card 66).
+        self._laps[num][lap] = {**ll, "part": self._part}
         ms = _parse_ms(ll["time"])
         if ms is None:
             return
@@ -188,22 +215,30 @@ class LapTimingProcessor(Processor):
         # non-improving lap). PersonalFastest alone is insufficient: a lap that
         # is BOTH a PB and the overall best is sometimes flagged
         # OverallFastest-only, so accept either.
-        if (ll.get("personalBest") or ll.get("overallBest")) \
-                and (num not in self._best or ms < self._best[num]["ms"]):
-            self._best[num] = {"lap": lap, "time": ll["time"], "ms": ms}
-            # Session-global fastest → fastestLap (client colours it purple).
-            # Computed from the per-driver bests, not the (per-driver, sticky)
-            # OverallFastest flag, which can read True for more than one car.
-            if self._overall_best_ms is None or ms < self._overall_best_ms:
-                self._overall_best_ms = ms
-                self._bus.emit("fastestLap",
-                               {"num": num, "lap": lap, "time": ll["time"]}, clock_time)
+        if ll.get("personalBest") or ll.get("overallBest"):
+            # Per-part best — drives the displayed best (standings + telemetry
+            # Best view); reset each qualifying part (card 63).
+            if num not in self._best or ms < self._best[num]["ms"]:
+                self._best[num] = {"lap": lap, "time": ll["time"], "ms": ms, "part": self._part}
+                # Current-part global fastest → fastestLap (client colours it
+                # purple). Computed from the per-driver bests, not the
+                # (per-driver, sticky) OverallFastest flag which can read True
+                # for more than one car. Resets each part with _best.
+                if self._part_fastest_ms is None or ms < self._part_fastest_ms:
+                    self._part_fastest_ms = ms
+                    self._bus.emit("fastestLap",
+                                   {"num": num, "lap": lap, "time": ll["time"]}, clock_time)
+            # Session-wide best — kept across parts as the delta-prediction
+            # reference (card 63); emitted as overallBestLap, never reset.
+            if num not in self._session_best or ms < self._session_best[num]["ms"]:
+                self._session_best[num] = {"lap": lap, "time": ll["time"], "ms": ms}
 
     def _emit(self, num: str, clock_time: datetime) -> None:
         laps = self._laps.get(num, {})
         timed = [l for l, v in laps.items() if v.get("time")]
         last = max(timed) if timed else None
         best = self._best.get(num)
+        overall = self._session_best.get(num)
         # currentLap = the lap the driver is CURRENTLY on. P/Q: NoL (NoL=N means
         # lap N is starting). Race: NoL+1 (NoL=N means lap N has ended, so the
         # driver is on N+1). `_completed(nol)+1` gives both.
@@ -217,5 +252,8 @@ class LapTimingProcessor(Processor):
         self._bus.emit(f"driverLaps:{num}", {
             "currentLap": current_lap,
             "lastLap": ({"lap": last, **laps[last]} if last is not None else None),
-            "bestLap": ({"lap": best["lap"], "time": best["time"]} if best else None),
+            # bestLap = CURRENT qualifying part (display); overallBestLap =
+            # session-wide (delta-prediction reference). Equal outside quali.
+            "bestLap": ({"lap": best["lap"], "time": best["time"], "part": best.get("part")} if best else None),
+            "overallBestLap": ({"lap": overall["lap"], "time": overall["time"]} if overall else None),
         }, clock_time)
