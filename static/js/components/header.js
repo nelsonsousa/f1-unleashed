@@ -288,13 +288,22 @@
     }
 
     function handleClockUpdate(data) {
+        const prevDuration = state.duration;
         state.offset = data.offset || 0;
         state.duration = data.duration || state.duration;
         updateScrubberPosition();
         updateGoLiveButton();
-        // LIVE: re-render markers as playback advances so events appear the
-        // moment they're reached (no-spoiler reveals them progressively).
-        if (messageBus.isLive && state.events) renderEventMarkers(state.events);
+        // Re-render event markers when the scrubber's coordinate system moves
+        // under them:
+        //  - LIVE: the edge grows every tick (and the no-spoiler rule reveals
+        //    events progressively as playback reaches them).
+        //  - REPLAY still building: duration follows the growing build edge, so
+        //    a fixed event offset maps to a new x — the markers must be
+        //    re-projected (card 79). A finished replay has a fixed duration, so
+        //    this is a no-op once the build completes.
+        if (state.events && (messageBus.isLive || state.duration !== prevDuration)) {
+            renderEventMarkers(state.events);
+        }
         startClockAnimation();
     }
 
