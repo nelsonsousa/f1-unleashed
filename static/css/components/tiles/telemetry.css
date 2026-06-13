@@ -214,6 +214,9 @@
 .telemetry-lap-pill.lap-skip    { color: var(--text-secondary); }   /* IN / OUT / PIT */
 .telemetry-lap-pill.lap-no-data { color: #888888; border: 1px dashed #555; background: transparent; }
 .telemetry-lap-pill.lap-unknown { color: #ffffff; }
+/* Driver's own fastest lap — purple (placed last so it wins over the type
+   colour above). Recomputed each render from state.bestLapNum. */
+.telemetry-lap-pill.lap-purple  { color: #c77dff; font-weight: 700; }
 
 /* Q1/Q2/Q3 section divider in the lap-list (qualifying only). */
 .telemetry-lap-divider {

@@ -6,8 +6,8 @@ vanilla-JS modular frontend.
 
 For what the app does and the UI, see [README.md](README.md),
 [DOCUMENTATION.md](DOCUMENTATION.md) (architecture + processor reference), and
-[USER_GUIDE.md](USER_GUIDE.md). Open work is tracked in
-[KNOWN_ISSUES.md](KNOWN_ISSUES.md).
+[USER_GUIDE.md](USER_GUIDE.md). Open work is tracked on the project's Trello
+board (the "F1 Unleashed" board).
 
 ## Critical rules
 

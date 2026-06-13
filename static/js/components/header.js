@@ -5,9 +5,8 @@
  *   sessionInfo    → meeting name, session badge, gmt offset
  *   clock          → UTC time, session time, clock status
  *   trackStatus    → GREEN, RED, SC/VSC messages, CHEQUERED
- *   session:events → scrubber event markers (on initial load)
- *   event          → new event markers during playback
- *   playbackEvent  → sessionStart, sessionEnd
+ *   session:events → scrubber event markers (full list, on load + seek)
+ *   event          → GREEN / RED / SC / VSC / CHEQUERED markers during playback
  */
 
 (function() {
@@ -311,12 +310,18 @@
             return;
         }
         btn.classList.remove('hidden');
+        // Caught-up = within a tolerance of the live edge. Drop the lower
+        // bound: clock jitter can push offset a hair past duration (lag
+        // slightly negative) while genuinely AT live — keeping `lag >= 0`
+        // made the indicator blink red↔black. Anything from "at/ahead of the
+        // edge" through "≤3 s behind" counts as live (I9).
         const lag = state.duration - state.offset;
-        btn.classList.toggle('at-live', lag >= 0 && lag <= 3);
+        btn.classList.toggle('at-live', lag <= 3);
     }
 
-    // Speed button. Replay only; 60x = 1 min of session per real second.
-    const SPEEDS = [1, 2, 5, 10, 30, 60];
+    // Speed button. Replay only. 30x/60x were dropped — too fast to be useful
+    // (they create more problems than they solve).
+    const SPEEDS = [1, 2, 5, 10];
     function cycleSpeed() {
         const current = messageBus.speed || 1;
         const idx = SPEEDS.indexOf(current);
@@ -351,24 +356,21 @@
         const width = el && el.clientWidth > 0 ? el.clientWidth : 800;
         const sidePct = Math.min(45, (SIDE_PX / width) * 100);
 
-        const sessionType = (window.SESSION_CONFIG?.sessionType || '').toLowerCase();
-        const isRaceLike = sessionType === 'race' || sessionType === 'sprint';
-        let preStart = null, chequered = null, firstVisible = null, lastVisible = null;
+        // Scrubber events are all `event` track-status markers now (GREEN /
+        // RED / SC / VSC / CHEQUERED). T1 = first such marker (≈ session/race
+        // green), T2 = chequered (or the last marker). The middle section spans
+        // T1→T2; pre-T1 and post-T2 are compressed into the side margins.
+        let chequered = null, firstVisible = null, lastVisible = null;
         for (const ev of state.events || []) {
             if (typeof ev.offset_ms !== 'number') continue;
             const d = typeof ev.data === 'string' ? ev.data : (ev.data?.event || '');
             const upper = String(d).toUpperCase();
-            const hidden = upper === 'SESSIONSTART' || upper === 'AUDIOSTART';
-            if ((upper === 'PRESTART2MIN' || upper === 'PRESTART5MIN') && preStart === null)
-                preStart = ev.offset_ms;
             if (upper === 'CHEQUERED')
                 chequered = (chequered === null) ? ev.offset_ms : Math.max(chequered, ev.offset_ms);
-            if (!hidden && upper !== 'SESSIONEND') {
-                if (firstVisible === null || ev.offset_ms < firstVisible) firstVisible = ev.offset_ms;
-                if (lastVisible === null || ev.offset_ms > lastVisible) lastVisible = ev.offset_ms;
-            }
+            if (firstVisible === null || ev.offset_ms < firstVisible) firstVisible = ev.offset_ms;
+            if (lastVisible === null || ev.offset_ms > lastVisible) lastVisible = ev.offset_ms;
         }
-        const t1 = isRaceLike ? (preStart != null ? preStart : firstVisible) : firstVisible;
+        const t1 = firstVisible;
         const t2 = chequered != null ? chequered : lastVisible;
         if (t1 == null || t2 == null || t2 <= t1) return [[0, 0], [end, 100]];
 
@@ -489,9 +491,6 @@
             const d = typeof ev.data === 'string' ? ev.data : (ev.data?.event || ev.data || '');
             const upper = String(d).toUpperCase();
 
-            // Skip sessionStart and sessionEnd markers
-            if (upper === 'SESSIONSTART' || upper === 'SESSIONEND') continue;
-
             // data-offset = the SEEK target (event offset − 60 s, clamped
             // to ≥ 0) — 60 s lead-in gives the audio time to seek and
             // the user a chance to sync visually before the event.
@@ -517,26 +516,6 @@
                 marker = `<div class="scrubber-flag yellow" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
             } else if (upper === 'GREEN') {
                 marker = `<div class="scrubber-flag green" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
-            } else if (upper === 'PRESTART2MIN') {
-                // Stopwatch icon — 2 min before lights out (race/sprint).
-                // Marks the start of the playback-scrubber middle section.
-                marker = `<div class="scrubber-flag pre-start" style="left:${pct}%" title="2 min to lights out (click to skip to 60 s before)" ${dataAttrs}>`
-                       + `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">`
-                       + `<path d="M10 2h4"/>`           /* top knob */
-                       + `<path d="M12 4v3"/>`           /* stem */
-                       + `<circle cx="12" cy="14" r="8" fill="currentColor" fill-opacity="0.1"/>`
-                       + `<path d="M12 14L15 11"/>`      /* hand at 2 o'clock */
-                       + `</svg></div>`;
-            } else if (upper === 'PRESTART5MIN') {
-                // Backwards-compat for cached sessions whose live.jsonl
-                // was processed before 2026-06-06 (= still has preStart5min).
-                marker = `<div class="scrubber-flag pre-start" style="left:${pct}%" title="Pre-session — 5 min before scheduled start (click to skip to 60 s before)" ${dataAttrs}>`
-                       + `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">`
-                       + `<circle cx="12" cy="12" r="10"/>`
-                       + `<text x="12" y="15" text-anchor="middle" font-size="9" font-weight="700" fill="currentColor" stroke="none">5'</text>`
-                       + `</svg></div>`;
-            } else if (upper === 'AUDIOSTART') {
-                continue;   // First-audible marker retired 2026-06-06.
             } else {
                 marker = `<div class="scrubber-event" style="left:${pct}%;background:#888" title="${title}" ${dataAttrs}></div>`;
             }
@@ -554,10 +533,13 @@
     function startLiveTracking() {
         if (state.liveInterval) return;
         state.liveInterval = setInterval(() => {
-            // If we have sessionEnd, stop tracking
+            // Stop tracking once the chequered flag has flown (the session's
+            // final marker now that playbackEvent/sessionEnd is gone). The
+            // server caps duration at chequered + 5 min, so the scrubber's
+            // tail is governed server-side regardless.
             const hasEnd = state.events.some(e => {
                 const d = typeof e.data === 'string' ? e.data : (e.data?.event || '');
-                return d === 'sessionEnd';
+                return String(d).toUpperCase() === 'CHEQUERED';
             });
             if (hasEnd) {
                 clearInterval(state.liveInterval);
@@ -612,6 +594,12 @@
             state.audio.startUtc = new Date(audioInfo.start_utc.replace('Z', '+00:00'));
         }
         state.audio.offsetSeconds = audioInfo.offset_seconds || 0;
+        // Per-segment map for piecewise clock→audio mapping + inter-segment gap
+        // skipping on multi-segment replays (I15). Empty → single-anchor path.
+        state.audio.segments = (audioInfo.segments || [])
+            .filter(s => s.start_utc && s.duration > 0)
+            .map(s => ({ startMs: new Date(s.start_utc.replace('Z', '+00:00')).getTime(),
+                         duration: s.duration }));
 
         audio.volume = state.audio.isMuted ? 0 : state.audio.volume;
         state.audio.isReady = true;
@@ -638,6 +626,28 @@
         setTimeout(alignAudioToClock, 500);
     }
 
+    // Map a data-clock instant (ms) → position in the combined audio stream
+    // (seconds), using the per-segment map so inter-segment capture gaps are
+    // skipped (I15). Returns null when the clock is in a gap or before the
+    // first segment → caller pauses until the next segment's content begins.
+    function clockToAudioSec(clockMs) {
+        const off = state.audio.offsetSeconds || 0;
+        const segs = state.audio.segments;
+        if (!segs || !segs.length) {                       // single-anchor fallback
+            if (!state.audio.startUtc) return null;
+            return (clockMs - state.audio.startUtc.getTime()) / 1000 - off;
+        }
+        let cum = 0;
+        for (const s of segs) {
+            if (clockMs < s.startMs) return null;          // before this segment → gap
+            if (clockMs < s.startMs + s.duration * 1000) {
+                return cum + (clockMs - s.startMs) / 1000 - off;
+            }
+            cum += s.duration;
+        }
+        return cum - off;                                  // past the last segment → clamp to end
+    }
+
     // Reload audio at the offset that matches the current data clock.
     // Used on initial load and after seek to keep non-seekable streams
     // in sync (canSeek streams set currentTime in syncAudio instead).
@@ -649,8 +659,9 @@
     function alignAudioToClock() {
         const audio = state.audio.element;
         if (!audio || !state.audio.startUtc || !messageBus.clockTime) return;
-        let targetSec = (messageBus.clockTime.getTime() - state.audio.startUtc.getTime()) / 1000
-                        - (state.audio.offsetSeconds || 0);
+        let targetSec = clockToAudioSec(messageBus.clockTime.getTime());
+        // In an inter-segment gap (I15): no audio for this data-time → pause.
+        if (targetSec === null) { if (!audio.paused) audio.pause(); return; }
         // Clamp to 0 instead of pausing — a user nudge that pushes
         // target past the start of the audio file should land at
         // byte 0, not be silent. (Live capture: audio resumes.)
@@ -688,8 +699,8 @@
     function audioSyncDrift() {
         const audio = state.audio.element;
         if (!audio || !state.audio.startUtc || !messageBus.clockTime) return null;
-        const targetSec = (messageBus.clockTime.getTime() - state.audio.startUtc.getTime()) / 1000
-                        - (state.audio.offsetSeconds || 0);
+        const targetSec = clockToAudioSec(messageBus.clockTime.getTime());
+        if (targetSec === null) return null;
         const fileOffset = state.audio.seekOffset || 0;
         return audio.currentTime - (targetSec - fileOffset);
     }
@@ -779,10 +790,14 @@
         if (state.audio.playState === 'sync'
                 && state.audio.startUtc && messageBus.clockTime) {
             const clockMs = messageBus.clockTime.getTime();
-            const audioStartMs = state.audio.startUtc.getTime();
-            // offsetSeconds = data − audio. Positive means audio runs
-            // BEHIND data; audio target = clockTarget − offset.
-            const targetSec = (clockMs - audioStartMs) / 1000 - (state.audio.offsetSeconds || 0);
+            // Piecewise clock→audio (I15): null = inter-segment gap → pause
+            // until the data clock reaches the next segment's content.
+            const targetSec = clockToAudioSec(clockMs);
+            if (targetSec === null) {
+                if (!audio.paused) audio.pause();
+                updateAudioPlayButton();
+                return;
+            }
 
             // Past-end-of-file guard: only relevant for SEEKABLE replay
             // streams where audio.duration is the file's true length.
@@ -1012,7 +1027,7 @@
         }
         // Set the transport controls now isLive is known (speed vs LIVE button).
         updateGoLiveButton();
-        // Start live tracking (will auto-stop when sessionEnd arrives)
+        // Start live tracking (will auto-stop when the chequered flag flies)
         startLiveTracking();
     }
 
@@ -1064,7 +1079,6 @@
     }
 
     messageBus.on('event', (data) => addLiveEvent('event', data));
-    messageBus.on('playbackEvent', (data) => addLiveEvent('playbackEvent', data));
 
     // Audio sync on clock updates
     messageBus.on('clock:update', syncAudio);

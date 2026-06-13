@@ -265,6 +265,12 @@ const messageBus = {
             } else if (topic === 'state:scan-progress') {
                 this.emit('scan:progress', { pct: data.pct });
 
+            } else if (topic === 'state:events') {
+                // Full scrubber-events list, re-broadcast by the server once the
+                // transient DB finishes building (replay streams immediately, so
+                // the connect-time events list was partial). Re-render markers.
+                this.emit('session:events', data || []);
+
             } else if (topic === 'error') {
                 this.emit('error', data);
 

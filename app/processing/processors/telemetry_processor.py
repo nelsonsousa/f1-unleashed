@@ -24,12 +24,17 @@ Channel validity (sample kept, channels nulled — client draws a dotted gap):
   * speed == 0 while the position moved.
 
 Laps:
-  * lap NUMBER is authoritative from `driverLaps` (lap_timing);
-  * the boundary is the S/F crossing; lap N spans [crossing N-1, crossing N];
+  * lap NUMBER is authoritative from `driverLaps.currentLap` (the NoL-derived lap
+    the driver is ON), NOT from LastLapTime: on currentLap K→C the just-completed
+    lap is C-1. (currentLap = NoL in P/Q, NoL+1 in race, so C-1 works for both.)
+  * a normal lap is bounded by S/F crossings (0%/100%, interpolated); it closes
+    when currentLap increments, at the buffered closing crossing (deferred until
+    that crossing arrives — position/timing arrival-order race).
+  * an IN lap closes immediately at pit entry (driverStatus PIT), partial (<100%);
+    an OUT lap starts at pit exit (driverStatus OUT), partial (>0%).
   * synthetic 0%/100% seam samples are interpolated only when the pre/post-S/F
     dp gap <= SYNTH_MAX_GAP_PCT (else skipped — outage);
-  * a position outage simply drops samples; numbering resyncs from driverLaps.
-  * activation: NumberOfLaps>=1 (driverLaps currentLap) for practice/qualifying;
+  * activation: currentLap>=1 (first PitOut) for practice/qualifying;
     SessionStatus="Started" (lights-out) for race.
   * STOP/RET closes the in-progress lap.
 
@@ -71,23 +76,19 @@ class DriverData:
     # Captured samples since session start: [dp, speed, rpm, gear, thr, brk, abs_ms].
     samples: list = field(default_factory=list)
     # Lap tracking. Completed-lap telemetry is numbered by the AUTHORITATIVE
-    # driverLaps.lastLap.lap and bounded by S/F crossings: we buffer crossings,
-    # and when timing reports lap N complete, lap N ends at the latest crossing
-    # and the preceding crossing-windows back-fill laps N, N-1, … This back-fill
-    # numbers laps that never got a lastLap of their own (a no-time out lap),
-    # absorbs a spurious pre-out-lap crossing, and survives the timing/position
-    # arrival-order race (defer until the closing crossing arrives).
+    # NoL counter (driverLaps.currentLap = the lap the driver is ON), NOT by
+    # LastLapTime (which can be omitted). On currentLap K→C the completed lap is
+    # C-1; we close it bounded by the buffered S/F crossing, deferring until the
+    # closing crossing arrives (position/timing arrival-order race). An in-lap is
+    # closed immediately at pit entry (driverStatus PIT), numbered by cur_lap.
     crossings: list = field(default_factory=list)  # buffered S/F crossing ts (ascending)
-    pending_lap: Optional[int] = None          # timing said this lap completed; awaiting its crossing
-    pending_report_ts: Optional[datetime] = None  # when that lap-complete was reported
+    pending_lap: Optional[int] = None          # completed lap awaiting its closing crossing
+    pending_report_ts: Optional[datetime] = None  # when that NoL bump was reported
     live_zero_ts: Optional[datetime] = None    # current lap's S/F crossing (live elapsed zero)
     committed: int = 0                         # highest emitted lap number
-    completed_target: int = 0                  # latest driverLaps.lastLap.lap
+    cur_lap: int = 0                           # latest driverLaps.currentLap (lap the driver is ON)
     live_lap: int = 0                          # current driving lap (live elapsed only)
-    in_pit: bool = False                       # driverStatus PIT → crossings are spurious
-    pit_close_pending: bool = False            # entered pit → close the in-lap at next NoL bump
-    pit_entry_ts: Optional[datetime] = None    # when the driver went into the pit (in-lap end)
-    in_garage: bool = False                    # in-lap closed; no telemetry until OUT
+    in_pit: bool = False                       # driverStatus PIT → ignore samples until OUT
     emitted: set = field(default_factory=set)
 
 
@@ -131,6 +132,7 @@ class TelemetryProcessor(Processor):
                         drv.crossings = [clock_time]  # lights-out = lap 1 start
                         drv.live_zero_ts = clock_time
                         drv.live_lap = 1
+                        drv.cur_lap = 1               # on lap 1 at lights-out
                 return
 
     # ── Wildcard: driverLaps (lap numbers) + driverStatus ──────
@@ -141,20 +143,23 @@ class TelemetryProcessor(Processor):
             num = topic.split(":", 1)[1]
             drv = self._drv(num)
             if data == "PIT":
-                # Entering the pit: ignore in-pit S/F crossings, and mark the
-                # current lap (the in-lap) to be CLOSED at the next NoL bump
-                # (it has no S/F crossing — it ends at pit entry, partial).
+                # The IN lap ENDS here: close it immediately at pit entry (partial,
+                # ends <100%), numbered by cur_lap (the lap being driven). Then
+                # ignore samples until OUT (no garage capture).
                 if not drv.in_pit:
                     drv.in_pit = True
-                    drv.pit_close_pending = True
-                    drv.pit_entry_ts = clock_time
+                    self._close_in_lap(drv, clock_time)
             elif data == "OUT":
-                # Pit exit: a new (out-)lap starts here (partial, starts >0%).
+                # Pit exit: the out-lap starts here — partial, starts >0%. Its
+                # NUMBER is assigned when it closes (at the next currentLap bump),
+                # so the OUT/NoL arrival order at the pit exit no longer matters.
+                # Re-seed last_dp so the first post-pit sample doesn't read the
+                # pre-pit→pit-exit dp drop as a false S/F wrap.
                 drv.in_pit = False
-                drv.in_garage = False
-                drv.pit_close_pending = False
                 drv.crossings = [clock_time]
                 drv.live_zero_ts = clock_time
+                drv.live_lap += 1
+                drv.last_dp = None
             else:
                 drv.in_pit = False
             if data in ("STOP", "RET"):
@@ -165,43 +170,36 @@ class TelemetryProcessor(Processor):
             return
         drv = self._drv(num)
         cur = data.get("currentLap")
-        if isinstance(cur, int):
-            # Practice/qualifying activation: first lap started (PitOut).
-            if not self._is_race and not drv.activated and cur >= 1:
-                drv.activated = True
-                drv.crossings = [clock_time]   # pit-exit = lap 1's start boundary
-                drv.live_zero_ts = clock_time
-                drv.live_lap = 1
-        last = data.get("lastLap")
-        m = last.get("lap") if isinstance(last, dict) else None
-        if isinstance(m, int) and m > drv.completed_target:
-            drv.completed_target = m
+        if not isinstance(cur, int):
+            return
+        # Practice/qualifying activation: first lap started (PitOut).
+        if not self._is_race and not drv.activated and cur >= 1:
+            drv.activated = True
+            drv.crossings = [clock_time]   # pit-exit = lap 1's start boundary
+            drv.live_zero_ts = clock_time
+            drv.live_lap = 1
+            drv.cur_lap = cur
+            return
+        # NoL-driven close: on currentLap K→C the completed lap is C-1, bounded
+        # by its S/F crossing. (currentLap is the lap the driver is ON, so the
+        # just-finished lap is one less — true for both P/Q and race.)
+        if cur > drv.cur_lap:
+            drv.cur_lap = cur
             if not drv.activated:
                 return
-            if drv.pit_close_pending:
-                # The in-lap completed (NoL bumped) — close it at pit entry, no
-                # S/F crossing. Then we're in the garage: no telemetry until OUT.
-                self._close_in_lap(drv, m)
-                drv.pit_close_pending = False
-                drv.in_garage = True
-                return
-            if drv.in_garage:
-                # Garage laps: NoL counts them but there's no telemetry. Keep
-                # the lap number aligned so the out-lap closes with the right N.
-                drv.committed = m
-                return
+            m = cur - 1
             if m > drv.committed:
                 self._try_close(drv, m, clock_time)
 
-    def _close_in_lap(self, drv: DriverData, m: int) -> None:
-        """Close the lap the driver took INTO the pits, bounded by pit entry
-        (no S/F crossing; partial lap, ends before 100%)."""
+    def _close_in_lap(self, drv: DriverData, end_ts: datetime) -> None:
+        """Close the in-lap immediately at pit entry, numbered by cur_lap (the
+        lap being driven). Partial — ends before 100% (no S/F crossing)."""
+        n = drv.cur_lap
         start = drv.crossings[-1] if drv.crossings else None
-        if (start is not None and drv.pit_entry_ts is not None
-                and m > drv.committed):
-            self._emit_lap(drv, m, start, drv.pit_entry_ts)
-        drv.committed = m
-        drv.crossings = []          # no open lap during the garage
+        if start is not None and n > drv.committed:
+            self._emit_lap(drv, n, start, end_ts)
+            drv.committed = n
+        drv.crossings = []          # no open lap until OUT
         drv.pending_lap = None
 
     # Lap m's S/F crossing lands within ~this of the lastLap report (timing can
@@ -255,6 +253,11 @@ class TelemetryProcessor(Processor):
             drv = self._drv(num)
             if not drv.activated:
                 drv.last_dp = dp
+                continue
+            if drv.in_pit:
+                # While in the pit lane/garage we ignore the sample altogether —
+                # no capture, no crossing detection, no emission. Capture resumes
+                # on OUT (which re-seeds last_dp).
                 continue
             prev = drv.last_dp
             if prev is None:
@@ -319,8 +322,8 @@ class TelemetryProcessor(Processor):
                 if not isinstance(ch, dict):
                     continue
                 drv = self._drv(num)
-                if not drv.activated or drv.pending_pos is None:
-                    continue   # no pending position → skip this CarData
+                if not drv.activated or drv.in_pit or drv.pending_pos is None:
+                    continue   # in pit, or no pending position → skip this CarData
                 dp, pos_ts = drv.pending_pos
                 drv.pending_pos = None
                 abs_ms = _epoch_ms(pos_ts)
@@ -438,7 +441,7 @@ class TelemetryProcessor(Processor):
             n = drv.committed + 1
             start = drv.crossings[-1] if drv.crossings else None
             if (start is not None and n not in drv.emitted
-                    and n <= drv.completed_target + 1):
+                    and n <= drv.cur_lap):
                 start_ms = _epoch_ms(start)
                 in_lap = [s for s in drv.samples if s[6] >= start_ms]
                 if in_lap:

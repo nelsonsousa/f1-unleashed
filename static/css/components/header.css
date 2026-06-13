@@ -679,7 +679,6 @@
 .scrubber-flag.yellow { color: #ffd700; }
 .scrubber-flag.red { color: #e10600; }
 .scrubber-flag.chequered { color: #ffffff; }
-.scrubber-flag.pre-start { color: #6fc3ff; }
 .scrubber-flag:hover { transform: translate(-50%, -50%) scale(1.4); }
 
 /* Live button */

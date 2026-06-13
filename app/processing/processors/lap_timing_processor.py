@@ -3,9 +3,12 @@ Lap Timing Processor — authoritative per-driver lap count + lap times.
 
 Subscribes to: SessionStatus, TimingData, LapCount (race)
 Emits:
-  driverLaps:{num}  per-driver lap record:
-      { currentLap, laps:{ "n":{time, personalBest, overallBest} },
-        lastLap:{lap,time,personalBest,overallBest}|null, bestLap:{lap,time}|null }
+  driverLaps:{num}  per-driver lap record (THIN — no accumulating history):
+      { currentLap, lastLap:{lap,time,personalBest,overallBest}|null,
+        bestLap:{lap,time}|null }
+      currentLap is the lap the driver is on (NoL in P/Q, NoL+1 in race).
+      Consumers needing per-lap history accumulate it from lastLap; seek/restore
+      replays the full driverLaps history up to the offset.
       bestLap is the driver's fastest lap flagged PersonalFastest OR
       OverallFastest by F1 — this excludes out/in/cool laps (never flagged), so
       a driver with only an out-lap done has bestLap=null (no valid reference).
@@ -201,9 +204,18 @@ class LapTimingProcessor(Processor):
         timed = [l for l, v in laps.items() if v.get("time")]
         last = max(timed) if timed else None
         best = self._best.get(num)
+        # currentLap = the lap the driver is CURRENTLY on. P/Q: NoL (NoL=N means
+        # lap N is starting). Race: NoL+1 (NoL=N means lap N has ended, so the
+        # driver is on N+1). `_completed(nol)+1` gives both.
+        nol = self._nol.get(num)
+        current_lap = self._completed(nol) + 1 if nol is not None else None
+        # Thin message: just the value(s) required. The per-lap time HISTORY is
+        # not re-sent here — consumers accumulate it from `lastLap` as laps
+        # arrive, and a seek/restore replays the full driverLaps history up to
+        # the offset (see session._send_restore_extras), so accumulation is
+        # seek-safe without re-sending the whole map on every emit.
         self._bus.emit(f"driverLaps:{num}", {
-            "currentLap": self._nol.get(num),
-            "laps": {str(l): laps[l] for l in sorted(laps)},
+            "currentLap": current_lap,
             "lastLap": ({"lap": last, **laps[last]} if last is not None else None),
             "bestLap": ({"lap": best["lap"], "time": best["time"]} if best else None),
         }, clock_time)

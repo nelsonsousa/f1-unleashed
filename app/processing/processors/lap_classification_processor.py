@@ -179,13 +179,13 @@ class LapClassificationProcessor(Processor):
             ms = _parse_ms(bl["time"])
             if ms is not None:
                 d.best_ms = ms
-        laps = data.get("laps")
-        if isinstance(laps, dict):
-            for k, v in laps.items():
-                if isinstance(v, dict) and v.get("time"):
-                    ms = _parse_ms(v["time"])
-                    if ms is not None:
-                        d.lap_times[int(k)] = ms
+        # driverLaps is thin (no accumulating laps map) — pick up each completed
+        # lap's time from lastLap as it arrives (linear stream → no gaps).
+        ll = data.get("lastLap")
+        if isinstance(ll, dict) and ll.get("lap") is not None and ll.get("time"):
+            ms = _parse_ms(ll["time"])
+            if ms is not None:
+                d.lap_times[int(ll["lap"])] = ms
         cur = data.get("currentLap")
         if isinstance(cur, int) and cur != d.cur_lap:
             self._start_lap(num, d, cur, clock_time)
