@@ -15,6 +15,7 @@
         carMarkersGroup: null,
         carMarkers: {},
         driverInfo: {},      // num -> {tla, color}
+        driverStatus: {},    // num -> "RET"|"STOP"|... (card 55: hide RET/STOP markers)
         scale: 1,
         rotation: 0,
         markerRadius: 50,
@@ -24,7 +25,7 @@
         lastFlashColour: null,
     };
 
-    const TARGET_MARKER_RADIUS_PX = 10;
+    const TARGET_MARKER_RADIUS_PX = 12.5;   // +25% (card 70); font tracks radius (0.9×)
 
     // =========================================================================
     // Track Loading
@@ -101,7 +102,22 @@
         return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.5 ? '#000' : '#fff';
     }
 
+    function removeCarMarker(num) {
+        const marker = state.carMarkers[num];
+        if (marker) {
+            marker.remove();
+            delete state.carMarkers[num];
+        }
+    }
+
     function updateCarMarker(num, x, y) {
+        // Card 55: a retired / stopped car has no marker on the map. Drop any
+        // existing one and ignore further position updates for it.
+        const status = state.driverStatus[num];
+        if (status === 'RET' || status === 'STOP') {
+            removeCarMarker(num);
+            return;
+        }
         const info = state.driverInfo[num] || {};
         const color = info.color || DEFAULT_CAR_COLOR;
         const tla = info.tla || num;
@@ -246,12 +262,25 @@
     messageBus.on('trackStatus', handleTrackStatus);
     messageBus.on('yellowFlag', handleYellowFlag);
 
+    // Driver status — remove a car's marker the moment it retires / stops
+    // (card 55). The position feed may keep emitting after RET/STOP, so
+    // updateCarMarker also guards on this to avoid re-creating it.
+    messageBus.on('driverStatus:', (topic, data) => {
+        const num = topic.split(':')[1];
+        if (!num) return;
+        state.driverStatus[num] = data;
+        if (data === 'RET' || data === 'STOP') removeCarMarker(num);
+    });
+
     messageBus.on('state:reset', () => {
         // Clear car markers on seek
         if (state.carMarkersGroup) {
             state.carMarkersGroup.innerHTML = '';
             state.carMarkers = {};
         }
+        // Reset status too — restore re-applies it up to the seek point, so a
+        // backward seek before a RET/STOP correctly re-shows that car (card 55).
+        state.driverStatus = {};
         if (state.trackSvg) {
             state.trackSvg.querySelectorAll('[data-sector]').forEach(p => {
                 p.classList.remove('sector-yellow', 'sector-double-yellow');
