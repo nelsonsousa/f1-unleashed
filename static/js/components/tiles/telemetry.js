@@ -42,6 +42,7 @@
         liveSamples: {},      // num -> [[distPct, spd, rpm, gear, thr, brk], ...]
         liveLap: {},          // num -> current lap of the live trace (from liveTelemetry)
         driverStatus: {},     // num -> "PIT"|"OUT"|"TRACK"|...
+        standingsOrder: [],   // [num] in standings position order (card 72: Last/Best ordering)
         lapTimes: {},         // num -> {lapNum -> "1:23.456"}
         lapCls: {},           // num -> {lapNum -> type}
         bestLapNum: {},       // num -> driver's fastest lap number (driverLaps.bestLap) → purple pill
@@ -430,10 +431,11 @@
 
     function handleDriverStatus(num, status) {
         state.driverStatus[num] = status;
-        // Clear the live trace when the driver pits or starts an out-lap so
-        // the next flying lap starts clean. (The live samples themselves now
-        // arrive via liveTelemetry; the server gates pit-lane samples.)
-        if (status === 'PIT' || status === 'OUT') {
+        // Drop the live trace when the car goes off track (RET/STOP) so a
+        // dead car's trace doesn't linger (card 54). PIT/OUT no longer clear
+        // here — a race shows those laps, and the per-lap reset in
+        // handleLiveTelemetry keeps flying laps clean.
+        if (status === 'RET' || status === 'STOP') {
             state.liveSamples[num] = [];
         }
         scheduleRender();
@@ -461,6 +463,20 @@
         } else {
             renderSingle(ctx, w, h, channel);
         }
+    }
+
+    // Whether a driver's LIVE trace is suppressed — by driverStatus ONLY,
+    // never lap classification (card 54):
+    //   • RET / STOP (off track): suppressed in every session.
+    //   • P/Q additionally suppress OUT (out-lap) and PIT (in pit lane).
+    //     A race shows OUT/PIT so out- and in-laps can be followed.
+    function liveTraceSuppressed(num) {
+        const s = state.driverStatus[num];
+        if (s === 'RET' || s === 'STOP') return true;
+        const sType = (window.SESSION_CONFIG && window.SESSION_CONFIG.sessionType) || '';
+        const isRaceLike = (sType === 'race' || sType === 'sprint');
+        if (!isRaceLike && (s === 'OUT' || s === 'PIT')) return true;
+        return false;
     }
 
     function renderSingle(ctx, w, h, channel) {
@@ -494,66 +510,19 @@
             for (const [num, samples] of Object.entries(state.liveSamples)) {
                 if (state.hiddenDrivers.has(num)) continue;
                 if (!samples.length) continue;
-                // Item 28: live trace — skip OUT laps; fade COOL/ABORT
-                // smoothly to 0 over COOL_FADE_MS then stop rendering.
-                // Gate on BOTH driverStatus and lap classification:
-                // status=OUT lands the moment the driver leaves the pit,
-                // a few seconds before the OUT lap-classification message
-                // arrives — without this gate, those few seconds of
-                // out-lap samples leak through.
-                if (state.driverStatus[num] === 'OUT') continue;
-                const cls = currentLapClass(num);
-                if (cls === 'OUT') continue;
-                const alpha = coolFadeAlpha(num);
-                if (alpha <= 0) continue;
+                // Live-trace visibility is driverStatus-only now (card 54):
+                // RET/STOP everywhere, plus OUT/PIT in P/Q. No lap-class gate,
+                // no cool-down fade.
+                if (liveTraceSuppressed(num)) continue;
                 const driver = state.drivers[num];
                 const color = driver ? driver.color : DEFAULT_CAR_COLOR;
                 const tla = driver ? driver.tla : num;
                 const dashed = teamOrder[num] === 1;
-                if (alpha < 1) ctx.globalAlpha = alpha;
                 drawTrace(ctx, samples, color, channel, margin, plotW, plotH, yMin, yMax, dashed);
                 drawMarker(ctx, samples[samples.length - 1], color, tla,
                     channel, margin, plotW, plotH, yMin, yMax);
-                if (alpha < 1) ctx.globalAlpha = 1.0;
             }
         }
-    }
-
-    // Returns the classification of the current (latest) lap for a driver,
-    // or null if unknown. Used by item 28 to gate live-trace rendering.
-    function currentLapClass(num) {
-        const map = state.lapCls[num];
-        if (!map) return null;
-        let maxLap = 0;
-        for (const k of Object.keys(map)) {
-            const n = parseInt(k);
-            if (n > maxLap) maxLap = n;
-        }
-        return maxLap > 0 ? map[maxLap] : null;
-    }
-
-    // Cool-lap fade: once a driver's lap classification flips to SLOW
-    // (cool-down) the trace alpha decays 1.0 → 0.0 over COOL_FADE_MS and
-    // then the trace stops rendering entirely. Resets when the driver
-    // returns to a non-slow classification.
-    const COOL_FADE_MS = 4000;
-    state.coolFadeStart = {}; // num → performance.now() when fade began
-    function coolFadeAlpha(num) {
-        const cls = currentLapClass(num);
-        const fading = (cls === 'SLOW');
-        if (!fading) {
-            delete state.coolFadeStart[num];
-            return 1.0;
-        }
-        if (!state.coolFadeStart[num]) {
-            state.coolFadeStart[num] = performance.now();
-            return 1.0;
-        }
-        const elapsed = performance.now() - state.coolFadeStart[num];
-        const alpha = Math.max(0, 1 - elapsed / COOL_FADE_MS);
-        // Schedule another render so the fade animates smoothly.
-        if (alpha > 0) requestAnimationFrame(scheduleRender);
-        return alpha;
     }
 
     function drawGrid(ctx, margin, plotW, plotH, yMin, yMax, h) {
@@ -631,13 +600,8 @@
             const dashed = teamOrder[num] === 1;
 
             let samples = null;
-            let alpha = 1.0;
             if (state.mode === 'live') {
-                if (state.driverStatus[num] === 'OUT') continue;  // out-lap gate (driverStatus)
-                const cls = currentLapClass(num);
-                if (cls === 'OUT') continue;                       // out-lap gate (classification)
-                alpha = coolFadeAlpha(num);
-                if (alpha <= 0) continue;
+                if (liveTraceSuppressed(num)) continue;  // RET/STOP (+ OUT/PIT in P/Q)
                 samples = state.liveSamples[num];
             } else {
                 const lap = Object.values(currentLaps()).find(l => l.driver === num);
@@ -645,7 +609,7 @@
                 // Debug mode: render every selected lap regardless of class.
                 samples = lap.samples;
             }
-            if (samples && samples.length) rows.push({ num, color, tla, samples, dashed, alpha });
+            if (samples && samples.length) rows.push({ num, color, tla, samples, dashed });
         }
         if (!rows.length) return;
 
@@ -680,10 +644,8 @@
             ctx.fillText(row.tla, left - 6, top + plotBandH / 2);
             ctx.textBaseline = 'alphabetic';
 
-            if (row.alpha != null && row.alpha < 1) ctx.globalAlpha = row.alpha;
             drawLine(ctx, row.samples, '#00cc00', 4, margin, plotW, plotBandH, 0, 100, row.dashed);
             drawLine(ctx, row.samples, '#cc0000', 5, margin, plotW, plotBandH, 0, 100, row.dashed);
-            if (row.alpha != null && row.alpha < 1) ctx.globalAlpha = 1.0;
         }
 
         // Corner markers span the full stacked chart height.
@@ -699,7 +661,7 @@
         const x = pctToX(sample[0], margin.left, plotW);
         const y = margin.top + (1 - (sample[valIdx] - yMin) / range) * plotH;
 
-        const r = 9;
+        const r = 11.25;   // +25% (card 70)
         ctx.beginPath();
         ctx.arc(x, y, r, 0, Math.PI * 2);
         ctx.fillStyle = color;
@@ -709,7 +671,7 @@
         ctx.stroke();
 
         ctx.fillStyle = getContrastColor(color);
-        ctx.font = 'bold 9px Monaco, Consolas, monospace';
+        ctx.font = 'bold 11px Monaco, Consolas, monospace';   // +2px (card 70)
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(tla, x, y);
@@ -818,7 +780,30 @@
     function renderDriverSelectorNow() {
         const el = document.getElementById('telemetryDriverSelector');
         if (!el) return;
-        const sorted = getSortedDrivers();
+        // Default order: team / car-number. In Last/Best, order the rows by
+        // standings instead (card 72), keeping each driver's teamOrder (drives
+        // the dashed second-car styling). Drivers absent from standings (not
+        // yet classified) fall back to default order at the end.
+        const sortedDefault = getSortedDrivers();
+        const teamOrderMap = {};
+        for (const { num, teamOrder } of sortedDefault) teamOrderMap[num] = teamOrder;
+
+        let sorted;
+        if ((state.mode === 'last' || state.mode === 'best') && state.standingsOrder.length) {
+            const seen = new Set();
+            sorted = [];
+            for (const num of state.standingsOrder) {
+                if (state.drivers[num] && !seen.has(num)) {
+                    seen.add(num);
+                    sorted.push({ num, teamOrder: teamOrderMap[num] || 0 });
+                }
+            }
+            for (const entry of sortedDefault) {
+                if (!seen.has(entry.num)) { seen.add(entry.num); sorted.push(entry); }
+            }
+        } else {
+            sorted = sortedDefault;
+        }
         if (!sorted.length) { el.innerHTML = ''; return; }
 
         // Find the highest lap across all drivers, using the union of
@@ -1167,6 +1152,14 @@
             };
         }
         renderDriverSelector();
+    });
+
+    // Standings ordering — pre-sorted [{num, position}]. Drives the Last/Best
+    // legend order (card 72); other views keep the team/car-number order.
+    messageBus.on('standings', (data) => {
+        if (!data || !Array.isArray(data.drivers)) return;
+        state.standingsOrder = data.drivers.map(e => String(e.num));
+        if (state.mode === 'last' || state.mode === 'best') renderDriverSelector();
     });
 
     // Live trace: the server now emits a fully-decoded per-driver sample
