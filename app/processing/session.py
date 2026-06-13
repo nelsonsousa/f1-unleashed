@@ -86,6 +86,11 @@ class SessionEngine:
         # Playback state
         self._last_offset_ms = 0
         self._preprocess_done = asyncio.Event()
+        # Set once the offset-0 baseline (driverList, trackGeometry,
+        # trackCircuit, sessionInfo) is committed to the DB. add_client waits
+        # on this before the connect restore so the build can't be beaten to
+        # the punch, leaving tiles blank until a manual seek (card 77).
+        self._baseline_ready = asyncio.Event()
 
         # WebSocket clients
         self._clients: dict[int, WebSocket] = {}
@@ -173,6 +178,8 @@ class SessionEngine:
 
         if capturing:
             self._preprocess_done.set()
+            # Live capture has already populated the DB — baseline is present.
+            self._baseline_ready.set()
             logger.info(f"Session DB built live by capture: {self._session_name}")
         else:
             logger.info(f"Building transient DB for {self._session_name}")
@@ -261,6 +268,7 @@ class SessionEngine:
             await self._preprocessor.run(
                 tail_follow=False,
                 on_progress=self._on_preprocess_progress,
+                on_baseline_ready=self._baseline_ready.set,
             )
         except asyncio.CancelledError:
             raise
@@ -274,6 +282,10 @@ class SessionEngine:
             if self._scanned_duration:
                 self._duration = self._scanned_duration
             self._preprocess_done.set()
+            # Safety net: if the build ended without ever signalling baseline
+            # (e.g. gate timeout, no matching SessionInfo), unblock any waiting
+            # connect so it isn't held until its timeout.
+            self._baseline_ready.set()
 
     def _on_preprocess_progress(self, pct: float) -> None:
         """Callback from pre-processor."""
@@ -381,6 +393,18 @@ class SessionEngine:
                 self._duration = live_offset
                 self._last_offset_ms = edge_ms
             self._initial_live_seek_done = True
+
+        # Wait for the offset-0 baseline before the connect restore. A
+        # still-building replay writes sequentially, so the baseline lands
+        # first; serving get_state_at before it commits leaves tiles blank
+        # until a manual seek (card 77). Live / already-built sessions have it
+        # set already → returns immediately. Timeout is a safety valve.
+        try:
+            await asyncio.wait_for(self._baseline_ready.wait(), timeout=30.0)
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"{self._session_name}: baseline not ready after 30s; "
+                f"restoring anyway")
 
         # Send current display state at clock position (all latest messages per topic)
         if self._clock and self._db:

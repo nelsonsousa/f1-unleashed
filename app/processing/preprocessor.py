@@ -229,6 +229,7 @@ class SessionPreProcessor:
         tail_follow: bool = False,
         on_progress: Optional[Callable[[float], None]] = None,
         on_caught_up: Optional[Callable[[], None]] = None,
+        on_baseline_ready: Optional[Callable[[], None]] = None,
         force: bool = False,
     ) -> None:
         self._running = True
@@ -247,6 +248,8 @@ class SessionPreProcessor:
             logger.info(f"Session already processed: {self._session_path.name}")
             if on_progress:
                 on_progress(100.0)
+            if on_baseline_ready:
+                on_baseline_ready()
             return
 
         # Fresh build — clear any prior (partial or stale) rows so a
@@ -367,6 +370,15 @@ class SessionPreProcessor:
                                     self._bus.emit(filtered.topic, filtered.data, filtered.timestamp)
                                     self._message_count += 1
                             self._gate_buffer = []
+                            # Baseline (SessionInfo + DriverList + same-ts
+                            # topics) is now emitted. Flush so a reader
+                            # connection sees the offset-0 rows, then signal
+                            # baseline-ready — the engine gates its connect
+                            # restore on this so tiles paint without a manual
+                            # seek (card 77).
+                            self._flush_buffer()
+                            if on_baseline_ready:
+                                on_baseline_ready()
                             continue
 
                     # Buffer the message
