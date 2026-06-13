@@ -102,14 +102,6 @@
      * Within each team, lowest number first. Result: [{num, teamOrder}] where
      * teamOrder is 0 for the first team-mate and 1 for the second.
      */
-    // Parse an F1 lap-time string ("M:SS.mmm" or "SS.mmm") to seconds, or null.
-    function parseLapTime(s) {
-        if (!s) return null;
-        const m = String(s).match(/^(?:(\d+):)?(\d+(?:\.\d+)?)$/);
-        if (!m) return null;
-        return (m[1] ? parseInt(m[1]) * 60 : 0) + parseFloat(m[2]);
-    }
-
     function getSortedDrivers() {
         const teams = {};
         for (const [num, d] of Object.entries(state.drivers)) {
@@ -400,10 +392,6 @@
 
         renderChart();
         updateDriverBar();
-        // Re-sort the Last/Best legend now that this driver's lap (and its
-        // lapTime) was replaced — a more recent last lap or a faster best lap
-        // changes the order (card 72).
-        renderDriverSelector();
     }
 
     // =========================================================================
@@ -791,26 +779,7 @@
     function renderDriverSelectorNow() {
         const el = document.getElementById('telemetryDriverSelector');
         if (!el) return;
-        // Default order: team / car-number. In Last/Best, order rows by the
-        // driver's shown lap time — fastest on top (card 72). Drivers without a
-        // lap in the current view keep the default order, after the timed ones
-        // (Array.sort is stable).
-        const sortedDefault = getSortedDrivers();
-        let sorted = sortedDefault;
-        if (state.mode === 'last' || state.mode === 'best') {
-            const timeByNum = {};
-            for (const lapObj of Object.values(currentLaps())) {
-                const t = parseLapTime(lapObj.lapTime);
-                if (t != null) timeByNum[lapObj.driver] = t;
-            }
-            sorted = sortedDefault.slice().sort((a, b) => {
-                const ta = timeByNum[a.num], tb = timeByNum[b.num];
-                if (ta == null && tb == null) return 0;
-                if (ta == null) return 1;
-                if (tb == null) return -1;
-                return ta - tb;
-            });
-        }
+        const sorted = getSortedDrivers();
         if (!sorted.length) { el.innerHTML = ''; return; }
 
         // Find the highest lap across all drivers, using the union of
@@ -1084,7 +1053,7 @@
         const legend = document.getElementById('telemetryLegend');
         if (!legend) return;
 
-        const entries = Object.entries(currentLaps());
+        let entries = Object.entries(currentLaps());
         // Selection-only legend: shows the laps currently overlaid on
         // the chart. Hidden whenever the selection is empty OR the
         // chart isn't in selection-rendering mode (last/best/selection).
@@ -1092,6 +1061,21 @@
             legend.innerHTML = '';
             legend.classList.remove('has-entries');
             return;
+        }
+
+        // Last/Best: order the legend by lap time, fastest on top (card 72).
+        // Re-runs whenever updateDriverBar does (i.e. each time a driver's last/
+        // best lap is replaced). Entries with no usable time (IN/OUT/NO DATA)
+        // sort to the bottom; Selection keeps the user's insertion order.
+        if (state.mode === 'last' || state.mode === 'best') {
+            entries = entries.slice().sort(([, a], [, b]) => {
+                const ta = lapTimeToMs((state.lapTimes[a.driver] || {})[a.lap]);
+                const tb = lapTimeToMs((state.lapTimes[b.driver] || {})[b.lap]);
+                if (ta == null && tb == null) return 0;
+                if (ta == null) return 1;
+                if (tb == null) return -1;
+                return ta - tb;
+            });
         }
 
         // Team-order map: second car of each team gets the .second
