@@ -31,14 +31,12 @@ from app.processing.processors.lap_prediction_processor import LapPredictionProc
 from app.processing.processors.clock_processor import ClockProcessor
 from app.processing.processors.driver_list_processor import DriverListProcessor
 from app.processing.processors.driver_status_processor import DriverStatusProcessor
-from app.processing.processors.playback_event_processor import PlaybackEventProcessor
 from app.processing.processors.position_processor import PositionProcessor
 from app.processing.processors.race_control_processor import RaceControlProcessor
 from app.processing.processors.fia_stewards_processor import FiaStewardsProcessor
 from app.processing.processors.session_info_processor import SessionInfoProcessor
 from app.processing.processors.standings_processor import StandingsProcessor
 from app.processing.processors.telemetry_processor import TelemetryProcessor
-from app.processing.processors.timing_processor import TimingProcessor
 from app.processing.processors.lap_timing_processor import LapTimingProcessor
 from app.processing.processors.lap_delta_processor import LapDeltaProcessor
 from app.processing.processors.driver_gap_processor import DriverGapProcessor
@@ -51,7 +49,14 @@ logger = logging.getLogger(__name__)
 
 BUFFER_FLUSH_MESSAGES = 100
 BUFFER_FLUSH_MS = 1000
-YIELD_EVERY = 2000
+# Yield to the event loop often enough that a client streaming WHILE the
+# transient DB is still building (stream-immediately replay) gets smooth
+# playback — the build coroutine would otherwise hog the loop for ~3s per
+# 2000-message batch, leaving playback updating in chunky jumps. ~50 keeps
+# server-side updates around 10-15/s (the client's 2s buffer interpolates the
+# rest) at negligible build-time cost; an offline build with no client just
+# does a few extra no-op yields.
+YIELD_EVERY = 50
 GATE_TIMEOUT_S = 60  # Discard buffered messages if no matching SessionInfo within 60s
 
 # Raw F1 topics — not captured to DB (these are input, not output)
@@ -200,7 +205,6 @@ class SessionPreProcessor:
         self._output_buffer: list[tuple[int, str, str]] = []  # (offset, topic, json)
         self._last_emitted: dict[str, str] = {}  # topic -> last JSON string
         self._start_time: Optional[datetime] = None
-        self._playback_event_proc: Optional[PlaybackEventProcessor] = None
         self._cutoff: Optional[datetime] = None  # 1h before reference time
         self._running = False
         self._message_count = 0
@@ -288,8 +292,6 @@ class SessionPreProcessor:
             logger.warning(f"Could not parse SessionInfo.StartDate for {self._session_path.name}")
 
         self._init_processors()
-        if self._scheduled_start_utc and self._playback_event_proc:
-            self._playback_event_proc.set_effective_start_utc(self._scheduled_start_utc)
         self._bus.set_persist_sink(self._capture_output)
 
         total_lines = 0
@@ -336,9 +338,6 @@ class SessionPreProcessor:
                             self._start_time = msg.timestamp
                             self._cutoff = msg.timestamp - timedelta(hours=1)
                             logger.info(f"Session gated: key={msg_key} at {msg.timestamp}")
-
-                            # Emit sessionStart playback event
-                            self._playback_event_proc.emit_session_start(msg.timestamp)
 
                             # Emit SessionInfo first
                             self._bus.emit(msg.topic, msg.data, msg.timestamp)
@@ -403,37 +402,6 @@ class SessionPreProcessor:
 
                 if self._message_count % YIELD_EVERY == 0:
                     await asyncio.sleep(0)
-
-            # Emit sessionEnd playback event
-            if self._playback_event_proc and self._start_time:
-                last_ts = filtered.timestamp if filtered else self._start_time
-                self._playback_event_proc.emit_session_end(last_ts)
-
-            # Pre-start marker (5 min before scheduled session start).
-            # Done at finalize so the offset_ms math has self._start_time
-            # set (captured by the first message earlier).
-            if self._playback_event_proc and self._start_time:
-                self._playback_event_proc.maybe_emit_pre_start(self._start_time)
-
-            # Audio first-audible marker — scan commentary*.aac for the
-            # last `silence_end` of the leading silence and emit an
-            # event there so the user can jump straight to the first
-            # audible moment. Cheap (~50 ms per file with silencedetect).
-            self._emit_audio_first_sound_marker()
-
-            # End-of-session flush for the timing processor — fills
-            # lap_times[K] = None for each lap K from 1 to NL_max that
-            # didn't receive an LL value (= covers the trailing
-            # in-progress lap whose time F1 never published because NL
-            # never bumped past it). Must run BEFORE telem.finalize so
-            # the empty-placeholder fill in telem sees the full lap
-            # count (including the in-progress lap).
-            if self._timing_proc is not None and self._start_time is not None:
-                last_dt = filtered.timestamp if filtered else self._start_time
-                try:
-                    self._timing_proc.finalize_session(last_dt)
-                except Exception:
-                    logger.exception("Timing processor finalize_session failed")
 
             # lap_classification needs no end-of-session flush — the rewritten
             # processor reclassifies live (and Rule 1 retroactively), so the
@@ -517,67 +485,6 @@ class SessionPreProcessor:
             logger.exception(f"Pre-processing error: {self._session_path.name}")
             self._db.set_meta("status", "error")
 
-    def _emit_audio_first_sound_marker(self) -> None:
-        """Scan the earliest commentary*.aac segment for the end of the
-        leading silence (silencedetect noise=-50dB d=2) and emit an
-        `audioStart` playbackEvent at the corresponding clock_time.
-
-        Maps audio offset → clock_time via the segment's audio_info
-        start_utc (written by live_capture at ffmpeg launch). Skipped
-        when there's no audio file, no audio_info, or no silence at all.
-        """
-        if not (self._playback_event_proc and self._start_time):
-            return
-        try:
-            aacs = sorted(self._session_path.glob("commentary*.aac"))
-            if not aacs:
-                return
-            # Earliest segment = lowest sortable name. commentary.001.aac
-            # sorts BEFORE commentary.aac alphabetically — pick the first.
-            first = aacs[0]
-            # Find the matching audio_info: commentary.001.aac → audio_info.001.json,
-            # commentary.aac → audio_info.json.
-            stem = first.stem  # "commentary" or "commentary.001"
-            if stem == "commentary":
-                info_path = self._session_path / "audio_info.json"
-            else:
-                # stem like "commentary.001"
-                suffix = stem.split(".", 1)[1]
-                info_path = self._session_path / f"audio_info.{suffix}.json"
-            if not info_path.exists():
-                return
-            info = _json.loads(info_path.read_text())
-            start_utc_str = info.get("start_utc")
-            if not start_utc_str:
-                return
-            audio_start = datetime.fromisoformat(
-                start_utc_str.replace("Z", "+00:00")
-            )
-            import subprocess
-            res = subprocess.run(
-                ["ffmpeg", "-nostdin", "-v", "info",
-                 "-i", str(first),
-                 "-af", "silencedetect=noise=-50dB:d=2",
-                 "-f", "null", "-"],
-                capture_output=True, text=True, timeout=120,
-            )
-            first_silence_end = None
-            for line in (res.stderr or "").splitlines():
-                if "silence_end:" in line:
-                    try:
-                        first_silence_end = float(
-                            line.split("silence_end:")[1].split()[0]
-                        )
-                        break
-                    except (ValueError, IndexError):
-                        pass
-            if first_silence_end is None or first_silence_end <= 0:
-                return
-            audible_utc = audio_start + timedelta(seconds=first_silence_end)
-            self._playback_event_proc.emit_audio_start(audible_utc)
-        except Exception:
-            logger.exception("Audio first-sound marker failed")
-
     def _filter_message(self, msg: RawMessage) -> Optional[RawMessage]:
         """Apply timestamp filtering to a message. Returns None to drop it."""
         if self._cutoff is None:
@@ -616,7 +523,6 @@ class SessionPreProcessor:
         self._db.close()
 
     def _init_processors(self) -> None:
-        self._playback_event_proc = PlaybackEventProcessor(self._bus, self._session_type)
         telem_proc = TelemetryProcessor(self._bus, self._session_type)
         self._telem_proc = telem_proc  # stash for end-of-session finalize
         # Pace processor — COMMENTED OUT (placeholder, to be reintroduced /
@@ -636,7 +542,6 @@ class SessionPreProcessor:
         # Otherwise _on_driver_status at pit exit fires with stale
         # _timing_lap and emits the wrong lap number (off-by-one in
         # P/Q, lap 2 missing in classification).
-        self._timing_proc = TimingProcessor(self._bus, self._session_type)
         self._lap_class_proc = LapClassificationProcessor(self._bus, self._session_type)
         self._processors = [
             SessionInfoProcessor(self._bus, self._session_type),
@@ -645,7 +550,6 @@ class SessionPreProcessor:
             DriverListProcessor(self._bus, self._session_type),
             self._lap_class_proc,
             DriverStatusProcessor(self._bus, self._session_type),
-            self._timing_proc,
             LapTimingProcessor(self._bus, self._session_type),
             DriverGapProcessor(self._bus, self._session_type),
             SectorTimingProcessor(self._bus, self._session_type),
@@ -663,7 +567,6 @@ class SessionPreProcessor:
             TrackStatusProcessor(self._bus, self._session_type),
             WeatherProcessor(self._bus, self._session_type),
             # self._pace_proc,  # COMMENTED OUT — pace placeholder (see _init above)
-            self._playback_event_proc,  # Must be last — listens to other processors' output
         ]
         for p in self._processors:
             p.skip_animations = True
@@ -733,14 +636,12 @@ class SessionPreProcessor:
         if self._start_time is None:
             return
 
-        # Scrubber-event filter — suppress any scrubber-bound event
-        # (`event` from TrackStatusProcessor; also `playbackEvent`
-        # markers other than sessionStart/sessionEnd/preStart5min/
-        # audioStart) that happens BEFORE scheduled session start. The
-        # threshold may have been shifted earlier by a brought-forward
-        # RCM (handled by the playback event processor).
-        if topic == "event" and self._playback_event_proc \
-                and self._playback_event_proc.filter_event(clock_time):
+        # Scrubber-event filter — suppress any `event` scrubber marker (from
+        # TrackStatusProcessor: implicit-GREEN at pit-exit-open, etc.) that
+        # fires BEFORE the scheduled session start, so pre-session noise stays
+        # off the scrubber. Threshold = SessionInfo's scheduled start (UTC).
+        if topic == "event" and self._scheduled_start_utc is not None \
+                and clock_time < self._scheduled_start_utc:
             return
 
         offset_ms = int((clock_time - self._start_time).total_seconds() * 1000)

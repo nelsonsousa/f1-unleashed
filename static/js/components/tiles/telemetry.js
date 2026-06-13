@@ -25,14 +25,27 @@
         drivers: {},          // num -> {tla, color}
         activeChannel: 'speed',
         mode: 'live',         // 'live'|'last'|'best'|'selection'
-        selectedLaps: {},     // "num:lap" -> {driver, lap, samples, color, tla}
+        // Independent lap sets per view (I14). Live uses liveSamples; Last/Best
+        // keep ≤1 lap per driver (replaced on a newer/better lap); Selection is
+        // the user's manual picks — only toggleLap mutates it, it survives view
+        // switches and seeks. All keyed "num:lap".
+        lastLaps: {},
+        bestLaps: {},
+        selectionLaps: {},
+        // Pending telemetry requests so a telemetryLap response lands in the
+        // bucket that asked for it; unsolicited (replay-streamed) laps are
+        // ignored → nothing auto-adds to a view.
+        pendingSelection: new Set(),   // "num:lap"
+        pendingLast: new Set(),        // num
+        pendingBest: new Set(),        // num
+        lastSeenLastLap: {},           // num -> last lastLap.lap (Last auto-refresh)
         liveSamples: {},      // num -> [[distPct, spd, rpm, gear, thr, brk], ...]
         liveLap: {},          // num -> current lap of the live trace (from liveTelemetry)
         driverStatus: {},     // num -> "PIT"|"OUT"|"TRACK"|...
         lapTimes: {},         // num -> {lapNum -> "1:23.456"}
         lapCls: {},           // num -> {lapNum -> type}
+        bestLapNum: {},       // num -> driver's fastest lap number (driverLaps.bestLap) → purple pill
         lapSegments: {},      // num -> {lapNum -> qualSegment} (unused: no source topic now)
-        lapAffected: {},      // num -> {lapNum -> 'SC'|'VSC'} (unused: no source topic now)
         lapNoData: {},        // num -> Set(lapNum) — laps that came in empty
         telemetryLaps: {},    // num -> Set(laps that have telemetry on disk)
         hiddenDrivers: new Set(),
@@ -67,6 +80,14 @@
         return state.xMin + ((xPx - leftMargin) / plotW) * span;
     }
 
+    // The lap set overlaid on the chart for the active view (I14).
+    function currentLaps() {
+        if (state.mode === 'last') return state.lastLaps;
+        if (state.mode === 'best') return state.bestLaps;
+        if (state.mode === 'selection') return state.selectionLaps;
+        return {};   // live → no overlaid completed laps
+    }
+
     function scheduleRender() {
         if (state.renderPending) return;
         state.renderPending = true;
@@ -85,17 +106,19 @@
         const teams = {};
         for (const [num, d] of Object.entries(state.drivers)) {
             const key = d.teamName || d.color || num;
-            if (!teams[key]) teams[key] = [];
-            teams[key].push(num);
+            (teams[key] || (teams[key] = [])).push(num);
         }
-        const teamList = Object.values(teams).map(nums => {
+        const groups = Object.entries(teams).map(([key, nums]) => {
             nums.sort((a, b) => parseInt(a) - parseInt(b));
-            return nums;
+            return { key, nums };
         });
-        teamList.sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
+        // Teams ordered by lowest car number. (Constructors'-championship
+        // ordering was dropped — the FIA feed doesn't always send team names,
+        // so there's no reliable team→rank mapping; car number is enough.)
+        groups.sort((a, b) => parseInt(a.nums[0]) - parseInt(b.nums[0]));
         const result = [];
-        for (const nums of teamList) {
-            nums.forEach((num, i) => result.push({ num, teamOrder: i }));
+        for (const g of groups) {
+            g.nums.forEach((num, i) => result.push({ num, teamOrder: i }));
         }
         return result;
     }
@@ -233,20 +256,20 @@
         document.querySelectorAll('.telemetry-mode').forEach(b => {
             b.classList.toggle('active', b.dataset.mode === mode);
         });
-        if (mode !== 'selection') {
-            state.selectedLaps = {};
-        }
-        if (mode === 'last' || mode === 'best') {
-            fetchLapsForVisibleDrivers(mode);
-        }
+        // Last/Best are recomputed snapshots — cleared and refetched on entry.
+        // Selection is the user's set and is never cleared by a view switch.
+        if (mode === 'last') { state.lastLaps = {}; fetchLapsForVisibleDrivers('last'); }
+        else if (mode === 'best') { state.bestLaps = {}; fetchLapsForVisibleDrivers('best'); }
         updateDriverBar();
         scheduleRender();
     }
 
     function fetchLapsForVisibleDrivers(mode) {
         const cmd = mode === 'last' ? 'getLastLapTelemetry' : 'getBestLapTelemetry';
+        const pend = mode === 'last' ? state.pendingLast : state.pendingBest;
         for (const num of Object.keys(state.drivers)) {
             if (state.hiddenDrivers.has(num)) continue;
+            pend.add(num);
             messageBus.send({ cmd, driver: num });
         }
     }
@@ -258,7 +281,7 @@
             if (state.hiddenDrivers.has(num)) continue;
             const hasLive = state.mode === 'live' && state.liveSamples[num] && state.liveSamples[num].length;
             const hasSelected = state.mode !== 'live' &&
-                Object.values(state.selectedLaps).some(l => l.driver === num);
+                Object.values(currentLaps()).some(l => l.driver === num);
             if (hasLive || hasSelected) n++;
         }
         return n;
@@ -295,13 +318,17 @@
     // =========================================================================
 
     function toggleLap(driverNum, lapIndex) {
+        // A manual pick goes to the Selection set (independent of Last/Best).
+        // Switch to the Selection view so the click is visible; the set then
+        // persists across later view switches and seeks.
+        if (state.mode !== 'selection') setMode('selection');
         const key = `${driverNum}:${lapIndex}`;
-        if (state.selectedLaps[key]) {
-            delete state.selectedLaps[key];
+        if (state.selectionLaps[key]) {
+            delete state.selectionLaps[key];
             renderChart();
             updateDriverBar();
         } else {
-            // Request from server
+            state.pendingSelection.add(key);
             messageBus.send({ cmd: 'getLapTelemetry', driver: driverNum, lap: lapIndex });
         }
     }
@@ -328,8 +355,7 @@
         // F1 LapTime (from TimingData) is the source of truth for the
         // legend, not the computed telemetry duration.
         const lapTime = (state.lapTimes[driverNum] || {})[lap] || '';
-
-        state.selectedLaps[key] = {
+        const obj = {
             driver: driverNum,
             lap: lap,
             samples: data,
@@ -337,6 +363,32 @@
             tla: driver ? driver.tla : driverNum,
             lapTime: lapTime,
         };
+
+        // Route to whichever view requested it. A lap with no pending request
+        // (e.g. replay-streamed on lap close) is ignored → nothing auto-adds.
+        let used = false;
+        if (state.pendingSelection.has(key)) {
+            state.pendingSelection.delete(key);
+            state.selectionLaps[key] = obj;
+            used = true;
+        }
+        if (state.pendingLast.has(driverNum)) {
+            state.pendingLast.delete(driverNum);
+            for (const k of Object.keys(state.lastLaps)) {
+                if (state.lastLaps[k].driver === driverNum) delete state.lastLaps[k];
+            }
+            state.lastLaps[key] = obj;       // replace this driver's Last lap
+            used = true;
+        }
+        if (state.pendingBest.has(driverNum)) {
+            state.pendingBest.delete(driverNum);
+            for (const k of Object.keys(state.bestLaps)) {
+                if (state.bestLaps[k].driver === driverNum) delete state.bestLaps[k];
+            }
+            state.bestLaps[key] = obj;       // replace this driver's Best lap
+            used = true;
+        }
+        if (!used) return;
 
         renderChart();
         updateDriverBar();
@@ -428,7 +480,7 @@
         for (const { num, teamOrder: to } of getSortedDrivers()) teamOrder[num] = to;
 
         if (state.mode !== 'live') {
-            for (const lap of Object.values(state.selectedLaps)) {
+            for (const lap of Object.values(currentLaps())) {
                 if (state.hiddenDrivers.has(lap.driver)) continue;
                 if (!lap.samples || !lap.samples.length) continue;
                 // Debug mode: render every selected lap regardless of class
@@ -588,7 +640,7 @@
                 if (alpha <= 0) continue;
                 samples = state.liveSamples[num];
             } else {
-                const lap = Object.values(state.selectedLaps).find(l => l.driver === num);
+                const lap = Object.values(currentLaps()).find(l => l.driver === num);
                 if (!lap) continue;
                 // Debug mode: render every selected lap regardless of class.
                 samples = lap.samples;
@@ -866,6 +918,7 @@
                 else state.hiddenDrivers.add(num);
                 if (wasHidden && (state.mode === 'last' || state.mode === 'best')) {
                     const cmd = state.mode === 'last' ? 'getLastLapTelemetry' : 'getBestLapTelemetry';
+                    (state.mode === 'last' ? state.pendingLast : state.pendingBest).add(num);
                     messageBus.send({ cmd, driver: num });
                 }
                 renderDriverSelector();
@@ -957,7 +1010,6 @@
         }
 
         // SC/VSC + no-data lookups for color precedence.
-        const affected = state.lapAffected[num] || {};
         const noData = state.lapNoData[num] || new Set();
         const sessionType = (window.SESSION_CONFIG && window.SESSION_CONFIG.sessionType) || '';
         const isRace = (sessionType === 'race');
@@ -1005,25 +1057,26 @@
             const isIn = (status === 'PIT' || status === 'STOP');
             const isOut = (status === 'OUT');
             const isInOrOut = isIn || isOut;
-            const scvsc = affected[lap]; // SC/VSC source dropped → always undefined
             // Color precedence (per SME 2026-06-01):
             //   1) IN-pit/STOP/OUT → grey
             //   2) No-data lap → distinct dashed style
-            //   3) SC/VSC (Race) → yellow  (currently no source topic)
-            //   4) PUSH (P/Q) or green-flag TIMED (Race) → green
-            //   5) SLOW (cool-down) → white
-            //   6) anything else → unknown (white)
+            //   3) PUSH (P/Q) or green-flag TIMED (Race) → green
+            //   4) SLOW (cool-down) → white
+            //   5) anything else → unknown (white)
+            // (SC/VSC colouring removed — there was never a source topic.)
             let colorCls;
             if (isInOrOut) colorCls = 'lap-skip';
             else if (noData.has(lap)) colorCls = 'lap-no-data';
-            else if (isRace && scvsc) colorCls = (scvsc === 'VSC' ? 'lap-vsc' : 'lap-sc');
             else if (status === 'PUSH') colorCls = 'lap-push';
-            else if (isRace && !scvsc && status) colorCls = 'lap-push';   // green-flag race lap
+            else if (isRace && status) colorCls = 'lap-push';   // green-flag race lap
             else if (status === 'SLOW') colorCls = 'lap-cool';
             else colorCls = 'lap-unknown';
             let bestTypeCls = '';
             if (bestPushBySeg[seg] && lap === bestPushBySeg[seg].lap) bestTypeCls = ' lap-best-push';
             else if (bestLongBySeg[seg] && lap === bestLongBySeg[seg].lap) bestTypeCls = ' lap-best-long';
+            // Driver's own fastest lap → purple (recomputed each render from
+            // state.bestLapNum, so it moves off the old lap automatically).
+            if (state.bestLapNum[num] === lap) bestTypeCls += ' lap-purple';
             html += `<span class="telemetry-lap-pill ${colorCls}${bestTypeCls}"`
                   + ` data-driver="${num}" data-lap="${lap}" title="L${lap} ${times[lap] || ''}"`
                   + ` style="grid-column:${col}">${pillLabel}</span>`;
@@ -1039,7 +1092,7 @@
         const legend = document.getElementById('telemetryLegend');
         if (!legend) return;
 
-        const entries = Object.entries(state.selectedLaps);
+        const entries = Object.entries(currentLaps());
         // Selection-only legend: shows the laps currently overlaid on
         // the chart. Hidden whenever the selection is empty OR the
         // chart isn't in selection-rendering mode (last/best/selection).
@@ -1087,7 +1140,7 @@
                 e.stopPropagation();
                 const key = btn.dataset.key;
                 if (!key) return;
-                delete state.selectedLaps[key];
+                delete currentLaps()[key];
                 renderChart();
                 updateDriverBar();
             });
@@ -1129,17 +1182,37 @@
         if (num) handleDriverStatus(num, data);
     });
 
-    // Per-lap times now come from driverLaps.laps {n:{time,…}}; pull the
-    // time strings into the lap-time map the pill list expects. Replace
-    // (not merge) so a backward seek's smaller snapshot drops stale laps.
+    // driverLaps is thin — accumulate the pill-list lap-time map from lastLap
+    // as laps arrive. A backward seek wipes state.lapTimes on state:reset and
+    // replays the full driverLaps history up to the offset, so the map is
+    // rebuilt to exactly the laps that exist at the seek instant.
     messageBus.on('driverLaps:', (topic, data) => {
         const num = topic.split(':')[1];
-        if (!num || !data || typeof data.laps !== 'object') return;
-        const m = {};
-        for (const [lap, rec] of Object.entries(data.laps)) {
-            if (rec && rec.time) m[parseInt(lap)] = rec.time;
+        if (!num || !data) return;
+        if (data.lastLap && data.lastLap.lap != null && data.lastLap.time) {
+            (state.lapTimes[num] || (state.lapTimes[num] = {}))[data.lastLap.lap] =
+                data.lastLap.time;
         }
-        state.lapTimes[num] = m;
+        // Per-driver fastest lap → purple pill (server flags bestLap from
+        // PersonalFastest/OverallFastest, so it excludes out/in/cool laps).
+        const prevBest = state.bestLapNum[num];
+        if (data.bestLap && data.bestLap.lap != null) {
+            state.bestLapNum[num] = data.bestLap.lap;
+        }
+        // Last view: refresh this driver's lap when it completes a newer one.
+        if (state.mode === 'last' && data.lastLap && data.lastLap.lap != null
+                && !state.hiddenDrivers.has(num)
+                && state.lastSeenLastLap[num] !== data.lastLap.lap) {
+            state.lastSeenLastLap[num] = data.lastLap.lap;
+            state.pendingLast.add(num);
+            messageBus.send({ cmd: 'getLastLapTelemetry', driver: num });
+        }
+        // Best view: refresh this driver's lap when its best improves.
+        if (state.mode === 'best' && data.bestLap && data.bestLap.lap != null
+                && !state.hiddenDrivers.has(num) && data.bestLap.lap !== prevBest) {
+            state.pendingBest.add(num);
+            messageBus.send({ cmd: 'getBestLapTelemetry', driver: num });
+        }
         renderDriverSelector();
     });
 
@@ -1262,11 +1335,32 @@
         state.lapTimes = {};
         state.lapCls = {};
         state.lapSegments = {};
-        state.lapAffected = {};
         state.lapNoData = {};
         state.telemetryLaps = {};
-        state.selectedLaps = {};
+        // Last/Best are view snapshots — clear on reset. Selection is the
+        // user's set and SURVIVES seek/restore; "future" laps are pruned on
+        // state:seek-complete below (backward seek only).
+        state.lastLaps = {};
+        state.bestLaps = {};
+        state.pendingSelection.clear();
+        state.pendingLast.clear();
+        state.pendingBest.clear();
+        state.lastSeenLastLap = {};
         renderDriverSelector();
+    });
+
+    // After a seek, drop Selection laps that no longer exist at the new clock
+    // (backward seek → "future" laps). lapTimes/telemetryLaps have been rebuilt
+    // by the restore replay by the time this fires; a forward seek keeps all.
+    messageBus.on('state:seek-complete', () => {
+        for (const k of Object.keys(state.selectionLaps)) {
+            const { driver, lap } = state.selectionLaps[k];
+            const known = (state.lapTimes[driver] && lap in state.lapTimes[driver])
+                || (state.telemetryLaps[driver] && state.telemetryLaps[driver].has(lap));
+            if (!known) delete state.selectionLaps[k];
+        }
+        renderChart();
+        updateDriverBar();
     });
 
     document.addEventListener('DOMContentLoaded', init);

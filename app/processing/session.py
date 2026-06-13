@@ -57,6 +57,10 @@ class SessionEngine:
         self._start_time: Optional[datetime] = None
         self._end_time: Optional[datetime] = None
         self._duration: float = 0.0
+        # Full session length from the time-bounds scan. During a replay build
+        # _duration follows the growing build edge (like a live edge); this
+        # holds the final length to pin once the build completes.
+        self._scanned_duration: float = 0.0
 
         # Playback state
         self._last_offset_ms = 0
@@ -106,6 +110,15 @@ class SessionEngine:
         if audio_info_file.exists():
             with open(audio_info_file, "r", encoding="utf-8") as f:
                 self._audio_info = json.load(f)
+            # Per-segment map (start_utc + duration), chronological, so a
+            # multi-segment REPLAY can map the data clock to the audio stream
+            # piecewise and SKIP the real-time gap between capture segments
+            # (issue I15). Single-segment sessions get a 1-entry list (no-op).
+            # Run in a worker thread — it shells out to ffprobe per segment,
+            # which would otherwise block the event loop (and every other
+            # client/session on it) during engine startup.
+            self._audio_info["segments"] = await asyncio.to_thread(
+                self._build_audio_segments)
 
         # Detect session type from SessionInfo if not provided
         if not self._session_type:
@@ -148,11 +161,18 @@ class SessionEngine:
             self._preprocess_task = asyncio.create_task(
                 self._run_preprocess()
             )
+            # Stream-immediately: clients connect and play while the transient
+            # DB is still building — exactly like a live session, where the
+            # edge is the capture head. Here the edge is the build progress.
+            # _duration follows that growing edge until the build finishes,
+            # then _run_preprocess pins it to the full scanned length.
+            self._scanned_duration = self._duration
+            self._duration = 0.0
 
-        # For live engines, track duration (live edge) independently of
-        # playback so the scrubber stays current even while the clock
-        # is paused or rewound.
-        if self._live:
+        # Track the moving edge — the live capture head OR (for replay) the
+        # build progress — independently of playback so the scrubber stays
+        # current even while the clock is paused or rewound.
+        if self._live or not self._preprocess_done.is_set():
             self._duration_task = asyncio.create_task(self._track_duration())
 
     async def _scan_time_bounds(self) -> None:
@@ -207,12 +227,11 @@ class SessionEngine:
             self._clock = PlaybackClock(first_ts)
             if last_ts:
                 self._end_time = last_ts
+                # Full recording length — playback runs the WHOLE session
+                # (post-chequered interviews, podium, cool-down). The scrubber
+                # compresses the post-chequered+5min tail into its narrow right
+                # region; it does NOT truncate playback.
                 self._duration = (last_ts - first_ts).total_seconds()
-                # Trailing tail-follow recording often runs for several
-                # minutes after the final chequered before the capture
-                # safeguard kills it — nothing meaningful happens in
-                # that window, so cap the scrubber at chequered + 5 min.
-                self._apply_chequered_cap()
 
     async def _run_preprocess(self) -> None:
         """Build the session DB — one-shot fallback used only when no
@@ -228,6 +247,11 @@ class SessionEngine:
             logger.exception(f"Pre-processing failed for {self._session_name}")
         finally:
             self._preprocessor.close()
+            # Build finished: the scrubber now spans the whole session. Pin
+            # _duration to the full scanned length (re-applying the post-
+            # chequered cap now that the chequered row exists in the DB).
+            if self._scanned_duration:
+                self._duration = self._scanned_duration
             self._preprocess_done.set()
 
     def _on_preprocess_progress(self, pct: float) -> None:
@@ -292,17 +316,17 @@ class SessionEngine:
         client_id = self._client_counter
         self._clients[client_id] = ws
 
-        # Wait for pre-processing to complete (up to 60s)
-        try:
-            await asyncio.wait_for(self._preprocess_done.wait(), timeout=60.0)
-        except asyncio.TimeoutError:
-            logger.warning(f"Timed out waiting for pre-processing of {self._session_name}")
+        # Stream immediately: do NOT wait for the transient-DB build to finish.
+        # The client connects and plays from offset 0 while the preprocessor
+        # populates the DB; the playback loop and the edge tracker follow the
+        # build edge, exactly like a live capture. state:full / state:restore
+        # below carry whatever's built so far and playback fills in the rest.
 
         # Get all event/playbackEvent messages for scrubber
         events = []
         if self._db:
             rows = self._db._conn.execute(
-                "SELECT offset_ms, topic, data FROM messages WHERE topic IN ('event','playbackEvent') ORDER BY offset_ms"
+                "SELECT offset_ms, topic, data FROM messages WHERE topic = 'event' ORDER BY offset_ms"
             ).fetchall()
             events = [{"offset_ms": r[0], "topic": r[1], "data": json.loads(r[2])} for r in rows]
 
@@ -527,18 +551,13 @@ class SessionEngine:
             else:
                 await self._broadcast(msg)
 
-        # Telemetry availability (empty laps = data length <= 2, i.e. "[]").
+        # Telemetry availability map (which driver/lap pairs have a stored trace).
         try:
             by_driver: dict[str, list[int]] = {}
-            empty: dict[str, list[int]] = {}
             for driver, lap, dlen in self._db.list_lap_telemetry(offset_ms):
                 by_driver.setdefault(driver, []).append(lap)
-                if dlen <= 2:
-                    empty.setdefault(driver, []).append(lap)
             if by_driver:
                 await _send({"topic": "telemetryAvailable", "data": by_driver})
-            if empty:
-                await _send({"topic": "telemetryEmpty", "data": empty})
         except Exception:
             logger.exception("Failed to send telemetry availability map")
 
@@ -549,6 +568,45 @@ class SessionEngine:
                 await _send({"topic": "raceControlMessage", "data": m})
         except Exception:
             logger.exception("Failed to replay race control messages")
+
+        # driverLaps history — the topic is thin (no accumulating laps map), so
+        # the client builds its per-lap time map by accumulating lastLap as the
+        # messages arrive. Replay the full per-driver history up to the offset so
+        # that map survives connect/seek (latest-per-topic would lose it).
+        try:
+            for topic, data in self._db.get_topic_prefix_history("driverLaps:", offset_ms):
+                await _send({"topic": topic, "data": data})
+        except Exception:
+            logger.exception("Failed to replay driverLaps history")
+
+        # driverLapClassification history — accumulating per-lap state (the
+        # client builds lapCls[lap] = type as messages arrive, for pill
+        # colours + the IN/OUT legend). Replay the full per-driver history up
+        # to the offset so it survives connect/seek; latest-per-topic restore
+        # would keep only the last lap's type and every other pill goes white.
+        try:
+            for topic, data in self._db.get_topic_prefix_history(
+                    "driverLapClassification:", offset_ms):
+                await _send({"topic": topic, "data": data})
+        except Exception:
+            logger.exception("Failed to replay driverLapClassification history")
+
+        # Scrubber events — the full processed list (event topic: GREEN / RED /
+        # SC / VSC / CHEQUERED), sent on connect AND seek so the scrubber renders
+        # every marker built so far (incl. chequered) regardless of playback
+        # position. On a still-building replay the list grows as the build
+        # progresses and a later seek picks up the rest. handleSessionEvents
+        # replaces (not appends), so re-sending is idempotent. [I6]
+        try:
+            rows = self._db._conn.execute(
+                "SELECT offset_ms, topic, data FROM messages "
+                "WHERE topic = 'event' ORDER BY offset_ms"
+            ).fetchall()
+            events = [{"offset_ms": r[0], "topic": r[1], "data": json.loads(r[2])}
+                      for r in rows]
+            await _send({"topic": "state:events", "data": events})
+        except Exception:
+            logger.exception("Failed to send scrubber events")
 
     async def _send_lap_telemetry(self, driver: str, lap: int, ws=None) -> None:
         """Query lap telemetry from DB and send to requesting client."""
@@ -732,6 +790,10 @@ class SessionEngine:
         try:
             while self._running:
                 await asyncio.sleep(1.0)
+                # Replay: once the build is done the edge is fixed (duration is
+                # pinned in _run_preprocess) — stop following. Live keeps going.
+                if not self._live and self._preprocess_done.is_set():
+                    return
                 if not self._db:
                     continue
                 try:
@@ -744,34 +806,8 @@ class SessionEngine:
                     new_dur = row[0] / 1000.0
                     if new_dur > self._duration:
                         self._duration = new_dur
-                # Apply (and re-apply, as new chequereds may arrive
-                # through quali segments) the post-chequered cap so the
-                # scrubber doesn't extend into empty trailing tail data.
-                self._apply_chequered_cap()
         except asyncio.CancelledError:
             raise
-
-    def _apply_chequered_cap(self) -> None:
-        """Cap _duration at (last CHEQUERED offset + 5 min). Nothing
-        meaningful happens after the final chequered flag — practice /
-        race show one, quali shows three (Q1/Q2/Q3) and we use the
-        latest. If no chequered has been emitted yet, leave _duration
-        untouched."""
-        if not self._db or not getattr(self._db, "_conn", None):
-            return
-        try:
-            row = self._db._conn.execute(
-                "SELECT offset_ms FROM messages "
-                "WHERE topic='trackStatus' AND data LIKE '%CHECKERED FLAG%' "
-                "ORDER BY offset_ms DESC LIMIT 1"
-            ).fetchone()
-        except Exception:
-            return
-        if not row:
-            return
-        cap_s = (row[0] + 5 * 60 * 1000) / 1000.0
-        if self._duration > cap_s:
-            self._duration = cap_s
 
     # ── Playback Loop ──
 
@@ -812,8 +848,10 @@ class SessionEngine:
                 # Check for end of session
                 duration_ms = int(self._duration * 1000)
                 if target_offset_ms >= duration_ms:
-                    if self._live:
-                        # Live mode: check if DB has grown, update duration
+                    if self._live or not self._preprocess_done.is_set():
+                        # Live capture OR replay-still-building: the edge is
+                        # moving. Don't end — poll the DB; if it has grown,
+                        # extend duration, else wait for more data to land.
                         if self._db:
                             row = self._db._conn.execute(
                                 "SELECT MAX(offset_ms) FROM messages"
@@ -876,6 +914,38 @@ class SessionEngine:
 
     def _get_duration(self) -> float:
         return self._duration
+
+    def _build_audio_segments(self) -> list:
+        """[{start_utc, duration}] per audio segment, chronological — lets a
+        multi-segment replay map the data clock to audio piecewise and skip the
+        inter-segment capture gap (I15). start_utc per segment from its own
+        audio_info.NNN.json; duration via ffprobe."""
+        import subprocess
+        rotated = sorted(self._session_path.glob("commentary.[0-9][0-9][0-9].aac"))
+        current = self._session_path / "commentary.aac"
+        segs = list(rotated) + ([current] if current.exists() else [])
+        out: list[dict[str, Any]] = []
+        for seg in segs:
+            if seg.name == "commentary.aac":
+                info = self._session_path / "audio_info.json"
+            else:
+                info = self._session_path / f"audio_info.{seg.name.split('.')[1]}.json"
+            start_utc = None
+            if info.exists():
+                try:
+                    start_utc = json.loads(info.read_text()).get("start_utc")
+                except (json.JSONDecodeError, OSError):
+                    pass
+            try:
+                p = subprocess.run(
+                    ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=noprint_wrappers=1:nokey=1", str(seg)],
+                    capture_output=True, text=True, timeout=10)
+                dur = float(p.stdout.strip() or 0)
+            except (subprocess.SubprocessError, ValueError, FileNotFoundError):
+                dur = 0.0
+            out.append({"start_utc": start_utc, "duration": dur})
+        return out
 
     def _build_audio_info_for_client(self) -> Optional[dict[str, Any]]:
         """Return audio metadata to ship to a new client.

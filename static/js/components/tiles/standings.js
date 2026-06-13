@@ -318,12 +318,12 @@
         }
 
         // Per-lap times map {lapNum → time_str} (lapCount + prediction ref).
-        if (data.laps && typeof data.laps === 'object') {
-            const m = {};
-            for (const [l, rec] of Object.entries(data.laps)) {
-                if (rec && rec.time) m[l] = rec.time;
-            }
-            state.lapTimes[num] = m;
+        // driverLaps is thin — accumulate from lastLap as laps arrive (a
+        // seek/restore replays the full driverLaps history, and state:reset
+        // wipes the map, so accumulation stays correct across seeks).
+        if (data.lastLap && data.lastLap.lap != null && data.lastLap.time) {
+            (state.lapTimes[num] || (state.lapTimes[num] = {}))[data.lastLap.lap] =
+                data.lastLap.time;
         }
 
         // Best-lap display (purple/green decided at render via fastestLap).
@@ -957,17 +957,12 @@
 
     function lapCountCell(num) {
         const t = state.timing[num] || {};
-        const times = state.lapTimes[num];
-        // Prefer the highest lap key from driverLapTimes (count of completed
-        // laps). Fall back to driverTiming.lap (current lap in progress).
-        let n = 0;
-        if (times && typeof times === 'object') {
-            for (const k of Object.keys(times)) {
-                const v = parseInt(k);
-                if (v > n) n = v;
-            }
-        }
-        if (!n && t.lap) n = t.lap;
+        // Lap count = the authoritative NoL-based current lap
+        // (driverLaps.currentLap, stored as t.lap). NOT max(lapTimes key):
+        // in P/Q the highest TIMED lap is currentLap-1, so once the first lap
+        // time arrived the count regressed (e.g. COL 1→2→1, I10). currentLap is
+        // monotonic and already session-correct.
+        const n = t.lap || 0;
         return `<span class="lap-count">${n || '0'}</span>`;
     }
 

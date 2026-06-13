@@ -40,16 +40,6 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS idx_msg_topic_offset ON messages (topic, offset_ms);
 
-CREATE TABLE IF NOT EXISTS telemetry (
-    driver           TEXT NOT NULL,
-    lap              INTEGER NOT NULL,
-    offset_ms        INTEGER NOT NULL,
-    start_wall_clock TEXT,
-    end_wall_clock   TEXT,
-    data             TEXT NOT NULL,
-    PRIMARY KEY (driver, lap)
-);
-
 CREATE TABLE IF NOT EXISTS processing_meta (
     key         TEXT PRIMARY KEY,
     value       TEXT
@@ -63,10 +53,6 @@ CREATE TABLE IF NOT EXISTS processing_meta (
 # repopulates the DB so data loss is fine.
 EXPECTED_COLUMNS = {
     "messages": ["offset_ms", "wall_clock", "topic", "data"],
-    "telemetry": [
-        "driver", "lap", "offset_ms",
-        "start_wall_clock", "end_wall_clock", "data",
-    ],
 }
 
 
@@ -115,7 +101,6 @@ class SessionDatabase:
         mid-session, or an interrupted build is retried).
         """
         self._conn.execute("DELETE FROM messages")
-        self._conn.execute("DELETE FROM telemetry")
         self._conn.commit()
 
     # ── Messages ──
@@ -173,26 +158,8 @@ class SessionDatabase:
         return [(r[0], r[1], json.loads(r[2])) for r in rows]
 
     # ── Telemetry ──
-
-    def save_telemetry(
-        self,
-        driver: str,
-        lap: int,
-        offset_ms: int,
-        data_json: str,
-        start_wall_clock: Optional[str] = None,
-        end_wall_clock: Optional[str] = None,
-    ) -> None:
-        """Upsert a completed lap's telemetry trace. offset_ms is the
-        emit-time offset (= lap end). start_wall_clock / end_wall_clock
-        are HH:MM:SS.SSS strings bounding the lap's sample window."""
-        self._conn.execute(
-            "INSERT OR REPLACE INTO telemetry "
-            "(driver, lap, offset_ms, start_wall_clock, end_wall_clock, data) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (driver, lap, offset_ms, start_wall_clock, end_wall_clock, data_json),
-        )
-        self._conn.commit()
+    # Completed-lap telemetry lives in the `messages` table as
+    # `telemetryLap:{driver}:{lap}` rows; there is no separate telemetry table.
 
     def get_telemetry(self, driver: str, lap: int) -> Optional[Any]:
         """Fetch a completed lap's telemetry samples from the messages table
@@ -212,6 +179,19 @@ class SessionDatabase:
             (topic, max_offset_ms),
         ).fetchall()
         return [json.loads(r[0]) for r in rows]
+
+    def get_topic_prefix_history(self, prefix: str,
+                                 max_offset_ms: int) -> list[tuple[str, Any]]:
+        """(topic, payload) for every message whose topic starts with `prefix`,
+        at or before offset, chronological — for per-driver append-style
+        histories (e.g. driverLaps:*) that the client accumulates and that the
+        latest-per-topic restore can't represent."""
+        rows = self._conn.execute(
+            "SELECT topic, data FROM messages WHERE topic LIKE ? AND offset_ms <= ? "
+            "ORDER BY offset_ms",
+            (prefix + "%", max_offset_ms),
+        ).fetchall()
+        return [(r[0], json.loads(r[1])) for r in rows]
 
     def list_lap_telemetry(self, max_offset_ms: int) -> list[tuple[str, int, int]]:
         """(driver, lap, data_length) for every telemetryLap row at or before
