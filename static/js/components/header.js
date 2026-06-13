@@ -46,7 +46,11 @@
             element: null,
             startUtc: null,
             isReady: false,
-            isMuted: localStorage.getItem('audioMuted') === 'true',
+            // Always start muted on session open (card 76). Firefox can block
+            // autoplay until the user interacts; starting muted means the
+            // unmute click is that interaction — it unmutes and unlocks audio
+            // in one gesture. Not restored from a previous session.
+            isMuted: true,
             volume: parseFloat(localStorage.getItem('audioVolume') ?? '80') / 100,
             offsetSeconds: 0,        // user-tunable shift (positive → audio plays later)
             decoupled: false,        // when true, syncAudio is suppressed; user controls audio
@@ -957,7 +961,7 @@
 
     window.toggleMute = function() {
         state.audio.isMuted = !state.audio.isMuted;
-        localStorage.setItem('audioMuted', state.audio.isMuted);
+        // Not persisted — every session opens muted (card 76).
         if (state.audio.element) {
             state.audio.element.volume = state.audio.isMuted ? 0 : state.audio.volume;
         }
