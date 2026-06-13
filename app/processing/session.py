@@ -21,7 +21,7 @@ from fastapi import WebSocket
 from app.config import REPLAY_DEBUG
 from app.processing.clock import PlaybackClock, ClockState
 from app.processing.database import SessionDatabase
-from app.processing.file_reader import read_jsonl, load_subscribe_json
+from app.processing.file_reader import read_jsonl, load_subscribe_json, _parse_timestamp
 from app.processing.preprocessor import SessionPreProcessor
 from app.services.live_capture import live_capture
 
@@ -29,9 +29,30 @@ logger = logging.getLogger(__name__)
 
 TICK_INTERVAL = 0.016  # ~60fps tick rate
 
+# Live-edge audio/data sync (card 78). The live playback edge is capped at
+# min(data_edge, audio_edge) − this buffer, pinning playback to whichever
+# stream is lagging so neither feed is outrun and audio/data stay aligned at
+# the edge. The buffer is wiggle room for buffering / download delay.
+LIVE_EDGE_BUFFER_S = 8.0
+
 # Keep the transient scratch DB after the last client disconnects (for
 # inspection) instead of deleting it.
 _DEBUG = REPLAY_DEBUG
+
+
+def _read_last_line(path: Path) -> Optional[str]:
+    """Last non-empty line of a file, read from the end — cheap for an
+    append-only log polled every tick."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 4096))
+            tail = f.read().decode("utf-8", "ignore")
+    except OSError:
+        return None
+    lines = [ln for ln in tail.splitlines() if ln.strip()]
+    return lines[-1] if lines else None
 
 
 class SessionEngine:
@@ -353,14 +374,12 @@ class SessionEngine:
         # new viewer) inherit the existing clock position so a paused or
         # rewound playback isn't yanked forward by an unrelated connect.
         if self._live and self._clock and self._db and not self._initial_live_seek_done:
-            row = self._db._conn.execute(
-                "SELECT MAX(offset_ms) FROM messages"
-            ).fetchone()
-            if row and row[0]:
-                live_offset = row[0] / 1000.0
+            edge_ms = self._capped_edge_ms()
+            if edge_ms:
+                live_offset = edge_ms / 1000.0
                 self._clock.seek_to_offset(live_offset)
                 self._duration = live_offset
-                self._last_offset_ms = row[0]
+                self._last_offset_ms = edge_ms
             self._initial_live_seek_done = True
 
         # Send current display state at clock position (all latest messages per topic)
@@ -416,13 +435,11 @@ class SessionEngine:
             if not self._db:
                 logger.warning("seek_live ignored: no DB")
                 return
-            row = self._db._conn.execute(
-                "SELECT MAX(offset_ms) FROM messages"
-            ).fetchone()
-            if not row or not row[0]:
-                logger.warning("seek_live: DB has no messages yet")
+            edge_ms = self._capped_edge_ms()
+            if not edge_ms:
+                logger.warning("seek_live: no live edge yet")
                 return
-            target = row[0] / 1000.0
+            target = edge_ms / 1000.0
             # Bump duration so _seek's clamp doesn't pin us behind the
             # actual live edge (the duration tracker only ticks every 1 s).
             if target > self._duration:
@@ -777,6 +794,60 @@ class SessionEngine:
         self._clock.speed = speed
         await self._broadcast_status()
 
+    # ── Live Edge (data ∩ audio) ──
+
+    def _data_edge_ms(self) -> Optional[int]:
+        """Latest data offset in the DB (ms). None if no messages yet."""
+        if not self._db:
+            return None
+        try:
+            row = self._db._conn.execute(
+                "SELECT MAX(offset_ms) FROM messages"
+            ).fetchone()
+        except Exception:
+            return None
+        return row[0] if row and row[0] else None
+
+    def _audio_edge_offset(self) -> Optional[float]:
+        """Audio leading edge as a data-clock offset (seconds): the latest
+        broadcast PROGRAM-DATE-TIME — continuously re-anchored in
+        pdt_map.jsonl by the PdtTracker — minus the session start. None until
+        a PDT has been observed (or when the session carries no audio).
+        Read fresh every call: the offset drifts as the broadcast advances."""
+        if not self._start_time:
+            return None
+        pdt_file = self._session_path / "pdt_map.jsonl"
+        if not pdt_file.exists():
+            return None
+        last = _read_last_line(pdt_file)
+        if not last:
+            return None
+        try:
+            edge_pdt = _parse_timestamp(json.loads(last).get("edge_pdt_utc", ""))
+        except (json.JSONDecodeError, AttributeError):
+            return None
+        if edge_pdt is None:
+            return None
+        return (edge_pdt - self._start_time).total_seconds()
+
+    def _capped_edge_ms(self) -> Optional[int]:
+        """The playback live edge (ms), capped at the lagging stream.
+
+        Live: min(data_edge, audio_edge) − LIVE_EDGE_BUFFER_S, so playback
+        never outruns either feed and audio/data stay aligned at the edge.
+        Replay, or live with no audio PDT yet, returns the raw data edge
+        (nothing to cap against). None if no data yet."""
+        data_ms = self._data_edge_ms()
+        if data_ms is None:
+            return None
+        if not self._live:
+            return data_ms
+        audio_edge_s = self._audio_edge_offset()
+        if audio_edge_s is None:
+            return data_ms
+        capped = min(data_ms, int(audio_edge_s * 1000)) - int(LIVE_EDGE_BUFFER_S * 1000)
+        return max(0, capped)
+
     # ── Duration Tracking (live mode) ──
 
     async def _track_duration(self) -> None:
@@ -796,14 +867,9 @@ class SessionEngine:
                     return
                 if not self._db:
                     continue
-                try:
-                    row = self._db._conn.execute(
-                        "SELECT MAX(offset_ms) FROM messages"
-                    ).fetchone()
-                except Exception:
-                    continue
-                if row and row[0]:
-                    new_dur = row[0] / 1000.0
+                edge_ms = self._capped_edge_ms()
+                if edge_ms:
+                    new_dur = edge_ms / 1000.0
                     if new_dur > self._duration:
                         self._duration = new_dur
         except asyncio.CancelledError:
@@ -850,18 +916,17 @@ class SessionEngine:
                 if target_offset_ms >= duration_ms:
                     if self._live or not self._preprocess_done.is_set():
                         # Live capture OR replay-still-building: the edge is
-                        # moving. Don't end — poll the DB; if it has grown,
-                        # extend duration, else wait for more data to land.
-                        if self._db:
-                            row = self._db._conn.execute(
-                                "SELECT MAX(offset_ms) FROM messages"
-                            ).fetchone()
-                            if row and row[0] and row[0] > duration_ms:
-                                self._duration = row[0] / 1000.0
-                            else:
-                                # No new data yet — slow down polling
-                                await asyncio.sleep(0.5)
-                                continue
+                        # moving. Don't end — poll the capped edge; if it has
+                        # grown, extend duration, else wait. For live the cap
+                        # holds playback at the lagging stream (audio vs data),
+                        # so reaching it waits for the laggard to advance.
+                        edge_ms = self._capped_edge_ms()
+                        if edge_ms and edge_ms > duration_ms:
+                            self._duration = edge_ms / 1000.0
+                        else:
+                            # Nothing new at the capped edge yet — slow polling
+                            await asyncio.sleep(0.5)
+                            continue
                     else:
                         self._clock.pause()
                         await self._broadcast_status()
