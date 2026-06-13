@@ -42,7 +42,6 @@
         liveSamples: {},      // num -> [[distPct, spd, rpm, gear, thr, brk], ...]
         liveLap: {},          // num -> current lap of the live trace (from liveTelemetry)
         driverStatus: {},     // num -> "PIT"|"OUT"|"TRACK"|...
-        standingsOrder: [],   // [num] in standings position order (card 72: Last/Best ordering)
         lapTimes: {},         // num -> {lapNum -> "1:23.456"}
         lapCls: {},           // num -> {lapNum -> type}
         bestLapNum: {},       // num -> driver's fastest lap number (driverLaps.bestLap) → purple pill
@@ -103,6 +102,14 @@
      * Within each team, lowest number first. Result: [{num, teamOrder}] where
      * teamOrder is 0 for the first team-mate and 1 for the second.
      */
+    // Parse an F1 lap-time string ("M:SS.mmm" or "SS.mmm") to seconds, or null.
+    function parseLapTime(s) {
+        if (!s) return null;
+        const m = String(s).match(/^(?:(\d+):)?(\d+(?:\.\d+)?)$/);
+        if (!m) return null;
+        return (m[1] ? parseInt(m[1]) * 60 : 0) + parseFloat(m[2]);
+    }
+
     function getSortedDrivers() {
         const teams = {};
         for (const [num, d] of Object.entries(state.drivers)) {
@@ -780,29 +787,25 @@
     function renderDriverSelectorNow() {
         const el = document.getElementById('telemetryDriverSelector');
         if (!el) return;
-        // Default order: team / car-number. In Last/Best, order the rows by
-        // standings instead (card 72), keeping each driver's teamOrder (drives
-        // the dashed second-car styling). Drivers absent from standings (not
-        // yet classified) fall back to default order at the end.
+        // Default order: team / car-number. In Last/Best, order rows by the
+        // driver's shown lap time — fastest on top (card 72). Drivers without a
+        // lap in the current view keep the default order, after the timed ones
+        // (Array.sort is stable).
         const sortedDefault = getSortedDrivers();
-        const teamOrderMap = {};
-        for (const { num, teamOrder } of sortedDefault) teamOrderMap[num] = teamOrder;
-
-        let sorted;
-        if ((state.mode === 'last' || state.mode === 'best') && state.standingsOrder.length) {
-            const seen = new Set();
-            sorted = [];
-            for (const num of state.standingsOrder) {
-                if (state.drivers[num] && !seen.has(num)) {
-                    seen.add(num);
-                    sorted.push({ num, teamOrder: teamOrderMap[num] || 0 });
-                }
+        let sorted = sortedDefault;
+        if (state.mode === 'last' || state.mode === 'best') {
+            const timeByNum = {};
+            for (const lapObj of Object.values(currentLaps())) {
+                const t = parseLapTime(lapObj.lapTime);
+                if (t != null) timeByNum[lapObj.driver] = t;
             }
-            for (const entry of sortedDefault) {
-                if (!seen.has(entry.num)) { seen.add(entry.num); sorted.push(entry); }
-            }
-        } else {
-            sorted = sortedDefault;
+            sorted = sortedDefault.slice().sort((a, b) => {
+                const ta = timeByNum[a.num], tb = timeByNum[b.num];
+                if (ta == null && tb == null) return 0;
+                if (ta == null) return 1;
+                if (tb == null) return -1;
+                return ta - tb;
+            });
         }
         if (!sorted.length) { el.innerHTML = ''; return; }
 
@@ -1152,14 +1155,6 @@
             };
         }
         renderDriverSelector();
-    });
-
-    // Standings ordering — pre-sorted [{num, position}]. Drives the Last/Best
-    // legend order (card 72); other views keep the team/car-number order.
-    messageBus.on('standings', (data) => {
-        if (!data || !Array.isArray(data.drivers)) return;
-        state.standingsOrder = data.drivers.map(e => String(e.num));
-        if (state.mode === 'last' || state.mode === 'best') renderDriverSelector();
     });
 
     // Live trace: the server now emits a fully-decoded per-driver sample
