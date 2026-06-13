@@ -63,6 +63,13 @@ const messageBus = {
     streamComplete: false,
     isLive: false,
 
+    // Data-lag (negative audio-delay): hold DATA-topic dispatch by this many
+    // ms so the tiles + displayed clock slide back to meet a behind-audio.
+    // Inert at 0 (dispatch is immediate). Set via setDataLag(); audio is NOT
+    // lagged (it stays on the un-lagged clock).
+    dataLagMs: 0,
+    _lagTimers: [],
+
     // WebSocket
     _ws: null,
 
@@ -136,6 +143,16 @@ const messageBus = {
     getCurrentOffset() {
         if (!this.clockTime || !this.startTime) return 0;
         return Math.max(0, (this.clockTime.getTime() - this.startTime.getTime()) / 1000);
+    },
+
+    setDataLag(ms) {
+        this.dataLagMs = Math.max(0, ms || 0);
+        if (this.dataLagMs === 0) this._clearLag();
+    },
+
+    _clearLag() {
+        for (const id of this._lagTimers) clearTimeout(id);
+        this._lagTimers = [];
     },
 
     getDuration() {
@@ -223,6 +240,8 @@ const messageBus = {
 
             } else if (topic === 'state:restore') {
                 // Full state restore: array of {topic, data, offset_ms}
+                // Drop any pending lagged dispatch — it's stale across a seek.
+                this._clearLag();
                 this.emit('state:reset', {});
                 for (const m of data) {
                     this.emit(m.topic, m.data, m.offset_ms);
@@ -276,7 +295,19 @@ const messageBus = {
 
             } else {
                 // All processed messages: trackStatus, driverTiming:44, position, etc.
-                this.emit(topic, data, msg.offset_ms);
+                // Data-lag: hold DATA dispatch by dataLagMs so tiles slide back
+                // to meet a behind-audio (inert at 0). Audio is unaffected.
+                if (this.dataLagMs > 0) {
+                    const tp = topic, d = data, o = msg.offset_ms;
+                    const id = setTimeout(() => {
+                        const i = this._lagTimers.indexOf(id);
+                        if (i >= 0) this._lagTimers.splice(i, 1);
+                        this.emit(tp, d, o);
+                    }, this.dataLagMs);
+                    this._lagTimers.push(id);
+                } else {
+                    this.emit(topic, data, msg.offset_ms);
+                }
             }
         };
 

@@ -160,13 +160,17 @@
 
         // Local (track) time. state.utc is only a fallback for the very
         // first frame before any clock update has arrived.
+        // Data-lag (negative audio-delay): the DATA display lags by dataLagMs
+        // so it slides back to meet a behind-audio. Audio itself stays on the
+        // un-lagged messageBus.clockTime (clockToAudioSec is not adjusted here).
+        const dataLagMs = messageBus.dataLagMs || 0;
         const trackTimeEl = document.getElementById('trackTime');
         if (trackTimeEl && state.gmtOffset !== null) {
             let localMs;
             if (messageBus.clockTime) {
-                localMs = messageBus.clockTime.getTime() + state.gmtOffset;
+                localMs = messageBus.clockTime.getTime() - dataLagMs + state.gmtOffset;
             } else if (state.utc) {
-                localMs = state.utc.getTime() + state.gmtOffset;
+                localMs = state.utc.getTime() - dataLagMs + state.gmtOffset;
             }
             if (localMs !== undefined) {
                 trackTimeEl.textContent = new Date(localMs).toUTCString().slice(17, 25);
@@ -185,7 +189,7 @@
             if (state.clockStatus === 'play'
                     && state.sessionTimeAnchorMs !== null
                     && messageBus.clockTime) {
-                const currentOffsetMs = messageBus.getCurrentOffset() * 1000;
+                const currentOffsetMs = messageBus.getCurrentOffset() * 1000 - dataLagMs;
                 remaining = state.sessionTimeMs - (currentOffsetMs - state.sessionTimeAnchorMs);
             }
             remaining = Math.max(0, remaining);
@@ -955,29 +959,39 @@
         }
     };
 
-    // Audio offset input — value in seconds (0.1 s precision). Applied
-    // on Enter or focus-out. Positive = data is AHEAD of audio (audio
-    // plays content from earlier wall-time relative to the data clock).
+    // Audio-delay input — signed seconds (0.1 s precision), applied on Enter
+    // or focus-out. The sign routes which stream is skipped BACKWARDS (we
+    // never skip forward, to avoid running past the live edge):
+    //   D >= 0 : audio is AHEAD of data → skip AUDIO back D s
+    //            (offsetSeconds; clockToAudioSec plays D-older content).
+    //   D <  0 : audio is BEHIND data → skip DATA back |D| s
+    //            (messageBus data-lag; tiles + displayed clock lag, audio
+    //             stays on the un-lagged data clock).
     function setupAudioOffsetInput() {
         const inp = document.getElementById('audioOffsetInput');
         if (!inp) return;
-        inp.value = (state.audio.offsetSeconds || 0).toFixed(1);
+        const shown = () => {
+            const lag = (messageBus.dataLagMs || 0) / 1000;
+            return (state.audio.offsetSeconds || 0) - lag;  // net signed delay
+        };
+        inp.value = shown().toFixed(1);
         const apply = () => {
             const v = parseFloat(inp.value);
-            if (isNaN(v)) {
-                inp.value = (state.audio.offsetSeconds || 0).toFixed(1);
-                return;
+            if (isNaN(v)) { inp.value = shown().toFixed(1); return; }
+            const d = Math.round(v * 10) / 10;
+            if (d >= 0) {
+                state.audio.offsetSeconds = d;
+                messageBus.setDataLag(0);
+            } else {
+                state.audio.offsetSeconds = 0;
+                messageBus.setDataLag(-d * 1000);
             }
-            state.audio.offsetSeconds = Math.round(v * 10) / 10;
-            inp.value = state.audio.offsetSeconds.toFixed(1);
+            inp.value = d.toFixed(1);
             alignAudioToClock();
         };
         inp.addEventListener('blur', apply);
         inp.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                inp.blur();
-            }
+            if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
         });
     }
 
@@ -1143,6 +1157,7 @@
             speedBtn.addEventListener('click', cycleSpeed);
         }
         initScrubber();
+        setupAudioOffsetInput();
     });
 
 })();
