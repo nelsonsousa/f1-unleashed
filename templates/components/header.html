@@ -58,16 +58,6 @@
                min="0" max="100" value="80"
                oninput="handleVolumeChange(this.value)" title="Volume">
 
-        <!-- Audio delay (s): manual audio-vs-data offset, applied to the audio.
-             + = audio plays earlier (audio ahead of data); - = audio plays later
-             (audio behind data; replay only — that content isn't delivered yet
-             near the live edge). -->
-        <span class="audio-delay-label audio-delay-label-spaced"
-              title="Audio delay vs data (s). + = audio earlier; - = audio later.">delay</span>
-        <input type="number" class="audio-offset-input" id="audioOffsetInput"
-               step="0.1" value="0.0"
-               title="Audio delay vs data (s). + = audio earlier; - = audio later.">
-
     </div>
 
     <div class="controls">

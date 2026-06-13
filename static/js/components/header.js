@@ -955,29 +955,6 @@
         }
     };
 
-    // Audio-delay input — signed seconds (0.1 s precision), applied on Enter
-    // or focus-out. Shifts the AUDIO relative to the data clock via
-    // offsetSeconds (clockToAudioSec subtracts it); the data is never lagged:
-    //   + : audio plays EARLIER content (skip audio back) — for audio ahead of data.
-    //   - : audio plays LATER content (skip audio forward) — for audio behind
-    //       data (replay only; near the live edge that content isn't delivered).
-    function setupAudioOffsetInput() {
-        const inp = document.getElementById('audioOffsetInput');
-        if (!inp) return;
-        inp.value = (state.audio.offsetSeconds || 0).toFixed(1);
-        const apply = () => {
-            const v = parseFloat(inp.value);
-            if (isNaN(v)) { inp.value = (state.audio.offsetSeconds || 0).toFixed(1); return; }
-            state.audio.offsetSeconds = Math.round(v * 10) / 10;
-            inp.value = state.audio.offsetSeconds.toFixed(1);
-            alignAudioToClock();
-        };
-        inp.addEventListener('blur', apply);
-        inp.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
-        });
-    }
-
     window.toggleMute = function() {
         state.audio.isMuted = !state.audio.isMuted;
         localStorage.setItem('audioMuted', state.audio.isMuted);
@@ -1140,7 +1117,6 @@
             speedBtn.addEventListener('click', cycleSpeed);
         }
         initScrubber();
-        setupAudioOffsetInput();
     });
 
 })();
