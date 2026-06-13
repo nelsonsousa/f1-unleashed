@@ -400,6 +400,10 @@
 
         renderChart();
         updateDriverBar();
+        // Re-sort the Last/Best legend now that this driver's lap (and its
+        // lapTime) was replaced — a more recent last lap or a faster best lap
+        // changes the order (card 72).
+        renderDriverSelector();
     }
 
     // =========================================================================
