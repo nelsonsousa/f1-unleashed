@@ -336,7 +336,9 @@
 /* Delta cell (qualifying) — single grid column showing the predicted
  * lap-time delta vs the driver's session best + the projected position.
  * 20px right-padding gives the tyre cell breathing room. */
-/* Delta left (fixed slot), positions-gained right (card 67). */
+/* Delta left (fixed slot), positions-gained right (card 67). Even padding both
+   sides so the cell sits evenly between its neighbours (best/last lap on the
+   left, tyres on the right) — leaves a clear gap before the delta. */
 .pred {
     display: flex;
     align-items: baseline;
@@ -344,17 +346,17 @@
     gap: 6px;
     min-width: 0;
     overflow: hidden;
-    padding-right: 20px;
+    padding: 0 12px;
 }
 
-/* Delta value — same size/face as the lap-time cells (card 67); always
-   left-aligned and occupying a constant slot so positions stay aligned right. */
+/* Delta value — same size/face as the sector-time cells (card 67); always
+   left-aligned in a constant slot (wide enough for the 0.001s observed delta)
+   so positions stay aligned right. */
 .pred-delta {
-    font-size: 17px;
-    font-weight: 700;
+    font-size: 14px;
     text-align: left;
     flex: 0 0 auto;
-    min-width: 3.4em;
+    min-width: 4em;
 }
 
 /* Negative delta = currently faster than best lap = green. */
@@ -367,8 +369,7 @@
    face, but kept at the smaller size used before (card 67/64). */
 .pred-pos-gain {
     color: #00ff88;
-    font-weight: 700;
-    font-size: 0.9em;
+    font-size: 16px;
     flex: 0 0 auto;
     text-align: right;
 }
