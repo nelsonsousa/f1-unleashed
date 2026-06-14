@@ -405,7 +405,11 @@
     cursor: pointer;
 }
 .pen-flag { cursor: pointer; }
+/* Penalty badge colours are fixed by type, independent of the row's driver-
+   status colour (card 85): yellow = under investigation, orange = penalty
+   issued. The explicit colour overrides the status cell it's nested in. */
 .pen-yellow { color: #ffd700; }
+.pen-orange { color: #ff8800; }
 .pen-white  { color: #ffffff; }
 .pen-red    { color: #ff4040; }
 .pen-dsq    {
