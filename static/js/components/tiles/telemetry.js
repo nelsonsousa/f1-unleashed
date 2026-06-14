@@ -1045,9 +1045,10 @@
         return html;
     }
 
-    // Qualifying pill tabs (card 66): Q1/Q2/Q3 (SQ1-3 for sprint quali). Shows
-    // only the parts reached so far; clicking selects which part's laps the
-    // pills display. Hidden outside qualifying.
+    // Qualifying lap-part selector (cards 66/83): a single button showing the
+    // active part (Q1/Q2/Q3 or SQ1-3). Clicking cycles DOWN through the parts
+    // reached so far, wrapping back to the current part (Q3→Q2→Q1→Q3…). The
+    // pills show the selected part. Hidden outside quali; inert in Q1.
     function renderPartTabs() {
         const el = document.getElementById('telemetryPartTabs');
         if (!el) return;
@@ -1056,21 +1057,16 @@
         el.classList.remove('hidden');
         const prefix = state.isSprintQuali ? 'SQ' : 'Q';
         const active = state.activePart || part;
-        let html = '';
-        for (let p = 1; p <= part; p++) {
-            html += `<button class="telemetry-part-tab${p === active ? ' active' : ''}" `
-                  + `data-part="${p}">${prefix}${p}</button>`;
-        }
-        el.innerHTML = html;
-        el.querySelectorAll('.telemetry-part-tab').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const p = parseInt(btn.dataset.part);
-                if (!p) return;
-                state.activePart = p;
-                state.userPickedPart = true;
-                renderPartTabs();
-                renderDriverSelector();
-            });
+        el.innerHTML = `<button class="telemetry-part-toggle" id="telemetryPartToggle"`
+                     + `${part > 1 ? '' : ' disabled'} title="Show another qualifying part">`
+                     + `${prefix}${active}</button>`;
+        const btn = document.getElementById('telemetryPartToggle');
+        if (btn) btn.addEventListener('click', () => {
+            if ((state.qualifyingPart || 0) <= 1) return;     // Q1: nothing to cycle
+            const cur = state.activePart || state.qualifyingPart;
+            state.activePart = cur > 1 ? cur - 1 : state.qualifyingPart;
+            renderPartTabs();
+            renderDriverSelector();
         });
     }
 
@@ -1194,10 +1190,9 @@
         const newPart = partNum(data.segment);
         const partChanged = newPart && newPart !== state.qualifyingPart;
         if (newPart) state.qualifyingPart = newPart;
-        // Follow the live part with the active tab until the user picks one.
-        if (partChanged && (!state.activePart || state.userPickedPart !== true)) {
-            state.activePart = newPart;
-        }
+        // A new part starts on its own tab (card 83); within a part the user's
+        // selection is preserved (qualifyingSegment also fires on elimination).
+        if (partChanged) state.activePart = newPart;
         state.eliminated = new Set((data.eliminated || []).map(String));
         state.isSprintQuali = !!data.isSprintQuali;
         // Drop eliminated drivers' Last/Best laps so they leave those views.
