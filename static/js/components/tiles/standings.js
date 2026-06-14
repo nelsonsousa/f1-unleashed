@@ -641,8 +641,10 @@
     }
 
     function isSlowLapClass(num) {
+        // Cool-down (SLOW) only. OUT no longer suppresses — out-lap times and
+        // sectors are shown now (card 81 reverses the old OUT-lap suppression).
         const cls = state.lapCls[num] && state.lapCls[num].status;
-        return cls === 'SLOW' || cls === 'OUT';
+        return cls === 'SLOW';
     }
 
     // Per-lap classification type (from driverLapClassification). Used to
@@ -688,8 +690,9 @@
             return `<span class="lap-time lap-last lap-empty">--:--.---</span>`;
         }
         // Spec depends on session type:
-        //   - PRACTICE / QUALIFYING: only show prev FAST laps. Hide
-        //     OUT/IN/COOL/PIT data — it's not representative of pace.
+        //   - PRACTICE / QUALIFYING: show the actual lap time including
+        //     in-pit and out laps (card 81); cool-down (SLOW) falls back to
+        //     the previous fast lap so a cool lap doesn't read as pace.
         //   - RACE: ALWAYS show the latest lap data including IN/OUT,
         //     because every lap matters for race position + gap, and
         //     IN/OUT laps still produce times the engineer cares about.
@@ -707,10 +710,9 @@
             if (cur && cur.lapTime) source = cur;
             else source = prevAny || cur;
         } else {
-            // P/Q: hide unless prev was a FAST lap.
-            if (state.status[num] === 'PIT') {
-                return `<span class="lap-time lap-last lap-empty">--:--.---</span>`;
-            }
+            // P/Q: in-pit and out laps now show their actual time (card 81);
+            // cool-down (SLOW) still falls back to the previous fast lap, and
+            // the !cleared fallback avoids a ~30s blank between laps.
             if (slow) {
                 source = prevFast;
             } else if (!cleared) {
@@ -725,8 +727,10 @@
         // An out lap / stopped "lap" isn't a representative timed lap —
         // suppress its time even though F1 reports one. (In-pit laps in race
         // are intentionally kept per the source-selection above.)
+        // A stopped car has no representative time. (OUT laps are now shown —
+        // card 81 — so only STOP is blanked here.)
         const st = source ? lapTypeAt(num, source.lap) : undefined;
-        if (st === 'OUT' || st === 'STOP') {
+        if (st === 'STOP') {
             return `<span class="lap-time lap-last lap-empty">--:--.---</span>`;
         }
         const last = (source && source.lapTime) || '';
@@ -784,7 +788,8 @@
             // own data for the current lap is authoritative.
             lap = cur;
         } else {
-            if (state.status[num] === 'PIT') return emptySectorCells();
+            // In-pit and out laps now show their sectors (card 81); cool-down
+            // (SLOW) still falls back to the previous fast lap.
             if (slow) lap = prevFast;
             else if (cleared) lap = cur;
             else lap = prevFast;
