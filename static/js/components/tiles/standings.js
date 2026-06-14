@@ -310,7 +310,9 @@
         const prevLapNum = t.lap;
 
         t.lap = data.currentLap;
-        if (data.bestLap) t.bestLapTime = data.bestLap.time;
+        // bestLap is per-qualifying-part now and resets to null at each new part
+        // (card 63) — clear on null so the prior part's best stops showing.
+        t.bestLapTime = data.bestLap ? data.bestLap.time : null;
         if (data.lastLap) {
             t.lapTime = data.lastLap.time;
             t.personalFastest = data.lastLap.personalBest;
@@ -332,6 +334,11 @@
             e.bestLap = data.bestLap.time;
             e.bestLapPersonal = true;
             e.bestLapNum = data.bestLap.lap;   // for out/in suppression at render
+        } else {
+            // Per-part reset (card 63): no best in the current part yet → clear.
+            e.bestLap = null;
+            e.bestLapNum = null;
+            e.bestLapPersonal = false;
         }
 
         // Completed-lap snapshot — capture the live sectors (still holding

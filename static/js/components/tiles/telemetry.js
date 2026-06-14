@@ -45,7 +45,10 @@
         lapTimes: {},         // num -> {lapNum -> "1:23.456"}
         lapCls: {},           // num -> {lapNum -> type}
         bestLapNum: {},       // num -> driver's fastest lap number (driverLaps.bestLap) → purple pill
-        lapSegments: {},      // num -> {lapNum -> qualSegment} (unused: no source topic now)
+        lapSegments: {},      // num -> {lapNum -> qualPart 1/2/3} (from driverLaps.lastLap.part) — card 66
+        eliminated: new Set(),// car nums knocked out (from qualifyingSegment) — card 71
+        qualifyingPart: 0,    // current quali part 1/2/3 (0 = not quali / unknown)
+        activePart: 0,        // pill-tab selected part (defaults to current part) — card 66
         lapNoData: {},        // num -> Set(lapNum) — laps that came in empty
         telemetryLaps: {},    // num -> Set(laps that have telemetry on disk)
         hiddenDrivers: new Set(),
@@ -102,6 +105,18 @@
      * Within each team, lowest number first. Result: [{num, teamOrder}] where
      * teamOrder is 0 for the first team-mate and 1 for the second.
      */
+    // Quali part number from a segment label ("Q2"/"SQ3" → 2/3); 0 if none.
+    function partNum(seg) {
+        const m = String(seg || '').match(/(\d)\s*$/);
+        return m ? parseInt(m[1]) : 0;
+    }
+
+    // Card 71: in Q2/Q3 a driver eliminated in an earlier part is hidden from
+    // the Last/Best views (their previous-part laps are no longer relevant).
+    function koHidden(num) {
+        return state.qualifyingPart >= 2 && state.eliminated.has(num);
+    }
+
     function getSortedDrivers() {
         const teams = {};
         for (const [num, d] of Object.entries(state.drivers)) {
@@ -244,6 +259,7 @@
         resizeCanvas();
         renderChart();
         renderCornerLabels();
+        renderPartTabs();   // hidden until a qualifyingSegment arrives
         window.addEventListener('resize', () => {
             resizeCanvas();
             renderChart();
@@ -269,6 +285,7 @@
         const pend = mode === 'last' ? state.pendingLast : state.pendingBest;
         for (const num of Object.keys(state.drivers)) {
             if (state.hiddenDrivers.has(num)) continue;
+            if (koHidden(num)) continue;   // card 71: no KO'd drivers in Q2/Q3
             pend.add(num);
             messageBus.send({ cmd, driver: num });
         }
@@ -802,40 +819,31 @@
         }
         if (maxLap === 0) maxLap = 1;
 
-        // Qualifying segment layout: per-segment lap-count maxes + per-
-        // driver per-lap local position so each driver's Q1 laps line
-        // up under each other (similarly for Q2 and Q3), with a one-
-        // column gap between segments.
+        // Qualifying pill tabs (card 66): show only the ACTIVE part's laps,
+        // numbered locally (1,2,3…) so each driver's part laps left-align under
+        // each other. Absolute lap numbers differ across drivers (out-lap counts
+        // vary) — that's expected. hasSegments is false outside quali → flat
+        // absolute-lap layout as before.
         const hasSegments = Object.values(state.lapSegments)
             .some(segMap => segMap && Object.values(segMap).some(s => s > 0));
-        const segMax = { 1: 0, 2: 0, 3: 0 };
-        const localPos = {};  // num -> {absoluteLap -> localPos (1-indexed)}
+        const activePart = state.activePart || state.qualifyingPart || 1;
+        const localPos = {};   // num -> {absoluteLap -> localPos} within activePart
+        let partMax = 0;
         if (hasSegments) {
             for (const num of Object.keys(state.drivers)) {
                 const segs = state.lapSegments[num] || {};
-                // Group absolute laps by segment.
-                const buckets = { 1: [], 2: [], 3: [] };
-                for (const [absStr, seg] of Object.entries(segs)) {
-                    const abs = parseInt(absStr);
-                    if (seg in buckets) buckets[seg].push(abs);
-                }
+                const partLaps = Object.entries(segs)
+                    .filter(([, seg]) => seg === activePart)
+                    .map(([abs]) => parseInt(abs))
+                    .sort((a, b) => a - b);
                 localPos[num] = {};
-                for (const seg of [1, 2, 3]) {
-                    buckets[seg].sort((a, b) => a - b);
-                    buckets[seg].forEach((absLap, idx) => {
-                        localPos[num][absLap] = idx + 1;
-                    });
-                    if (buckets[seg].length > segMax[seg]) segMax[seg] = buckets[seg].length;
-                }
+                partLaps.forEach((absLap, idx) => { localPos[num][absLap] = idx + 1; });
+                if (partLaps.length > partMax) partMax = partLaps.length;
             }
         }
 
-        // Grid template width:
-        //   Qualifying:  TLA + maxQ1 + gap + maxQ2 + gap + maxQ3
-        //   else:        TLA + maxLap
-        const totalLapCols = hasSegments
-            ? (segMax[1] + segMax[2] + segMax[3] + 2)   // +2 for the two gap columns
-            : maxLap;
+        // Grid width: the active part's lap count in quali, else absolute maxLap.
+        const totalLapCols = hasSegments ? Math.max(1, partMax) : maxLap;
 
         const allShown = state.hiddenDrivers.size === 0;
         const allBtn = document.getElementById('telemetryAllDrivers');
@@ -851,7 +859,7 @@
                     `<span class="telemetry-driver-swatch"></span>` +
                     `<span class="telemetry-driver-tla">${d.tla}</span>` +
                     `</span>` +
-                    renderLapList(num, maxLap, { hasSegments, segMax, localPos: localPos[num] || {} }) +
+                    renderLapList(num, maxLap, { hasSegments, activePart, localPos: localPos[num] || {} }) +
                     `</div>`;
         }
         html += `</div>`;
@@ -877,7 +885,7 @@
                 const wasHidden = state.hiddenDrivers.has(num);
                 if (wasHidden) state.hiddenDrivers.delete(num);
                 else state.hiddenDrivers.add(num);
-                if (wasHidden && (state.mode === 'last' || state.mode === 'best')) {
+                if (wasHidden && (state.mode === 'last' || state.mode === 'best') && !koHidden(num)) {
                     const cmd = state.mode === 'last' ? 'getLastLapTelemetry' : 'getBestLapTelemetry';
                     (state.mode === 'last' ? state.pendingLast : state.pendingBest).add(num);
                     messageBus.send({ cmd, driver: num });
@@ -932,18 +940,11 @@
         const cls = state.lapCls[num] || {};
         const segs = state.lapSegments[num] || {};
         const teleLaps = state.telemetryLaps[num];
+        // Qualifying: render ONLY the active part's laps (card 66), placed at
+        // local columns (TLA = col 1, first part-lap = col 2, …). localPos holds
+        // just this driver's active-part laps.
         const useSegLayout = !!(segCtx && segCtx.hasSegments);
-        const segMax = segCtx ? segCtx.segMax : null;
-        const localPos = segCtx ? segCtx.localPos : {};
-        // Segment-start column offsets (0-indexed from TLA col):
-        //   seg 1 → col 2
-        //   seg 2 → col 2 + maxQ1 + 1 (gap)
-        //   seg 3 → col 2 + maxQ1 + 1 + maxQ2 + 1
-        const segStartCol = useSegLayout ? {
-            1: 2,
-            2: 2 + segMax[1] + 1,
-            3: 2 + segMax[1] + 1 + segMax[2] + 1,
-        } : null;
+        const localPos = segCtx ? (segCtx.localPos || {}) : {};
 
         // Union of every known lap from every source — show ALL laps
         // (debug mode) so OUT/IN/PIT/COOL/ABORT traces can be inspected,
@@ -999,11 +1000,10 @@
         for (const lap of lapsToRender) {
             let col, pillLabel;
             if (useSegLayout) {
-                const seg = segs[lap] || 0;
                 const lp = localPos[lap];
-                if (!seg || !lp) continue;  // segment unknown — skip
-                col = segStartCol[seg] + (lp - 1);
-                pillLabel = lp;
+                if (!lp) continue;          // not in the active part → not in this tab
+                col = lp + 1;               // local column (TLA is col 1)
+                pillLabel = lap;            // absolute lap number (varies across drivers — expected)
             } else {
                 col = lap + 1;
                 pillLabel = lap;
@@ -1043,6 +1043,35 @@
                   + ` style="grid-column:${col}">${pillLabel}</span>`;
         }
         return html;
+    }
+
+    // Qualifying pill tabs (card 66): Q1/Q2/Q3 (SQ1-3 for sprint quali). Shows
+    // only the parts reached so far; clicking selects which part's laps the
+    // pills display. Hidden outside qualifying.
+    function renderPartTabs() {
+        const el = document.getElementById('telemetryPartTabs');
+        if (!el) return;
+        const part = state.qualifyingPart || 0;
+        if (part <= 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+        el.classList.remove('hidden');
+        const prefix = state.isSprintQuali ? 'SQ' : 'Q';
+        const active = state.activePart || part;
+        let html = '';
+        for (let p = 1; p <= part; p++) {
+            html += `<button class="telemetry-part-tab${p === active ? ' active' : ''}" `
+                  + `data-part="${p}">${prefix}${p}</button>`;
+        }
+        el.innerHTML = html;
+        el.querySelectorAll('.telemetry-part-tab').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const p = parseInt(btn.dataset.part);
+                if (!p) return;
+                state.activePart = p;
+                state.userPickedPart = true;
+                renderPartTabs();
+                renderDriverSelector();
+            });
+        });
     }
 
     // =========================================================================
@@ -1158,6 +1187,31 @@
         if (num) handleDriverStatus(num, data);
     });
 
+    // Qualifying part + knockouts (cards 66/71). segment "Q1".."Q3"/"SQ1"..
+    // drives the pill tabs; eliminated drives the Best/Last KO filter.
+    messageBus.on('qualifyingSegment', (data) => {
+        if (!data) return;
+        const newPart = partNum(data.segment);
+        const partChanged = newPart && newPart !== state.qualifyingPart;
+        if (newPart) state.qualifyingPart = newPart;
+        // Follow the live part with the active tab until the user picks one.
+        if (partChanged && (!state.activePart || state.userPickedPart !== true)) {
+            state.activePart = newPart;
+        }
+        state.eliminated = new Set((data.eliminated || []).map(String));
+        state.isSprintQuali = !!data.isSprintQuali;
+        // Drop eliminated drivers' Last/Best laps so they leave those views.
+        for (const map of [state.lastLaps, state.bestLaps]) {
+            for (const k of Object.keys(map)) {
+                if (koHidden(map[k].driver)) delete map[k];
+            }
+        }
+        renderPartTabs();
+        renderDriverSelector();
+        updateDriverBar();
+        scheduleRender();
+    });
+
     // driverLaps is thin — accumulate the pill-list lap-time map from lastLap
     // as laps arrive. A backward seek wipes state.lapTimes on state:reset and
     // replays the full driverLaps history up to the offset, so the map is
@@ -1168,6 +1222,11 @@
         if (data.lastLap && data.lastLap.lap != null && data.lastLap.time) {
             (state.lapTimes[num] || (state.lapTimes[num] = {}))[data.lastLap.lap] =
                 data.lastLap.time;
+            // Per-lap quali part → drives the pill tabs (card 66).
+            if (data.lastLap.part != null) {
+                (state.lapSegments[num] || (state.lapSegments[num] = {}))[data.lastLap.lap] =
+                    data.lastLap.part;
+            }
         }
         // Per-driver fastest lap → purple pill (server flags bestLap from
         // PersonalFastest/OverallFastest, so it excludes out/in/cool laps).
@@ -1177,7 +1236,7 @@
         }
         // Last view: refresh this driver's lap when it completes a newer one.
         if (state.mode === 'last' && data.lastLap && data.lastLap.lap != null
-                && !state.hiddenDrivers.has(num)
+                && !state.hiddenDrivers.has(num) && !koHidden(num)
                 && state.lastSeenLastLap[num] !== data.lastLap.lap) {
             state.lastSeenLastLap[num] = data.lastLap.lap;
             state.pendingLast.add(num);
@@ -1185,7 +1244,8 @@
         }
         // Best view: refresh this driver's lap when its best improves.
         if (state.mode === 'best' && data.bestLap && data.bestLap.lap != null
-                && !state.hiddenDrivers.has(num) && data.bestLap.lap !== prevBest) {
+                && !state.hiddenDrivers.has(num) && !koHidden(num)
+                && data.bestLap.lap !== prevBest) {
             state.pendingBest.add(num);
             messageBus.send({ cmd: 'getBestLapTelemetry', driver: num });
         }
@@ -1311,6 +1371,7 @@
         state.lapTimes = {};
         state.lapCls = {};
         state.lapSegments = {};
+        state.eliminated = new Set();   // rebuilt from the restored qualifyingSegment
         state.lapNoData = {};
         state.telemetryLaps = {};
         // Last/Best are view snapshots — clear on reset. Selection is the
