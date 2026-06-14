@@ -21,13 +21,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
+from app.config import CACHE_DIR
 from app.processing.preprocessor import SessionPreProcessor
 from app.services.signalr_client import F1SignalRClient
 
 logger = logging.getLogger(__name__)
 
 
-def kill_orphan_ffmpeg(cache_root: str = "data/livetiming_cache") -> None:
+def kill_orphan_ffmpeg(cache_root: Optional[str] = None) -> None:
     """Kill any leftover ffmpeg processes writing to commentary.aac.
 
     A previous server crash or hard kill can leave ffmpeg children
@@ -36,7 +37,7 @@ def kill_orphan_ffmpeg(cache_root: str = "data/livetiming_cache") -> None:
     writing to the same `-y` (truncated) file and corrupting the
     audio. Sweep them up at startup.
     """
-    needle = f"{cache_root}/"
+    needle = f"{cache_root or CACHE_DIR}/"
     try:
         out = subprocess.check_output(
             ["pgrep", "-fl", "ffmpeg.*commentary.aac"], text=True
@@ -80,8 +81,9 @@ class LiveCaptureService:
     The captured JSONL files can then be streamed to clients via SessionEngine.
     """
 
-    def __init__(self, cache_dir: str = "data/livetiming_cache"):
-        self.cache_dir = Path(cache_dir)
+    def __init__(self, cache_dir: Optional[str] = None):
+        # Default to the OS-appropriate cache location (card 25).
+        self.cache_dir = Path(cache_dir) if cache_dir else CACHE_DIR
         self._captures: dict[str, dict] = {}  # session_id -> capture info
         self._tasks: dict[str, asyncio.Task] = {}
         self._audio_process: Optional[subprocess.Popen] = None
