@@ -369,6 +369,16 @@
             state.lapNoData[driverNum].add(lap);
         }
 
+        // Mark the lap available the moment its telemetryLap row streams in
+        // (card 69). These rows arrive during normal playback at the offset the
+        // lap was committed — for an in-lap that's pit ENTRY (closed by the
+        // server there), so its pill appears immediately instead of waiting for
+        // the connect/seek telemetryAvailable refresh or the pit-out lap time.
+        if (!isNaN(lap) && Array.isArray(data) && data.length > 0) {
+            const set = state.telemetryLaps[driverNum] || (state.telemetryLaps[driverNum] = new Set());
+            if (!set.has(lap)) { set.add(lap); renderDriverSelector(); }
+        }
+
         // F1 LapTime (from TimingData) is the source of truth for the
         // legend, not the computed telemetry duration.
         const lapTime = (state.lapTimes[driverNum] || {})[lap] || '';
