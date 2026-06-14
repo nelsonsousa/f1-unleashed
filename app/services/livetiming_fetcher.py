@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 import aiohttp
 
-from app.config import REPLAY_DEBUG
+from app.config import REPLAY_DEBUG, CACHE_DIR
 from app.processing.database import transient_db_path
 from app.processing.preprocessor import SessionPreProcessor
 
@@ -138,8 +138,10 @@ class RawTimingMessage:
 class LiveTimingFetcher:
     """Fetches raw timing data from F1's livetiming service."""
 
-    def __init__(self, cache_dir: str = "data/livetiming_cache"):
-        self.cache_dir = Path(cache_dir)
+    def __init__(self, cache_dir: Optional[str] = None):
+        # Default to the OS-appropriate cache location (card 25); pass a path
+        # to override.
+        self.cache_dir = Path(cache_dir) if cache_dir else CACHE_DIR
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._session: Optional[aiohttp.ClientSession] = None
 

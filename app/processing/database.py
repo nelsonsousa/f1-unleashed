@@ -14,8 +14,9 @@ logger = logging.getLogger(__name__)
 
 # Processed DBs are TRANSIENT scratch — built on demand, deleted when no client
 # is viewing (kept in DEBUG). live.jsonl in the cache is the only permanent
-# source. Each session gets a unique scratch file under ./tmp.
-TRANSIENT_DB_DIR = Path("tmp")
+# source. Each session gets a unique scratch file under TMP_DIR (card 25 —
+# OS-appropriate location, configurable via F1U_DATA_DIR).
+from app.config import TMP_DIR as TRANSIENT_DB_DIR
 
 # Topics excluded from the seek/connect state-restore snapshot. These are
 # either per-lap on-demand fetches or high-rate / append-only histories that
@@ -28,6 +29,7 @@ def transient_db_path(session_path: Path) -> Path:
     """Unique scratch DB path for a session: ./tmp/{year}_{event}_{session}.db."""
     name = "_".join(session_path.parts[-3:]) or session_path.name
     safe = "".join(c if (c.isalnum() or c in "._-") else "_" for c in name)
+    TRANSIENT_DB_DIR.mkdir(parents=True, exist_ok=True)
     return TRANSIENT_DB_DIR / f"{safe}.db"
 
 

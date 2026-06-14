@@ -18,7 +18,7 @@ from typing import Any, Optional
 
 from fastapi import WebSocket
 
-from app.config import REPLAY_DEBUG
+from app.config import REPLAY_DEBUG, CACHE_DIR
 from app.processing.clock import PlaybackClock, ClockState
 from app.processing.database import SessionDatabase
 from app.processing.file_reader import read_jsonl, load_subscribe_json, _parse_timestamp
@@ -1057,8 +1057,9 @@ class SessionEngine:
 class SessionManager:
     """Manages active session engines. One engine per session."""
 
-    def __init__(self, cache_dir: str = "data/livetiming_cache"):
-        self._cache_dir = Path(cache_dir)
+    def __init__(self, cache_dir: Optional[str] = None):
+        # Default to the OS-appropriate cache location (card 25).
+        self._cache_dir = Path(cache_dir) if cache_dir else CACHE_DIR
         self._engines: dict[str, SessionEngine] = {}
 
     async def get_or_create(self, session_name: str, live: bool = False) -> SessionEngine:

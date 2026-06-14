@@ -29,13 +29,17 @@ from typing import Optional
 import httpx
 from dotenv import load_dotenv
 
+from app.config import DATA_DIR
+
 # Defensive — ensures TOMORROW_API_KEY is loaded even when this module
 # is imported by standalone scripts that don't pull in auth_service.
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = Path("data/weather_radar_cache")
+# Weather-radar tile cache — moved out of the repo to the OS-appropriate data
+# dir alongside the livetiming cache (card 25).
+CACHE_DIR = DATA_DIR / "weather_radar_cache"
 # One precipitation tile per refresh; a fetch every 5 min = 12 calls/hr,
 # well under the 25/hr free-tier cap. The overlay is the rain radar only
 # — overall sky condition is conveyed by the weather-condition icon
