@@ -1,6 +1,8 @@
 <div class="tile {{ width | default('w-50') }}" id="telemetryTile">
     <div class="tile-header telemetry-header">
         <span>Telemetry</span>
+        <!-- Qualifying lap-part toggle (Q1/Q2/Q3 or SQ1-3) — JS-populated, hidden outside quali (cards 66/83) -->
+        <div class="telemetry-part-tabs hidden" id="telemetryPartTabs"></div>
         <button class="telemetry-driver-toggle-all" id="telemetryAllDrivers" data-action="all">SHOW ALL</button>
         <div class="telemetry-channels" id="telemetryChannels">
             <button class="telemetry-channel active" data-channel="speed">SPD</button>
@@ -14,8 +16,6 @@
             <button class="telemetry-mode" data-mode="best">Best</button>
             <button class="telemetry-mode" data-mode="selection">Selection</button>
         </div>
-        <!-- Qualifying pill tabs (Q1/Q2/Q3 or SQ1-3) — populated by JS, hidden outside quali (card 66) -->
-        <div class="telemetry-part-tabs hidden" id="telemetryPartTabs"></div>
     </div>
     <div class="tile-content">
         <div class="telemetry-container" id="telemetryContainer">
