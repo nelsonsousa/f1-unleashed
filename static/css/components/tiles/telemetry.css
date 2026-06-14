@@ -77,6 +77,36 @@
     border-color: var(--text-muted);
 }
 
+/* Qualifying pill tabs (Q1/Q2/Q3 or SQ1-3) — card 66 */
+.telemetry-part-tabs {
+    display: flex;
+    gap: 4px;
+    margin-left: 8px;
+}
+
+.telemetry-part-tabs.hidden {
+    display: none;
+}
+
+.telemetry-part-tab {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.telemetry-part-tab.active {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border-color: var(--text-muted);
+}
+
 .telemetry-container {
     display: flex;
     flex-direction: row;
