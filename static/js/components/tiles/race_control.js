@@ -22,9 +22,13 @@
         })[c]);
     }
 
+    // Track GMT offset (ms), captured from SessionInfo below — see the
+    // sessionInfo handler. Owned here rather than read from messageBus so RCM
+    // timestamps don't depend on the header having set it first (card 86).
+    let _trackGmtOffsetMs = 0;
     function parseGmtOffsetMs(str) {
         if (!str) return 0;
-        const m = str.match(/^(-?)(\d+):(\d+):(\d+)$/);
+        const m = String(str).match(/^(-?)(\d+):(\d+):(\d+)$/);
         if (!m) return 0;
         const sign = m[1] === '-' ? -1 : 1;
         return sign * (parseInt(m[2]) * 3600 + parseInt(m[3]) * 60) * 1000;
@@ -34,8 +38,10 @@
         if (!timestamp) return '';
         try {
             const utc = new Date(timestamp.includes('T') ? timestamp : `2000-01-01T${timestamp}Z`);
-            const offsetMs = messageBus.gmtOffset ? parseGmtOffsetMs(messageBus.gmtOffset) : 0;
-            return new Date(utc.getTime() + offsetMs).toUTCString().slice(17, 25);
+            // Track time (matches the header track clock): UTC + the circuit's
+            // GMT offset (card 86). A future track/user toggle switches the
+            // source for all visible times.
+            return new Date(utc.getTime() + _trackGmtOffsetMs).toUTCString().slice(17, 25);
         } catch (e) {
             const t = timestamp.includes('T') ? timestamp.split('T')[1] : timestamp;
             return t.slice(0, 8);
@@ -263,9 +269,12 @@
     messageBus.on('championshipConstructors', (data) => {
         if (Array.isArray(data)) { champConstructors = data; renderAll(); }
     });
-    // sessionInfo carries gmtOffset; once it arrives, re-render so
-    // race-control timestamps switch from UTC to track-local.
-    messageBus.on('sessionInfo', () => renderAll());
+    // Capture the circuit GMT offset so RCM timestamps render in track time
+    // (card 86), matching the header track clock; re-render once it arrives.
+    messageBus.on('sessionInfo', (data) => {
+        if (data && data.gmtOffset) _trackGmtOffsetMs = parseGmtOffsetMs(data.gmtOffset);
+        renderAll();
+    });
 
     messageBus.on('state:reset', () => {
         peckingHtml = '';

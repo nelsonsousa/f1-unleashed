@@ -900,42 +900,38 @@
         if (!p || p.delta === undefined || p.delta === null) {
             return '<span class="pred"></span>';
         }
-        // Hide delta when the driver is in PIT (= status authority);
-        // state.lapCls may lag behind the live driverStatus transition,
-        // so we check both. Delta only renders for an active PUSH lap.
+        // Hide in the pits (status authority — lapCls can lag the transition).
+        // Applies to both the live prediction and the observed result.
         if (state.status[num] === 'PIT') {
             return '<span class="pred"></span>';
         }
-        const cls = (state.lapCls[num] || {}).status;
-        if (cls !== 'PUSH') {
-            return '<span class="pred"></span>';
-        }
-        const driverEntry = state.driverData[num] || {};
-        const hasReference = Boolean(driverEntry.bestLap)
-            || (state.lapTimes[num]
-                && Object.keys(state.lapTimes[num]).length > 0);
-        if (!hasReference) {
-            return '<span class="pred"></span>';
+        // The LIVE prediction (observed=false) renders only during a PUSH lap
+        // with a reference lap. The OBSERVED result (observed=true) is the just-
+        // completed lap's actual outcome and shows regardless of current class
+        // (cards 62/67).
+        if (!p.observed) {
+            if ((state.lapCls[num] || {}).status !== 'PUSH') {
+                return '<span class="pred"></span>';
+            }
+            const driverEntry = state.driverData[num] || {};
+            const hasReference = Boolean(driverEntry.bestLap)
+                || (state.lapTimes[num] && Object.keys(state.lapTimes[num]).length > 0);
+            if (!hasReference) {
+                return '<span class="pred"></span>';
+            }
         }
         const deltaSec = p.delta / 1000;
         const sign = deltaSec < 0 ? '−' : '+';
-        const deltaText = `${sign}${Math.abs(deltaSec).toFixed(1)}`;
+        // Live projection shows 0.1s; the observed completed-lap delta is exact
+        // to 0.001s (card 67).
+        const deltaText = `${sign}${Math.abs(deltaSec).toFixed(p.observed ? 3 : 1)}`;
         const deltaCls = deltaSec < 0 ? 'pred-delta-neg' : 'pred-delta-pos';
-
-        // Projected position = current standings position minus the places
-        // the server says this improvement would gain. Server-computed.
-        let posHtml = '';
-        if (deltaSec < 0 && p.placesGained != null) {
-            const curPos = state.standingsOrder.indexOf(num) + 1;
-            const projected = curPos > 0 ? curPos - p.placesGained : 0;
-            if (projected >= 1) {
-                const isP1 = projected === 1;
-                const posCls = isP1 ? 'pred-pos-p1' : 'pred-pos';
-                posHtml = `<span class="${posCls}">P${projected}</span>`;
-            }
-        }
+        // Positions gained: green up-triangle + count, right-aligned (card 64).
+        const posHtml = (p.placesGained != null && p.placesGained > 0)
+            ? `<span class="pred-pos-gain">&#9650;${p.placesGained}</span>`
+            : '';
         return `<span class="pred">`
-            + `<span class="${deltaCls}">${deltaText}</span>`
+            + `<span class="pred-delta ${deltaCls}">${deltaText}</span>`
             + posHtml
             + `</span>`;
     }

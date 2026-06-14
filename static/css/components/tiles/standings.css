@@ -336,40 +336,42 @@
 /* Delta cell (qualifying) — single grid column showing the predicted
  * lap-time delta vs the driver's session best + the projected position.
  * 20px right-padding gives the tyre cell breathing room. */
+/* Delta left (fixed slot), positions-gained right (card 67). Even padding both
+   sides so the cell sits evenly between its neighbours (best/last lap on the
+   left, tyres on the right) — leaves a clear gap before the delta. */
 .pred {
-    display: inline-flex;
+    display: flex;
     align-items: baseline;
-    justify-content: flex-end;
+    justify-content: space-between;
     gap: 6px;
     min-width: 0;
     overflow: hidden;
-    padding-right: 20px;
+    padding: 0 12px;
+}
+
+/* Delta value — same size/face as the sector-time cells (card 67); always
+   left-aligned in a constant slot (wide enough for the 0.001s observed delta)
+   so positions stay aligned right. */
+.pred-delta {
+    font-size: 14px;
+    text-align: left;
+    flex: 0 0 auto;
+    min-width: 4em;
 }
 
 /* Negative delta = currently faster than best lap = green. */
-.pred-delta-neg {
-    color: #00ff88;
-    font-weight: 700;
-}
+.pred-delta-neg { color: #00ff88; }
 
 /* Positive delta = currently slower = yellow (= caution, attempt slipping). */
-.pred-delta-pos {
-    color: #ffd700;
-    font-weight: 700;
-}
+.pred-delta-pos { color: #ffd700; }
 
-/* Projected finishing position. */
-.pred-pos {
+/* Positions gained: green up-triangle + count, right-aligned. Delta's font
+   face, but kept at the smaller size used before (card 67/64). */
+.pred-pos-gain {
     color: #00ff88;
-    font-weight: 600;
-    font-size: 0.9em;
-}
-
-/* Predicted P1 = purple, matching the F1 fastest-lap convention. */
-.pred-pos-p1 {
-    color: #cc66ff;
-    font-weight: 700;
-    font-size: 0.9em;
+    font-size: 16px;
+    flex: 0 0 auto;
+    text-align: right;
 }
 
 /* FIA Stewards penalty / flag stack.
@@ -405,7 +407,11 @@
     cursor: pointer;
 }
 .pen-flag { cursor: pointer; }
+/* Penalty badge colours are fixed by type, independent of the row's driver-
+   status colour (card 85): yellow = under investigation, orange = penalty
+   issued. The explicit colour overrides the status cell it's nested in. */
 .pen-yellow { color: #ffd700; }
+.pen-orange { color: #ff8800; }
 .pen-white  { color: #ffffff; }
 .pen-red    { color: #ff4040; }
 .pen-dsq    {
