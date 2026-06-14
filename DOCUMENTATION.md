@@ -86,24 +86,27 @@ Access to non-public F1 data (live session feeds, premium audio, telemetry) requ
 
 ## Caching
 
-Every captured session is stored on disk:
+Every captured session is stored on disk under an OS-appropriate data directory
+— Windows `%LOCALAPPDATA%\F1Unleashed`, macOS `~/Library/Application Support/
+F1Unleashed`, Linux `$XDG_DATA_HOME/f1unleashed` — overridable with the
+`F1U_DATA_DIR` environment variable:
 
 ```
-data/livetiming_cache/{year}/{NN_event}/{session_type}/
+{data-dir}/livetiming_cache/{year}/{NN_event}/{session_type}/
     live.jsonl           # one JSON message per line, payload-timestamp-ordered
     subscribe.json       # initial state snapshot at SignalR connect
     commentary.aac       # transcoded audio
     audio_info.json      # audio-clock anchor
-    session.db           # pre-processed SQLite database for fast seeking
 ```
 
-Pre-processing reads `live.jsonl` once (or streams live), runs the processor chain, and produces `session.db` data. Formula 1 timing messages only contain changes to previous data and as such make it hard to skip playback forwards/backwards. This pre-processing step makes every message history aware, and that allows near instant playback skip. 
+Pre-processing reads `live.jsonl` once (or streams live), runs the processor chain, and builds a transient pre-processed SQLite DB under `{data-dir}/tmp/` (one per session, built on demand and removed on disconnect). Formula 1 timing messages only contain changes to previous data and as such make it hard to skip playback forwards/backwards. This pre-processing step makes every message history aware, and that allows near instant playback skip.
 
-Cached data is stored in `data` folder. There are three cached data folders:
+The data directory holds:
 
-* **livetiming** cache: Formula 1's streamed data and audio
-* **weather** cache: precipitation radar images to re-use on replays
-* **analysis** suplemental data produced by the backend data processing.
+* **livetiming_cache**: Formula 1's streamed data and audio
+* **weather_radar_cache**: precipitation radar images to re-use on replays
+* **analysis**: supplemental data produced by the backend processing
+* **tmp**: transient per-session pre-processed DBs
 
 ---
 
@@ -220,12 +223,12 @@ WHERE rowid IN (
 ### On-disk cache format
 
 ```
-data/livetiming_cache/{year}/{MeetingKey}_{Location}/{SessionKey}_{SessionName}/
+{data-dir}/livetiming_cache/{year}/{MeetingKey}_{Location}/{SessionKey}_{SessionName}/
     live.jsonl         # Raw F1 messages: {"Type": "...", "DateTime": "...", "Json": {...}}
     subscribe.json     # Initial state snapshot from SignalR subscription
-    session.db         # Pre-processed: messages + processing_meta tables
     commentary.aac     # Audio recording (= live capture only)
     audio_info.json    # Audio anchor metadata (= live capture only)
+# the pre-processed DB is transient — built on demand under {data-dir}/tmp/
 ```
 
 **session.db schema**
@@ -278,7 +281,7 @@ Telemetry data is streamed at roughly 3-4Hz. Position data is also streamed at r
 
 ### Post-session analysis outputs
 
-After preprocessing finishes, the analysis pipeline writes JSON files into `data/analysis/{year}/{event}/{session}/`:
+After preprocessing finishes, the analysis pipeline writes JSON files into `{data-dir}/analysis/{year}/{event}/{session}/`:
 
 | File | Source | Used by |
 |------|--------|---------|

@@ -52,9 +52,11 @@ pip install -r requirements.txt
 
 # 3. Configure
 cp .env.example .env
-# edit .env:
+# edit .env (all optional):
 #   - NOTIFICATION_WEBHOOK_URL  (= ntfy.sh/<your-topic> for push alerts)
-#   - TOMORROW_IO_API_KEY       (= weather radar)
+#   - TOMORROW_API_KEY          (= weather radar)
+#   - F1U_DATA_DIR              (= override the cache/data location; defaults to
+#                                 an OS-appropriate app-data dir)
 
 # 4. Start
 ./f1unleashed.sh start
