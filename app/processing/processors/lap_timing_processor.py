@@ -68,7 +68,8 @@ class LapTimingProcessor(Processor):
         self._is_race = session_type == "race"   # "race" covers race + sprint
         self._started = False
         self._nol: dict[str, int] = {}                       # num -> current NoL
-        self._laps: dict[str, dict[int, dict]] = {}          # num -> {lap -> {time,pb,ob}}
+        self._laps: dict[str, dict[int, dict]] = {}          # num -> {lap -> {time,pb,ob,part}}
+        self._lap_part: dict[str, dict[int, Any]] = {}       # num -> {lap -> qualifying part it STARTED in}
         self._pending: dict[str, dict] = {}                  # num -> held lap-time
         self._best: dict[str, dict] = {}                     # num -> {lap,time,ms,part} — CURRENT part (display), reset per part
         self._session_best: dict[str, dict] = {}             # num -> {lap,time,ms} — session-wide, kept for delta prediction (card 63)
@@ -148,22 +149,35 @@ class LapTimingProcessor(Processor):
     def _process(self, num: str, d: dict, clock_time: datetime) -> bool:
         ll = None
         llt = d.get("LastLapTime")
+        flag_only = False
         if isinstance(llt, dict):
             # Update the sticky flags whenever they appear (carry forward otherwise).
+            had_flag = False
             if "PersonalFastest" in llt:
                 self._pb[num] = bool(llt["PersonalFastest"])
+                had_flag = True
             if "OverallFastest" in llt:
                 self._ob[num] = bool(llt["OverallFastest"])
+                had_flag = True
             if llt.get("Value"):
                 ll = {"time": llt["Value"],
                       "personalBest": self._pb.get(num, False),
                       "overallBest": self._ob.get(num, False)}
+            # F1 often sends the fastest flags a beat AFTER the lap time, in a
+            # standalone message with NO "Value" key (card 84). A reset marker
+            # has Value="" (key present) → not a late flag.
+            elif had_flag and "Value" not in llt:
+                flag_only = True
         changed = False
+        advanced = False
         if "NumberOfLaps" in d:
             changed |= self._advance(num, int(d["NumberOfLaps"]), ll, clock_time)
             ll = None   # consumed as the bundled time
+            advanced = True
         if ll is not None:
             changed |= self._standalone(num, ll, clock_time)
+        elif flag_only and not advanced:
+            changed |= self._apply_late_flags(num, clock_time)
         return changed
 
     def _advance(self, num: str, new_nol: int, bundled_ll: Optional[dict],
@@ -173,6 +187,12 @@ class LapTimingProcessor(Processor):
         laps = self._laps.setdefault(num, {})
         new_c = self._completed(new_nol)
         prev_c = self._completed(prev)
+        # Tag the lap now STARTING (new_c+1) with the current part. A lap belongs
+        # to the part it was DRIVEN in, not the part it completes in (card 82):
+        # a part's in-lap completes only at the next part's start, so tagging at
+        # completion would wrongly assign it to the new part. setdefault keeps
+        # the part it first started in across a mid-lap part change.
+        self._lap_part.setdefault(num, {}).setdefault(new_c + 1, self._part)
         # Same-time recovery: a previously-completed lap still timeless means
         # its LastLapTime was omitted because it equalled the prior lap (sticky
         # F1 delta) — no standalone ever arrived. Fill it from the carried value
@@ -203,9 +223,11 @@ class LapTimingProcessor(Processor):
         return False
 
     def _set_time(self, num: str, lap: int, ll: dict, clock_time: datetime) -> None:
-        # Tag each lap with the qualifying part it was set in (None outside
-        # quali) so the client can group laps by part (card 66).
-        self._laps[num][lap] = {**ll, "part": self._part}
+        # Tag each lap with the part it was DRIVEN in (recorded at lap start;
+        # None outside quali) so the client can group laps by part (card 66) and
+        # the in-lap of a part isn't mis-assigned to the next (card 82).
+        part = self._lap_part.get(num, {}).get(lap, self._part)
+        self._laps[num][lap] = {**ll, "part": part}
         ms = _parse_ms(ll["time"])
         if ms is None:
             return
@@ -216,22 +238,49 @@ class LapTimingProcessor(Processor):
         # is BOTH a PB and the overall best is sometimes flagged
         # OverallFastest-only, so accept either.
         if ll.get("personalBest") or ll.get("overallBest"):
-            # Per-part best — drives the displayed best (standings + telemetry
-            # Best view); reset each qualifying part (card 63).
-            if num not in self._best or ms < self._best[num]["ms"]:
-                self._best[num] = {"lap": lap, "time": ll["time"], "ms": ms, "part": self._part}
-                # Current-part global fastest → fastestLap (client colours it
-                # purple). Computed from the per-driver bests, not the
-                # (per-driver, sticky) OverallFastest flag which can read True
-                # for more than one car. Resets each part with _best.
-                if self._part_fastest_ms is None or ms < self._part_fastest_ms:
-                    self._part_fastest_ms = ms
-                    self._bus.emit("fastestLap",
-                                   {"num": num, "lap": lap, "time": ll["time"]}, clock_time)
-            # Session-wide best — kept across parts as the delta-prediction
-            # reference (card 63); emitted as overallBestLap, never reset.
-            if num not in self._session_best or ms < self._session_best[num]["ms"]:
-                self._session_best[num] = {"lap": lap, "time": ll["time"], "ms": ms}
+            self._update_best(num, lap, ll["time"], ms, part, clock_time)
+
+    def _update_best(self, num: str, lap: int, time: str, ms: int,
+                     part: Optional[int], clock_time: datetime) -> None:
+        """Record a flagged lap against the per-part best (display) and the
+        session-wide best (delta reference). Shared by _set_time and the
+        late-flag path (card 84)."""
+        # Per-part best — drives the displayed best (standings + telemetry Best
+        # view); reset each qualifying part (card 63). Only laps of the CURRENT
+        # part count toward it.
+        if part == self._part and (num not in self._best or ms < self._best[num]["ms"]):
+            self._best[num] = {"lap": lap, "time": time, "ms": ms, "part": part}
+            # Current-part global fastest → fastestLap (client colours it
+            # purple). Computed from the per-driver bests, not the (per-driver,
+            # sticky) OverallFastest flag which can read True for >1 car. Resets
+            # each part with _best.
+            if self._part_fastest_ms is None or ms < self._part_fastest_ms:
+                self._part_fastest_ms = ms
+                self._bus.emit("fastestLap", {"num": num, "lap": lap, "time": time}, clock_time)
+        # Session-wide best — kept across parts as the delta-prediction
+        # reference (card 63); emitted as overallBestLap, never reset.
+        if num not in self._session_best or ms < self._session_best[num]["ms"]:
+            self._session_best[num] = {"lap": lap, "time": time, "ms": ms}
+
+    def _apply_late_flags(self, num: str, clock_time: datetime) -> bool:
+        """A standalone PersonalFastest/OverallFastest=True update (no lap-time
+        Value) — F1 sends the fastest flags a beat after the lap time. Re-apply
+        them to the driver's last completed lap and re-evaluate best (card 84)."""
+        if not (self._pb.get(num) or self._ob.get(num)):
+            return False
+        laps = self._laps.get(num, {})
+        timed = [l for l, v in laps.items() if v.get("time")]
+        if not timed:
+            return False
+        lap = max(timed)
+        v = laps[lap]
+        v["personalBest"] = self._pb.get(num, False)
+        v["overallBest"] = self._ob.get(num, False)
+        ms = _parse_ms(v["time"])
+        if ms is None:
+            return False
+        self._update_best(num, lap, v["time"], ms, v.get("part"), clock_time)
+        return True
 
     def _emit(self, num: str, clock_time: datetime) -> None:
         laps = self._laps.get(num, {})
