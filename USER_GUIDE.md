@@ -29,7 +29,7 @@ Optimised for free practice: lots of timed lap context, pace classification, tyr
 - **Header** — local + session clock, track status, playback controls, audio controls.
 - **Standings** — position, driver, lap type, best lap, gap to leader, mini-sectors, S1/S2/S3 times, last lap time, tyre history, number of laps.
 - **Track map** -  track SVG with position of each driver, weather info and rain radar overlay.
-- **Telemetry** — multi-driver SPD / RPM / GEAR / THR-BRK traces with per-driver lap-list. Can show live telemetry trace, last lap, best lap and a selection of laps for comparison. Corner labels along the x-axis match the circuit map.
+- **Telemetry** — multi-driver SPD / RPM / GEAR / THR-BRK traces with per-driver lap-list. Can show live telemetry trace, last lap, best lap and a selection of laps for comparison; in qualifying a toggle groups the lap-list by part (Q1/Q2/Q3). Corner labels along the x-axis match the circuit map.
 - **Race control** — RC message stream.
 
 ---
@@ -40,7 +40,7 @@ Optimised for free practice: lots of timed lap context, pace classification, tyr
 
 Practice-like layout plus Q-specific features: knockout-zone indicator, lap time prediction, and team's predicted qualifying pace.
 
-- **Standings** — for drivers in elimination zone, gap is shown to the driver on the bubble. Only current tyre is shown. During a qualifying attempt, driver's delta is calculated in real time and displayed with forecasted position change.
+- **Standings** — for drivers in elimination zone, gap is shown to the driver on the bubble. Only current tyre is shown. During a qualifying attempt the driver's delta to their best lap is shown live with the positions it would gain; once the lap completes, the actual delta and positions gained are shown.
 - **Pecking-order tab** in race-control, the predicted ranking of teams and their gaps is shown on a separate tab in the lower right tile.
 
 ---
