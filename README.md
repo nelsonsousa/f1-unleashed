@@ -57,7 +57,7 @@ cp .env.example .env
 #   - TOMORROW_IO_API_KEY       (= weather radar)
 
 # 4. Start
-./service.sh start
+./f1unleashed.sh start
 
 # 5. Open
 open http://localhost:1950           # 1950 = the year of the first F1 World Championship
