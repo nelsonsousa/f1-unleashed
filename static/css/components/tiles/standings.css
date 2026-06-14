@@ -336,40 +336,41 @@
 /* Delta cell (qualifying) — single grid column showing the predicted
  * lap-time delta vs the driver's session best + the projected position.
  * 20px right-padding gives the tyre cell breathing room. */
+/* Delta left (fixed slot), positions-gained right (card 67). */
 .pred {
-    display: inline-flex;
+    display: flex;
     align-items: baseline;
-    justify-content: flex-end;
+    justify-content: space-between;
     gap: 6px;
     min-width: 0;
     overflow: hidden;
     padding-right: 20px;
 }
 
-/* Negative delta = currently faster than best lap = green. */
-.pred-delta-neg {
-    color: #00ff88;
+/* Delta value — same size/face as the lap-time cells (card 67); always
+   left-aligned and occupying a constant slot so positions stay aligned right. */
+.pred-delta {
+    font-size: 17px;
     font-weight: 700;
+    text-align: left;
+    flex: 0 0 auto;
+    min-width: 3.4em;
 }
+
+/* Negative delta = currently faster than best lap = green. */
+.pred-delta-neg { color: #00ff88; }
 
 /* Positive delta = currently slower = yellow (= caution, attempt slipping). */
-.pred-delta-pos {
-    color: #ffd700;
-    font-weight: 700;
-}
+.pred-delta-pos { color: #ffd700; }
 
-/* Projected finishing position. */
-.pred-pos {
+/* Positions gained: green up-triangle + count, right-aligned. Delta's font
+   face, but kept at the smaller size used before (card 67/64). */
+.pred-pos-gain {
     color: #00ff88;
-    font-weight: 600;
-    font-size: 0.9em;
-}
-
-/* Predicted P1 = purple, matching the F1 fastest-lap convention. */
-.pred-pos-p1 {
-    color: #cc66ff;
     font-weight: 700;
     font-size: 0.9em;
+    flex: 0 0 auto;
+    text-align: right;
 }
 
 /* FIA Stewards penalty / flag stack.
