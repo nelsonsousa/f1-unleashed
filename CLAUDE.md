@@ -107,7 +107,7 @@ snapshots for seeking, 1×–50× replay (1× live).
 ## Commands
 
 ```bash
-./service.sh start|stop|restart|status          # server on :1950
+./f1unleashed.sh start|stop|restart|status          # server on :1950
 python -m app.cli.login                          # browser-based F1 login
 ```
 

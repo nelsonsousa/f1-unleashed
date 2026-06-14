@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Formula 1 Live Timing API Service Script
-# Usage: ./service.sh {start|stop|restart|status}
+# Usage: ./f1unleashed.sh {start|stop|restart|status}
 
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 PID_FILE="$APP_DIR/.server.pid"

@@ -1,10 +1,10 @@
 #requires -Version 5.1
 <#
   Formula 1 Live Timing service control (Windows / PowerShell).
-  Usage:  .\service.ps1 {start|stop|restart|status}
+  Usage:  .\f1unleashed.ps1 {start|stop|restart|status}
 
-  Windows counterpart of service.sh. If PowerShell blocks the script, run it
-  via the service.bat wrapper or:  powershell -ExecutionPolicy Bypass -File service.ps1 start
+  Windows counterpart of f1unleashed.sh. If PowerShell blocks the script, run it
+  via the f1unleashed.bat wrapper or:  powershell -ExecutionPolicy Bypass -File f1unleashed.ps1 start
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -102,5 +102,5 @@ switch ($args[0]) {
     'stop'    { Stop-Server }
     'restart' { Stop-Server; Start-Sleep -Seconds 1; Start-Server }
     'status'  { Get-Status }
-    default   { Write-Host "Usage: .\service.ps1 {start|stop|restart|status}"; exit 1 }
+    default   { Write-Host "Usage: .\f1unleashed.ps1 {start|stop|restart|status}"; exit 1 }
 }
