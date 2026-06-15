@@ -31,7 +31,8 @@ class ChampionshipProcessor(Processor):
         super().__init__(bus, session_type)
         self._active = session_type in ("race", "sprint")
         self._drivers: dict[str, dict] = {}   # num -> sticky prediction fields
-        self._teams: dict[str, dict] = {}      # teamName -> sticky prediction fields
+        self._teams: dict[str, dict] = {}      # F1 team key -> sticky prediction fields
+        self._team_names: dict[str, str] = {}  # F1 team key -> sticky TeamName (short)
         self._dl: dict[str, dict] = {}         # num -> {name, colour, team}
 
     def subscribe(self) -> None:
@@ -77,8 +78,16 @@ class ChampionshipProcessor(Processor):
         if isinstance(teams, dict):
             for tk, entry in teams.items():
                 if isinstance(entry, dict):
-                    name = entry.get("TeamName") or tk
-                    changed |= self._merge(self._teams, name, entry)
+                    # Key prediction fields by the stable F1 key (tk). TeamName
+                    # is a sticky delta carried only by the first message for a
+                    # team (key = full "McLaren Mercedes", value = short
+                    # "McLaren"); keying by name would fork a duplicate entry
+                    # once the TeamName-less follow-ups arrive (bug card 88).
+                    changed |= self._merge(self._teams, tk, entry)
+                    name = entry.get("TeamName")
+                    if name and self._team_names.get(tk) != name:
+                        self._team_names[tk] = name
+                        changed = True
         if changed:
             self._emit(clock_time)
 
@@ -114,7 +123,8 @@ class ChampionshipProcessor(Processor):
         drivers.sort(key=lambda d: (d["predictedPosition"] is None, d["predictedPosition"]))
 
         constructors = []
-        for team, p in self._teams.items():
+        for tk, p in self._teams.items():
+            team = self._team_names.get(tk, tk)
             pts, pos = self._gains(p)
             constructors.append({
                 "teamName": team,
