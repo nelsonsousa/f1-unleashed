@@ -35,7 +35,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     await checkForLiveSession();
     await setupYearDropdown();
     await refreshCache();
+    loadVersionInfo();   // non-blocking — version is informational
 });
+
+// Version + update indicator (footer). Notification only — no auto-update.
+async function loadVersionInfo() {
+    try {
+        const data = await fetchJSON(`${API_BASE}/version`);
+        const vEl = document.getElementById('appVersion');
+        if (vEl && data.version) vEl.textContent = `v${data.version}`;
+        if (data.update_available) {
+            const up = document.getElementById('updateAvailable');
+            if (up) {
+                up.textContent = `· Update available${data.latest ? ` (${data.latest})` : ''}`;
+                if (data.release_url) up.href = data.release_url;
+                up.classList.remove('hidden');
+            }
+        }
+    } catch (e) { /* version is non-critical — ignore */ }
+}
+
+// Open the cache root folder in the OS file explorer.
+window.openCacheFolder = async function() {
+    try {
+        const resp = await fetch(`${API_BASE}/livetiming/open-cache-folder`, { method: 'POST' });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    } catch (e) {
+        console.error(e);
+        alert('Could not open the cache folder.');
+    }
+};
 
 // =========================================================================
 // Auth Functions
@@ -549,7 +578,7 @@ function renderSessionPopoverHtml(year, ev) {
             <div class="session-card${cached ? ' cached' : ''}">
                 <div class="ses-name">${escapeHtml(s.name)}</div>
                 <div class="ses-when">${escapeHtml(dlabel)}</div>
-                ${renderSessionStatusIcons(entry)}
+                ${renderSessionStatusIcons(entry, year, ev, s)}
                 ${action}
             </div>
         `;
@@ -566,27 +595,45 @@ function renderSessionPopoverHtml(year, ev) {
     return cards;
 }
 
-// Two status pips per session card: recording (live.jsonl present and
-// complete — captured the whole session start-to-end) and audio
-// (commentary.aac present). Lit on / muted off depending on the flags.
-function renderSessionStatusIcons(entry) {
-    const has = (k) => !!(entry && entry[k]);
-    const json = has('has_jsonl');
-    const aud  = has('has_audio');
+// Present/absent status → CSS colour class (green / grey).
+function statusClass(status) {
+    return status === 'present' ? 'st-ok' : 'st-absent';
+}
+
+// Per-session status icons (cards): data + audio + weather stacked, each just
+// present (green) or absent (grey) with a tooltip. A re-download button sits
+// next to the data icon for cached sessions (audio can't be re-downloaded, so
+// it never gets one).
+function renderSessionStatusIcons(entry, year, ev, s) {
+    const dataS  = (entry && entry.data_status)
+        || (entry && entry.has_jsonl ? 'present' : 'absent');
+    const audioS = (entry && entry.audio_status)
+        || (entry && entry.has_audio ? 'present' : 'absent');
+    const wxS    = (entry && entry.weather_status) || 'absent';
+
+    const fileSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+    const audioSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M3 9v6h4l5 5V4L7 9H3z"/><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>`;
+    const wxSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.6 1.5A3.5 3.5 0 0 0 6.5 19z"/></svg>`;
+
+    const tip = (label, st) => `${label} ${st === 'present' ? 'present' : 'absent'}`;
+    // Re-download is offered on cached sessions so a bad/partial capture can be
+    // refreshed from the CDN.
+    const dlBtn = entry
+        ? `<button class="ses-redl" title="Re-download timing data" onclick="redownloadSession(${year}, '${escapeAttr(ev.name)}', '${escapeAttr(s.name)}', this)">&#8595;</button>`
+        : '';
+
     return `
         <div class="ses-icons">
-            <span class="ses-ico ${json ? 'on' : 'off'}" title="${json ? 'recording complete' : 'recording missing or incomplete'}">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                    <polyline points="14 2 14 8 20 8"/>
-                </svg>
-            </span>
-            <span class="ses-ico ${aud ? 'on' : 'off'}" title="${aud ? 'commentary audio cached' : 'no audio'}">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                    <path d="M3 9v6h4l5 5V4L7 9H3z"/>
-                    <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
-                </svg>
-            </span>
+            <div class="ses-ico-row">
+                <span class="ses-ico ${statusClass(dataS)}" title="${escapeAttr(tip('Timing data', dataS))}">${fileSvg}</span>
+                ${dlBtn}
+            </div>
+            <div class="ses-ico-row">
+                <span class="ses-ico ${statusClass(audioS)}" title="${escapeAttr(tip('Audio', audioS))}">${audioSvg}</span>
+            </div>
+            <div class="ses-ico-row">
+                <span class="ses-ico ${statusClass(wxS)}" title="${escapeAttr(tip('Weather data', wxS))}">${wxSvg}</span>
+            </div>
         </div>
     `;
 }
@@ -679,6 +726,35 @@ window.downloadSession = async function(year, eventName, sessionName, btn) {
     }
 };
 
+// Re-download a session's timing data (force=true), e.g. when the cached
+// live.jsonl is incomplete or corrupted (card).
+window.redownloadSession = async function(year, eventName, sessionName, btn) {
+    btn.disabled = true;
+    const prev = btn.innerHTML;
+    btn.innerHTML = '…';
+    try {
+        const sessionType = sessionTypeFromName(sessionName);
+        const resp = await fetch(`${API_BASE}/livetiming/fetch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                year, meeting_name: eventName,
+                session_type: sessionType, force: true,
+            }),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        await loadCachedKeys();
+        renderScheduleCards(currentYear, currentEvents);
+        refreshCache();
+        closeSessionPopover();
+    } catch (e) {
+        btn.disabled = false;
+        btn.innerHTML = prev;
+        console.error(e);
+        alert(`Re-download failed: ${e.message}`);
+    }
+};
+
 window.downloadAllSessions = async function(year, eventName, btn) {
     btn.disabled = true;
     btn.textContent = 'Downloading…';
@@ -750,18 +826,29 @@ window.refreshCache = async function() {
                 .slice()
                 .sort((a, b) => (b.modified || '').localeCompare(a.modified || ''));
             const items = sorted.map(s => {
-                const name = String(s.session || '').replace(/^\d+\s+/, '');
+                const fullName = String(s.session || '').replace(/^\d+\s+/, '');
+                const shortName = sessionShortName(fullName);
+                const size = formatBytes((s.size_mb || 0) * 1024 * 1024);
                 return `
-                    <li title="${escapeHtml(s.name)}">
-                        <span class="cache-li-name">${escapeHtml(name)}</span>
-                        <button class="cache-li-del" title="Delete from disk"
+                    <li title="${escapeHtml(fullName)}">
+                        <span class="cache-li-name">${escapeHtml(shortName)}</span>
+                        <span class="cache-li-size">${escapeHtml(size)}</span>
+                        <button class="cache-li-del" title="Delete this session from disk"
                                 onclick="deleteCachedSession('${escapeAttr(s.name)}', this)">×</button>
                     </li>
                 `;
             }).join('');
+            // Per-event delete-all: the session cache keys are passed so the
+            // handler can loop the existing per-session DELETE endpoint.
+            const keys = sorted.map(s => s.name);
+            const keysAttr = escapeAttr(JSON.stringify(keys));
             return `
                 <div class="cache-event">
-                    <div class="cache-event-label">${escapeHtml(g.loc)}</div>
+                    <div class="cache-event-label">
+                        <span>${escapeHtml(g.loc)}</span>
+                        <button class="cache-event-del" title="Delete ALL sessions of this event"
+                                onclick='deleteCachedEvent("${escapeAttr(g.loc)}", ${keysAttr}, this)'>×</button>
+                    </div>
                     <ul>${items}</ul>
                 </div>
             `;
@@ -780,8 +867,22 @@ function formatBytes(n) {
     return `${n.toFixed(n < 10 ? 1 : 0)} ${u[i]}`;
 }
 
+// Short session label for the compact cache list: FP1/FP2/FP3/SQ/Q/S/R.
+function sessionShortName(name) {
+    const n = (name || '').toLowerCase();
+    if (n.includes('practice 1')) return 'FP1';
+    if (n.includes('practice 2')) return 'FP2';
+    if (n.includes('practice 3')) return 'FP3';
+    if (n.includes('sprint qualifying') || n.includes('sprint shootout')) return 'SQ';
+    if (n.includes('sprint')) return 'S';
+    if (n.includes('qualifying')) return 'Q';
+    if (n.includes('race')) return 'R';
+    return name || '?';
+}
+
 window.deleteCachedSession = async function(sessionName, btn) {
-    if (!confirm(`Delete ${sessionName} from disk?`)) return;
+    if (!confirm(`Delete ${sessionName} from disk?\n\n`
+                 + `Audio and team radio cannot be re-downloaded later.`)) return;
     btn.disabled = true;
     try {
         const resp = await fetch(
@@ -789,6 +890,27 @@ window.deleteCachedSession = async function(sessionName, btn) {
             { method: 'DELETE' }
         );
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        await loadCachedKeys();
+        renderScheduleCards(currentYear, currentEvents);
+        await refreshCache();
+    } catch (e) {
+        btn.disabled = false;
+        console.error(e);
+        alert(`Delete failed: ${e.message}`);
+    }
+};
+
+// Delete EVERY cached session of an event (loops the per-session DELETE).
+window.deleteCachedEvent = async function(label, sessionKeys, btn) {
+    if (!Array.isArray(sessionKeys) || !sessionKeys.length) return;
+    if (!confirm(`Delete ALL ${sessionKeys.length} cached session(s) for ${label}?\n\n`
+                 + `Audio and team radio cannot be re-downloaded later.`)) return;
+    btn.disabled = true;
+    try {
+        for (const key of sessionKeys) {
+            await fetch(`${API_BASE}/livetiming/cached/${encodeURIComponent(key)}`,
+                        { method: 'DELETE' });
+        }
         await loadCachedKeys();
         renderScheduleCards(currentYear, currentEvents);
         await refreshCache();

@@ -517,6 +517,20 @@ class LiveTimingFetcher:
             for f in ("commentary.aac", "commentary.001.aac")
         )
 
+        # Simple present/absent status for data + audio + weather (card 5,
+        # simplified — no incomplete/corrupted classification).
+        info["data_status"] = (
+            "present" if (live_file.exists() and live_file.stat().st_size > 0)
+            else "absent"
+        )
+        info["audio_status"] = "present" if info["has_audio"] else "absent"
+        try:
+            from app.services import weather_radar
+            has_wx = weather_radar.has_cached_weather(session_dir)
+        except Exception:
+            has_wx = False
+        info["weather_status"] = "present" if has_wx else "absent"
+
         return info
 
     def _build_session_info_legacy(self, session_dir: Path, live_file: Path) -> dict[str, Any]:

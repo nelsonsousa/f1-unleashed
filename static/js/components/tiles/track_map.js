@@ -161,29 +161,55 @@
     // Track Flashing
     // =========================================================================
 
-    function flashTrack(color, pulses, onMs, offMs) {
-        // Generic blink: `pulses` on-cycles of length `onMs`, each
-        // followed by an off-cycle of `offMs`. Defaults to 3 × (0.5 s
-        // on, 0.5 s off) for red / SC / VSC; GREEN uses 1 × 1 s.
+    // Generation counter so a new track-status flash cancels any in-flight
+    // blink or solid-hold callbacks left over from a previous one.
+    let _flashGen = 0;
+
+    function clearTrackColour() {
+        if (!state.trackSvg) return;
+        const outline = state.trackSvg.querySelector('#track-outline');
+        const sectors = state.trackSvg.querySelector('#track-sectors');
+        [outline, sectors].filter(Boolean).forEach(el => el.classList.remove('flag-blink'));
+    }
+
+    function flashTrack(color, pulses, onMs, offMs, holdSolid) {
+        // Generic blink: `pulses` on-cycles of length `onMs`, each followed by
+        // an off-cycle of `offMs`. When `holdSolid` is true the colour is
+        // re-applied after the final pulse and LEFT ON (solid) until the next
+        // track-status change clears it — keeps the map solid red under a red
+        // flag and solid yellow under SC/VSC. (.flag-blink only sets the
+        // stroke colour; there's no CSS animation, so leaving it on = solid.)
         if (!state.trackSvg) return;
         const outline = state.trackSvg.querySelector('#track-outline');
         const sectors = state.trackSvg.querySelector('#track-sectors');
         const elements = [outline, sectors].filter(Boolean);
         if (!elements.length) return;
 
+        const gen = ++_flashGen;
         let remaining = pulses;
-        function on() {
-            if (remaining <= 0) return;
+        const apply = () => {
+            if (gen !== _flashGen) return;
             elements.forEach(el => {
                 el.style.setProperty('--flag-color', color);
                 el.classList.add('flag-blink');
             });
+        };
+        const clear = () => {
+            if (gen !== _flashGen) return;
+            elements.forEach(el => el.classList.remove('flag-blink'));
+        };
+        function on() {
+            if (gen !== _flashGen) return;
+            if (remaining <= 0) { if (holdSolid) apply(); return; }
+            apply();
             setTimeout(off, onMs);
         }
         function off() {
-            elements.forEach(el => el.classList.remove('flag-blink'));
+            if (gen !== _flashGen) return;
+            clear();
             remaining--;
             if (remaining > 0) setTimeout(on, offMs);
+            else if (holdSolid) setTimeout(apply, offMs);
         }
         on();
     }
@@ -212,10 +238,12 @@
 
     // Server emits trackStatus {status, message}. Flash once per colour
     // change (the server re-emits on message changes too, e.g. SC DEPLOYED
-    // -> SC IN THIS LAP, which must not re-trigger the flash):
-    //   red       → blink red 3× (0.5 s on, 0.5 s off)
-    //   sc / vsc  → blink yellow 3× (0.5 s on, 0.5 s off)
-    //   green     → blink green 1× (1 s on)
+    // -> SC IN THIS LAP, which maps to the same colour and must not re-flash):
+    //   red       → blink red 2×, then SOLID red until green
+    //   sc / vsc  → blink yellow 2×, then SOLID yellow until the period ends
+    //   green     → blink green 1× (1 s on), clears any solid hold
+    // SC↔VSC share the yellow colour, so the guard keeps the solid hold across
+    // that transition; chequered/finished/inactive clear the hold (colour=null).
     const FLASH_COLOUR = { green: 'green', red: 'red', sc: 'yellow', vsc: 'yellow' };
 
     function handleTrackStatus(data) {
@@ -223,12 +251,16 @@
         const colour = FLASH_COLOUR[data.status] || null;
         if (colour === state.lastFlashColour) return;
         state.lastFlashColour = colour;
+        // Cancel any in-flight blink / solid-hold and clear the held colour
+        // before applying the new status.
+        _flashGen++;
+        clearTrackColour();
         if (data.status === 'red') {
-            flashTrack('#e10600', 3, 500, 500);
+            flashTrack('#e10600', 2, 500, 500, true);
         } else if (data.status === 'sc' || data.status === 'vsc') {
-            flashTrack('#ffd700', 3, 500, 500);
+            flashTrack('#ffd700', 2, 500, 500, true);
         } else if (data.status === 'green') {
-            flashTrack('#00ff00', 1, 1000, 0);
+            flashTrack('#00ff00', 1, 1000, 0, false);
         }
     }
 

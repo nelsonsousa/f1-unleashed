@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>F1 Unleashed</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-    <link rel="stylesheet" href="/static/css/home.css?v=2026-05-27d">
+    <link rel="stylesheet" href="/static/css/home.css?v=2026-06-15b">
 </head>
 <body>
     <div class="container">
@@ -63,8 +63,12 @@
         <div class="home-body">
             <main class="schedule-pane">
                 <div class="schedule-header">
-                    <h2>Season</h2>
-                    <select class="year-select" id="yearSelect"></select>
+                    <div class="season-title">
+                        <span class="season-select-wrap">
+                            <select class="year-select" id="yearSelect"></select>
+                        </span>
+                        <span class="season-word">SEASON</span>
+                    </div>
                 </div>
                 <div class="schedule-grid" id="scheduleGrid">
                     <div class="loading">Loading…</div>
@@ -73,7 +77,7 @@
 
             <aside class="storage-panel">
                 <h3>Cached Sessions</h3>
-                <p class="cache-info">Raw timing data cached locally</p>
+                <p class="cache-info">Timing and audio data cached locally</p>
                 <div class="storage-stats">
                     <div class="stat">
                         <span class="label">Sessions</span>
@@ -87,6 +91,7 @@
                 <div class="cached-list" id="cachedList"></div>
                 <div class="storage-actions">
                     <button class="btn-secondary" onclick="refreshCache()">Refresh</button>
+                    <button class="btn-secondary" onclick="openCacheFolder()">Open folder</button>
                 </div>
             </aside>
         </div>
@@ -94,7 +99,8 @@
         <footer class="page-footer">
             <a href="/docs">API docs</a>
             &nbsp;·&nbsp;
-            <span>F1 Unleashed</span>
+            <span>F1 Unleashed <span id="appVersion"></span></span>
+            <a id="updateAvailable" class="update-available hidden" href="#" target="_blank" rel="noopener"></a>
         </footer>
     </div>
 
@@ -111,6 +117,6 @@
         </div>
     </div>
 
-    <script src="/static/js/home.js?v=2026-05-27d"></script>
+    <script src="/static/js/home.js?v=2026-06-15a"></script>
 </body>
 </html>

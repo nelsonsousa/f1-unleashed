@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.templating import Jinja2Templates
 from app.routers import livetiming, livetiming_stream, auth, races, weather
 from app.logging_config import setup_logging
+from app.version import get_version, check_latest_release
 from app.services.auth_service import auth_service
 from app.services.live_capture import live_capture, kill_orphan_ffmpeg
 from app.services.weather_radar import radar_capture
@@ -269,17 +270,18 @@ async def live_session_monitor():
                         s = cached_next_session
                         radar_window_start = s["session_date"] - timedelta(minutes=15)
                         radar_window_end = s["session_date"] + timedelta(hours=4)
-                        if radar_window_start <= now_utc <= radar_window_end:
-                            this_key = (
-                                s["session_date"].year,
-                                s["event_name"],
-                                s["session_type"],
-                            )
-                            if radar_capture.active_key != this_key:
+                        # Start the radar only once the live feed is up — so the
+                        # F1 meeting/session keys are known and the session cache
+                        # dir exists — AND we're within the 15-min-before → end
+                        # window. Tiles co-locate in that session dir (card).
+                        live_sid = _active_live_capture["session_id"]
+                        if (radar_window_start <= now_utc <= radar_window_end
+                                and live_sid):
+                            cache_path = live_capture.cache_path_for(live_sid)
+                            if cache_path and radar_capture.active_key != str(cache_path):
                                 radar_capture.start(
-                                    year=this_key[0],
-                                    event_name=this_key[1],
-                                    session_type=this_key[2],
+                                    session_dir=cache_path,
+                                    meeting_name=s["event_name"],
                                     stop_at=radar_window_end,
                                 )
 
@@ -401,7 +403,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Formula 1 Live Timing API",
     description="API for F1 Live Timing data replay and streaming",
-    version="2.0.0",
+    version=get_version(),
     lifespan=lifespan,
 )
 
@@ -420,6 +422,12 @@ app.include_router(weather.router, prefix="/api/v1", tags=["weather"])
 @app.get("/")
 def root():
     return FileResponse("static/index.html")
+
+
+@app.get("/api/v1/version")
+def version_info():
+    """Running app version + latest GitHub release (for the update indicator)."""
+    return check_latest_release()
 
 
 @app.get("/browser")
