@@ -517,6 +517,26 @@ class LiveTimingFetcher:
             for f in ("commentary.aac", "commentary.001.aac")
         )
 
+        # 4-state data/audio health (cached in a status.json sidecar; card).
+        from app.services import cache_health
+        health = cache_health.get_health(session_dir)
+        info["data_status"] = health.get("data_status")
+        info["data_reason"] = health.get("data_reason")
+        info["audio_status"] = health.get("audio_status")
+        info["audio_reason"] = health.get("audio_reason")
+
+        # Weather-tile presence (green/grey) — tiles live outside the session
+        # dir, so this is checked here rather than in the sidecar (card).
+        try:
+            from app.services import weather_radar
+            ev_name = info.get("meeting") or location
+            has_wx = weather_radar.has_cached_weather(
+                int(year), ev_name, session_name
+            )
+            info["weather_status"] = "complete" if has_wx else "absent"
+        except Exception:
+            info["weather_status"] = "absent"
+
         return info
 
     def _build_session_info_legacy(self, session_dir: Path, live_file: Path) -> dict[str, Any]:
