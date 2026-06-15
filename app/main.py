@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.templating import Jinja2Templates
 from app.routers import livetiming, livetiming_stream, auth, races, weather
 from app.logging_config import setup_logging
+from app.version import get_version, check_latest_release
 from app.services.auth_service import auth_service
 from app.services.live_capture import live_capture, kill_orphan_ffmpeg
 from app.services.weather_radar import radar_capture
@@ -401,7 +402,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Formula 1 Live Timing API",
     description="API for F1 Live Timing data replay and streaming",
-    version="2.0.0",
+    version=get_version(),
     lifespan=lifespan,
 )
 
@@ -420,6 +421,12 @@ app.include_router(weather.router, prefix="/api/v1", tags=["weather"])
 @app.get("/")
 def root():
     return FileResponse("static/index.html")
+
+
+@app.get("/api/v1/version")
+def version_info():
+    """Running app version + latest GitHub release (for the update indicator)."""
+    return check_latest_release()
 
 
 @app.get("/browser")
