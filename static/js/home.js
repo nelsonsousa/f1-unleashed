@@ -580,50 +580,44 @@ function renderSessionPopoverHtml(year, ev) {
     return cards;
 }
 
-// Health status → CSS colour class (grey/red/yellow/green).
+// Present/absent status → CSS colour class (green / grey).
 function statusClass(status) {
-    return {
-        complete:   'st-ok',
-        incomplete: 'st-warn',
-        corrupted:  'st-err',
-        absent:     'st-absent',
-    }[status] || 'st-absent';
+    return status === 'present' ? 'st-ok' : 'st-absent';
 }
 
-// Per-session status icons (cards): data + audio stacked, each coloured by its
-// 4-state health (grey/red/yellow/green) with the reason in the tooltip, plus a
-// weather-presence icon (green/grey). A re-download button sits next to the data
-// icon whenever data isn't complete; audio can't be re-downloaded, so it never
-// gets one.
+// Per-session status icons (cards): data + audio + weather stacked, each just
+// present (green) or absent (grey) with a tooltip. A re-download button sits
+// next to the data icon for cached sessions (audio can't be re-downloaded, so
+// it never gets one).
 function renderSessionStatusIcons(entry, year, ev, s) {
     const dataS  = (entry && entry.data_status)
-        || (entry && entry.has_jsonl ? 'complete' : 'absent');
+        || (entry && entry.has_jsonl ? 'present' : 'absent');
     const audioS = (entry && entry.audio_status)
-        || (entry && entry.has_audio ? 'complete' : 'absent');
+        || (entry && entry.has_audio ? 'present' : 'absent');
     const wxS    = (entry && entry.weather_status) || 'absent';
-    const dataReason  = (entry && entry.data_reason)  || `Data ${dataS}`;
-    const audioReason = (entry && entry.audio_reason) || `Audio ${audioS}`;
-    const wxReason    = wxS === 'complete' ? 'Weather data cached' : 'No weather data';
 
     const fileSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
     const audioSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M3 9v6h4l5 5V4L7 9H3z"/><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>`;
     const wxSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.6 1.5A3.5 3.5 0 0 0 6.5 19z"/></svg>`;
 
-    const dlBtn = (dataS !== 'complete')
-        ? `<button class="ses-redl" title="${entry ? 'Re-download timing data' : 'Download timing data'}" onclick="redownloadSession(${year}, '${escapeAttr(ev.name)}', '${escapeAttr(s.name)}', this)">&#8595;</button>`
+    const tip = (label, st) => `${label} ${st === 'present' ? 'present' : 'absent'}`;
+    // Re-download is offered on cached sessions so a bad/partial capture can be
+    // refreshed from the CDN.
+    const dlBtn = entry
+        ? `<button class="ses-redl" title="Re-download timing data" onclick="redownloadSession(${year}, '${escapeAttr(ev.name)}', '${escapeAttr(s.name)}', this)">&#8595;</button>`
         : '';
 
     return `
         <div class="ses-icons">
             <div class="ses-ico-row">
-                <span class="ses-ico ${statusClass(dataS)}" title="${escapeAttr(dataReason)}">${fileSvg}</span>
+                <span class="ses-ico ${statusClass(dataS)}" title="${escapeAttr(tip('Timing data', dataS))}">${fileSvg}</span>
                 ${dlBtn}
             </div>
             <div class="ses-ico-row">
-                <span class="ses-ico ${statusClass(audioS)}" title="${escapeAttr(audioReason)}">${audioSvg}</span>
+                <span class="ses-ico ${statusClass(audioS)}" title="${escapeAttr(tip('Audio', audioS))}">${audioSvg}</span>
             </div>
             <div class="ses-ico-row">
-                <span class="ses-ico ${statusClass(wxS)}" title="${escapeAttr(wxReason)}">${wxSvg}</span>
+                <span class="ses-ico ${statusClass(wxS)}" title="${escapeAttr(tip('Weather data', wxS))}">${wxSvg}</span>
             </div>
         </div>
     `;
