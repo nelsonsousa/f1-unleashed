@@ -300,6 +300,18 @@
     text-align: left;
 }
 
+/* Current tyre = the first stint span (tyreCell renders newest first).
+   Enlarge its icon + lap count so the current set stands out; previous
+   sets keep the base (smaller) size. */
+.tyre-stint:first-child .tyre-stint-icon {
+    width: 28px;
+    height: 28px;
+}
+
+.tyre-stint:first-child .tyre-stint-laps {
+    font-size: 16px;
+}
+
 .lap-count {
     text-align: right;
     font-weight: 700;
