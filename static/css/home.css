@@ -319,16 +319,48 @@ header {
     text-transform: uppercase;
     letter-spacing: 1px;
 }
+
+/* Season title: "<year> SEASON" rendered as one seamless unit, with the
+   year selector styled to match the SEASON word and a dropdown caret placed
+   BEFORE the value (e.g. "▾ 2026 SEASON"). */
+.season-title {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+.season-word {
+    font-size: 1.2rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+.season-select-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: baseline;
+}
+.season-select-wrap::before {
+    content: '\25BE';   /* ▾ caret, before the value */
+    color: var(--text-secondary);
+    margin-right: 4px;
+    font-size: 0.85em;
+    pointer-events: none;
+}
 .year-select {
-    background: var(--bg-card);
-    color: var(--text-primary);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 6px 10px;
-    font-size: 0.95rem;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 1.2rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
     cursor: pointer;
 }
-.year-select:focus { outline: none; border-color: var(--accent); }
+.year-select:focus { outline: none; }
 
 /* 6 cards per row at desktop. Falls back to fewer cols on narrow screens. */
 .schedule-grid {
@@ -381,7 +413,8 @@ header {
 }
 .gp-round {
     font-size: 0.75rem;
-    color: var(--accent);
+    /* Green (matches the cached ✓ badge) — red read as an error/warning. */
+    color: #22c55e;
     font-weight: 700;
     letter-spacing: 1px;
 }
@@ -462,6 +495,11 @@ header {
     gap: 6px;
 }
 .cache-li-name { flex: 1; }
+.cache-li-size {
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    white-space: nowrap;
+}
 .cache-li-del {
     background: transparent;
     border: none;
@@ -592,11 +630,26 @@ header {
 }
 .cached-list .cache-event { margin-bottom: 8px; }
 .cached-list .cache-event-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
     font-size: 0.85rem;
     color: var(--text-primary);
     font-weight: 700;
     margin-bottom: 2px;
 }
+.cache-event-del {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.95rem;
+    padding: 0 4px;
+    line-height: 1;
+}
+.cache-event-del:hover { color: var(--accent); }
+.cache-event-del:disabled { opacity: 0.4; cursor: wait; }
 .cached-list ul { list-style: none; padding: 0 0 0 10px; margin: 0; }
 .cached-list li {
     font-size: 0.8rem;
