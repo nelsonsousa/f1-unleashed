@@ -319,16 +319,50 @@ header {
     text-transform: uppercase;
     letter-spacing: 1px;
 }
+
+/* Season title: "<year> SEASON" rendered as one seamless unit, with the
+   year selector styled to match the SEASON word and a dropdown caret placed
+   BEFORE the value (e.g. "▾ 2026 SEASON"). */
+.season-title {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+.season-word {
+    font-size: 1.2rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+.season-select-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: baseline;
+}
+.season-select-wrap::before {
+    content: '\25BC';   /* ▼ full-size caret — legible (▾ was too small) */
+    color: var(--text-secondary);
+    margin-right: 5px;
+    font-size: 0.75em;
+    pointer-events: none;
+}
 .year-select {
-    background: var(--bg-card);
-    color: var(--text-primary);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 6px 10px;
-    font-size: 0.95rem;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background: transparent;
+    border: none;
+    /* Right padding so the last digit isn't clipped by the select box; no
+       letter-spacing here (it left a trailing pixel that got clipped). */
+    padding: 0 0.35em 0 0;
+    margin: 0;
+    width: auto;
+    color: var(--text-secondary);
+    font-size: 1.2rem;
+    text-transform: uppercase;
     cursor: pointer;
 }
-.year-select:focus { outline: none; border-color: var(--accent); }
+.year-select:focus { outline: none; }
 
 /* 6 cards per row at desktop. Falls back to fewer cols on narrow screens. */
 .schedule-grid {
@@ -381,7 +415,8 @@ header {
 }
 .gp-round {
     font-size: 0.75rem;
-    color: var(--accent);
+    /* Green (matches the cached ✓ badge) — red read as an error/warning. */
+    color: #22c55e;
     font-weight: 700;
     letter-spacing: 1px;
 }
@@ -436,11 +471,18 @@ header {
 .session-card .ses-name { font-size: 1.05rem; }
 .session-card .ses-when { font-size: 0.9rem; }
 
-/* Three-pip status row: JSON / DB / audio. */
+/* Status icons: data / audio / weather stacked, each colour-coded by health
+   (grey/red/yellow/green). Data row may carry a re-download button. */
 .ses-icons {
     display: flex;
-    gap: 6px;
+    flex-direction: column;
+    gap: 4px;
     margin: 4px 0 6px 0;
+}
+.ses-ico-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
 .ses-ico {
     display: inline-flex;
@@ -451,8 +493,25 @@ header {
     border-radius: 4px;
     background: var(--bg-secondary);
 }
-.ses-ico.on  { color: #22c55e; }
-.ses-ico.off { color: var(--text-secondary); opacity: 0.35; }
+.ses-ico.st-ok     { color: #22c55e; }
+.ses-ico.st-absent { color: var(--text-secondary); opacity: 0.35; }
+.ses-redl {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.8rem;
+    line-height: 1;
+    padding: 0;
+}
+.ses-redl:hover    { color: var(--accent); border-color: var(--accent); }
+.ses-redl:disabled { opacity: 0.5; cursor: wait; }
 
 /* Cache list: row with name on the left + small × delete on the right. */
 .cached-list li {
@@ -462,6 +521,11 @@ header {
     gap: 6px;
 }
 .cache-li-name { flex: 1; }
+.cache-li-size {
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    white-space: nowrap;
+}
 .cache-li-del {
     background: transparent;
     border: none;
@@ -592,11 +656,26 @@ header {
 }
 .cached-list .cache-event { margin-bottom: 8px; }
 .cached-list .cache-event-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
     font-size: 0.85rem;
     color: var(--text-primary);
     font-weight: 700;
     margin-bottom: 2px;
 }
+.cache-event-del {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.95rem;
+    padding: 0 4px;
+    line-height: 1;
+}
+.cache-event-del:hover { color: var(--accent); }
+.cache-event-del:disabled { opacity: 0.4; cursor: wait; }
 .cached-list ul { list-style: none; padding: 0 0 0 10px; margin: 0; }
 .cached-list li {
     font-size: 0.8rem;
@@ -604,6 +683,13 @@ header {
     padding: 1px 0;
 }
 .storage-actions { display: flex; gap: 8px; }
+/* Buttons share the panel width and shrink to fit instead of overflowing. */
+.storage-actions .btn-secondary {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 8px 10px;
+    text-align: center;
+}
 .btn-secondary {
     background: var(--bg-secondary);
     color: var(--text-primary);
@@ -630,6 +716,12 @@ header {
     border-bottom: 1px dotted var(--text-secondary);
 }
 .page-footer a:hover { color: var(--accent); border-color: var(--accent); }
+.page-footer a.update-available {
+    color: #22c55e;
+    border-bottom-color: #22c55e;
+    margin-left: 6px;
+    font-weight: 600;
+}
 
 .loading { padding: 24px; text-align: center; color: var(--text-secondary); }
 .loading.error { color: var(--accent); }

@@ -66,6 +66,10 @@ class CachedSessionResponse(BaseModel):
     modified: Optional[str] = None
     has_jsonl: Optional[bool] = None
     has_audio: Optional[bool] = None
+    # Present/absent status for the data, audio, and weather files (card).
+    data_status: Optional[str] = None
+    audio_status: Optional[str] = None
+    weather_status: Optional[str] = None
 
 
 @router.get("/meetings/{year}", response_model=list[MeetingResponse])
@@ -772,4 +776,26 @@ async def delete_cached_session(session_name: str):
         return {"success": True, "message": f"Deleted {session_name}"}
     except Exception as e:
         logger.error(f"Failed to delete cached session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/open-cache-folder")
+def open_cache_folder():
+    """Open the cache root directory in the OS file explorer (card)."""
+    import subprocess
+    import sys
+    from app.config import CACHE_DIR
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    path = str(CACHE_DIR)
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        elif sys.platform == "win32":
+            subprocess.Popen(["explorer", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+        return {"success": True, "path": path}
+    except Exception as e:
+        logger.error(f"Failed to open cache folder: {e}")
         raise HTTPException(status_code=500, detail=str(e))
