@@ -2,7 +2,7 @@
 
 The version is read from the top-level ``VERSION`` file so the app and the
 release tags share a single source of truth. ``check_latest_release`` compares
-it against the latest GitHub release and caches the result (the frontend polls
+it against the highest GitHub git tag and caches the result (the frontend polls
 ``/api/v1/version`` for the "update available" indicator).
 """
 
@@ -53,18 +53,28 @@ def check_latest_release(force: bool = False) -> dict:
         "release_url": None,
     }
     try:
+        # Compare against git TAGS (e.g. v1.1.0), not GitHub "Releases": the repo
+        # tags versions without publishing Releases, so /releases/latest 404s.
+        # Pick the highest semver tag.
         resp = requests.get(
-            f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+            f"https://api.github.com/repos/{GITHUB_REPO}/tags?per_page=100",
             timeout=4,
             headers={"Accept": "application/vnd.github+json"},
         )
         if resp.status_code == 200:
-            data = resp.json()
-            tag = (data.get("tag_name") or "").strip()
-            if tag:
-                result["latest"] = tag
-                result["release_url"] = data.get("html_url")
-                result["update_available"] = _parse(tag) > _parse(current)
+            tags = resp.json()
+            best_name, best_ver = None, None
+            for t in (tags if isinstance(tags, list) else []):
+                name = (t.get("name") or "").strip()
+                if not name:
+                    continue
+                ver = _parse(name)
+                if best_ver is None or ver > best_ver:
+                    best_name, best_ver = name, ver
+            if best_name:
+                result["latest"] = best_name
+                result["release_url"] = f"https://github.com/{GITHUB_REPO}/releases/tag/{best_name}"
+                result["update_available"] = best_ver > _parse(current)
     except requests.RequestException:
         pass
 
