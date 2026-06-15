@@ -19,6 +19,13 @@
         meetingName: '',
         sessionName: '',
         sessionType: '',
+        // Race/sprint badge → live lap counter (card): the server-sent badge
+        // text, current/total laps, and whether the race has started (lights
+        // out). Until lights-out the badge shows R / S; after, L{cur}/{total}.
+        baseBadge: '--',
+        raceCurrentLap: null,
+        raceTotalLaps: null,
+        raceStarted: false,
         gmtOffset: null,       // parsed timedelta in ms
         gmtOffsetStr: null,    // raw string e.g. "11:00:00"
         qualifyingPart: 0,
@@ -74,6 +81,11 @@
             state.gmtOffsetStr = data.gmtOffset;
             state.gmtOffset = parseGmtOffset(data.gmtOffset);
         }
+        // Lights out → switch the race/sprint badge to the live lap counter.
+        if (data.sessionStatus === 'Started' && !state.raceStarted) {
+            state.raceStarted = true;
+            renderSessionBadge();
+        }
     }
 
     function handleMeetingName(name) {
@@ -82,8 +94,25 @@
     }
 
     function handleSessionBadge(badge) {
+        state.baseBadge = badge || '--';
+        renderSessionBadge();
+    }
+
+    // Race/sprint: once lights-out has happened (sessionStatus → Started) the
+    // badge shows the live lap counter L{current}/{total}, refreshed each lap;
+    // otherwise it shows the server-sent badge (R / S / FP1 / Q …). Mirrors the
+    // P1 "L{n}" cell, which also composes the lap display client-side from the
+    // raceLaps topic.
+    function renderSessionBadge() {
         const badgeEl = document.getElementById('sessionBadge');
-        if (badgeEl) badgeEl.textContent = badge || '--';
+        if (!badgeEl) return;
+        const sType = (window.SESSION_CONFIG && window.SESSION_CONFIG.sessionType) || '';
+        const isRaceLike = (sType === 'race' || sType === 'sprint');
+        if (isRaceLike && state.raceStarted && state.raceTotalLaps) {
+            badgeEl.textContent = `L${state.raceCurrentLap || 0}/${state.raceTotalLaps}`;
+        } else {
+            badgeEl.textContent = state.baseBadge || '--';
+        }
     }
 
     function parseGmtOffset(offsetStr) {
@@ -1039,6 +1068,12 @@
     messageBus.on('sessionInfo', handleSessionInfo);
     messageBus.on('meetingName', handleMeetingName);
     messageBus.on('sessionBadge', handleSessionBadge);
+    messageBus.on('raceLaps', (data) => {
+        if (!data) return;
+        if (data.currentLap != null) state.raceCurrentLap = data.currentLap;
+        if (data.totalLaps != null) state.raceTotalLaps = data.totalLaps;
+        renderSessionBadge();
+    });
     messageBus.on('clock', handleClock);
     messageBus.on('trackStatus', handleTrackStatus);
     messageBus.on('session:loaded', handleSessionLoaded);
@@ -1117,6 +1152,13 @@
     messageBus.on('state:seek-complete', alignAudioToClock);
 
     messageBus.on('state:reset', () => {
+        // Badge lap-counter state is rebuilt from the restored sessionInfo /
+        // raceLaps topics after a seek; clear it so a seek back to pre-race
+        // shows the R/S badge again.
+        state.raceStarted = false;
+        state.raceCurrentLap = null;
+        state.raceTotalLaps = null;
+        renderSessionBadge();
     });
 
     // Session time is offset-based (see updateClocks) — it re-derives
