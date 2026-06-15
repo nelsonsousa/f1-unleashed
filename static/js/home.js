@@ -147,17 +147,24 @@ async function checkForLiveSession() {
         const response = await fetch(`${API_BASE}/schedule/live-session`);
 
         if (response.status === 204) {
-            // No live session — only load countdown if we don't already have one
-            // (avoids resetting countdown when polling during the transition period)
-            if (!nextSession) {
+            // No live session. Load the countdown if we have none — or REFRESH
+            // it if the one we're showing has already started yet never went
+            // live (a finished session, or a flaky live check). Without the
+            // refresh the page stays stuck on "starting soon…" for hours, since
+            // the server stops offering a started session past its grace window.
+            if (!nextSession || sessionHasStarted(nextSession)) {
+                nextSession = null;
                 await loadNextSession();
             }
             return;
         }
 
         if (!response.ok) {
-            // API error — fall back to schedule if no countdown active
-            if (!nextSession) {
+            // Live check failed (e.g. flaky F1 API) — fall back to the schedule,
+            // refreshing a stale started-but-not-live countdown for the same
+            // reason as the 204 branch above.
+            if (!nextSession || sessionHasStarted(nextSession)) {
+                nextSession = null;
                 await loadNextSession();
             }
             return;
@@ -171,10 +178,18 @@ async function checkForLiveSession() {
 
     } catch (error) {
         console.error('Error checking live session:', error);
-        if (!nextSession) {
+        if (!nextSession || sessionHasStarted(nextSession)) {
+            nextSession = null;
             await loadNextSession();
         }
     }
+}
+
+// True once a session's scheduled start time has passed. Used to refresh a
+// stale countdown that's stuck on "starting soon…" for a session that started
+// but was never detected as live.
+function sessionHasStarted(s) {
+    return !!(s && s.session_date && new Date(s.session_date) <= new Date());
 }
 
 function startLiveCheck() {
