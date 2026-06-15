@@ -63,8 +63,12 @@
         <div class="home-body">
             <main class="schedule-pane">
                 <div class="schedule-header">
-                    <h2>Season</h2>
-                    <select class="year-select" id="yearSelect"></select>
+                    <div class="season-title">
+                        <span class="season-select-wrap">
+                            <select class="year-select" id="yearSelect"></select>
+                        </span>
+                        <span class="season-word">SEASON</span>
+                    </div>
                 </div>
                 <div class="schedule-grid" id="scheduleGrid">
                     <div class="loading">Loading…</div>
@@ -73,7 +77,7 @@
 
             <aside class="storage-panel">
                 <h3>Cached Sessions</h3>
-                <p class="cache-info">Raw timing data cached locally</p>
+                <p class="cache-info">Timing and audio data cached locally</p>
                 <div class="storage-stats">
                     <div class="stat">
                         <span class="label">Sessions</span>

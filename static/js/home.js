@@ -735,18 +735,29 @@ window.refreshCache = async function() {
                 .slice()
                 .sort((a, b) => (b.modified || '').localeCompare(a.modified || ''));
             const items = sorted.map(s => {
-                const name = String(s.session || '').replace(/^\d+\s+/, '');
+                const fullName = String(s.session || '').replace(/^\d+\s+/, '');
+                const shortName = sessionShortName(fullName);
+                const size = formatBytes((s.size_mb || 0) * 1024 * 1024);
                 return `
-                    <li title="${escapeHtml(s.name)}">
-                        <span class="cache-li-name">${escapeHtml(name)}</span>
-                        <button class="cache-li-del" title="Delete from disk"
+                    <li title="${escapeHtml(fullName)}">
+                        <span class="cache-li-name">${escapeHtml(shortName)}</span>
+                        <span class="cache-li-size">${escapeHtml(size)}</span>
+                        <button class="cache-li-del" title="Delete this session from disk"
                                 onclick="deleteCachedSession('${escapeAttr(s.name)}', this)">×</button>
                     </li>
                 `;
             }).join('');
+            // Per-event delete-all: the session cache keys are passed so the
+            // handler can loop the existing per-session DELETE endpoint.
+            const keys = sorted.map(s => s.name);
+            const keysAttr = escapeAttr(JSON.stringify(keys));
             return `
                 <div class="cache-event">
-                    <div class="cache-event-label">${escapeHtml(g.loc)}</div>
+                    <div class="cache-event-label">
+                        <span>${escapeHtml(g.loc)}</span>
+                        <button class="cache-event-del" title="Delete ALL sessions of this event"
+                                onclick='deleteCachedEvent("${escapeAttr(g.loc)}", ${keysAttr}, this)'>×</button>
+                    </div>
                     <ul>${items}</ul>
                 </div>
             `;
@@ -765,8 +776,22 @@ function formatBytes(n) {
     return `${n.toFixed(n < 10 ? 1 : 0)} ${u[i]}`;
 }
 
+// Short session label for the compact cache list: FP1/FP2/FP3/SQ/Q/S/R.
+function sessionShortName(name) {
+    const n = (name || '').toLowerCase();
+    if (n.includes('practice 1')) return 'FP1';
+    if (n.includes('practice 2')) return 'FP2';
+    if (n.includes('practice 3')) return 'FP3';
+    if (n.includes('sprint qualifying') || n.includes('sprint shootout')) return 'SQ';
+    if (n.includes('sprint')) return 'S';
+    if (n.includes('qualifying')) return 'Q';
+    if (n.includes('race')) return 'R';
+    return name || '?';
+}
+
 window.deleteCachedSession = async function(sessionName, btn) {
-    if (!confirm(`Delete ${sessionName} from disk?`)) return;
+    if (!confirm(`Delete ${sessionName} from disk?\n\n`
+                 + `Audio and team radio cannot be re-downloaded later.`)) return;
     btn.disabled = true;
     try {
         const resp = await fetch(
@@ -774,6 +799,27 @@ window.deleteCachedSession = async function(sessionName, btn) {
             { method: 'DELETE' }
         );
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        await loadCachedKeys();
+        renderScheduleCards(currentYear, currentEvents);
+        await refreshCache();
+    } catch (e) {
+        btn.disabled = false;
+        console.error(e);
+        alert(`Delete failed: ${e.message}`);
+    }
+};
+
+// Delete EVERY cached session of an event (loops the per-session DELETE).
+window.deleteCachedEvent = async function(label, sessionKeys, btn) {
+    if (!Array.isArray(sessionKeys) || !sessionKeys.length) return;
+    if (!confirm(`Delete ALL ${sessionKeys.length} cached session(s) for ${label}?\n\n`
+                 + `Audio and team radio cannot be re-downloaded later.`)) return;
+    btn.disabled = true;
+    try {
+        for (const key of sessionKeys) {
+            await fetch(`${API_BASE}/livetiming/cached/${encodeURIComponent(key)}`,
+                        { method: 'DELETE' });
+        }
         await loadCachedKeys();
         renderScheduleCards(currentYear, currentEvents);
         await refreshCache();
