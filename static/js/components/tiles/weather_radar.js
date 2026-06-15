@@ -346,9 +346,8 @@
         if (messageBus.clockTime) {
             tParam = `&t=${messageBus.clockTime.getTime()}`;
         }
-        const url = `/api/v1/weather/radar/latest?year=${state.year}` +
-                    `&event_name=${encodeURIComponent(state.eventName)}` +
-                    `&session_type=${encodeURIComponent(state.sessionType)}` +
+        const sid = (window.SESSION_CONFIG || {}).sessionId || '';
+        const url = `/api/v1/weather/radar/latest?session=${encodeURIComponent(sid)}` +
                     `&layer=${encodeURIComponent(layer)}` +
                     tParam +
                     `&_=${Date.now()}`;

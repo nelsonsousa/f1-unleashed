@@ -119,39 +119,39 @@ def _api_key() -> Optional[str]:
     return os.getenv("TOMORROW_API_KEY")
 
 
-def _cache_dir(year: int, event_name: str, session_type: str) -> Path:
-    return CACHE_DIR / str(year) / _slugify(event_name) / _slugify(session_type)
+def _weather_dir(session_dir) -> Path:
+    """Weather tiles live inside the session's OWN cache dir (card), next to
+    live.jsonl / commentary.aac — so weather, timing and audio share one path
+    keyed by the F1 meeting/session ids."""
+    return Path(session_dir) / "weather"
 
 
-def list_cached_tiles(year: int, event_name: str, session_type: str,
-                       layer: str) -> list[Path]:
+def list_cached_tiles(session_dir, layer: str) -> list[Path]:
     """Return chronologically-sorted PNG files for a session+layer."""
-    d = _cache_dir(year, event_name, session_type)
+    d = _weather_dir(session_dir)
     if not d.exists():
         return []
     return sorted(d.glob(f"*_{layer}.{TILE_EXT}"))
 
 
-def has_cached_weather(year: int, event_name: str, session_type: str) -> bool:
+def has_cached_weather(session_dir) -> bool:
     """True if ANY weather-radar tile is cached for the session (any layer).
-    Best-effort presence check for the home-page weather icon (card)."""
-    d = _cache_dir(year, event_name, session_type)
+    Presence check for the home-page weather icon (card)."""
+    d = _weather_dir(session_dir)
     return d.exists() and any(d.glob(f"*.{TILE_EXT}"))
 
 
-def latest_cached_tile(year: int, event_name: str, session_type: str,
-                        layer: str) -> Optional[Path]:
-    tiles = list_cached_tiles(year, event_name, session_type, layer)
+def latest_cached_tile(session_dir, layer: str) -> Optional[Path]:
+    tiles = list_cached_tiles(session_dir, layer)
     return tiles[-1] if tiles else None
 
 
-def cached_tile_at(year: int, event_name: str, session_type: str,
-                    layer: str, target_utc: datetime) -> Optional[Path]:
+def cached_tile_at(session_dir, layer: str, target_utc: datetime) -> Optional[Path]:
     """Return the cached tile whose filename UTC timestamp is closest to
     `target_utc`. Filenames are `YYYYMMDDTHHMMSSZ_<layer>.png`. Used by
     replays so the displayed rain pattern matches the playback clock —
     not whatever was captured last."""
-    tiles = list_cached_tiles(year, event_name, session_type, layer)
+    tiles = list_cached_tiles(session_dir, layer)
     if not tiles:
         return None
     best, best_dt = None, None
@@ -230,9 +230,8 @@ async def fetch_tile(meeting_name: str, layer: str) -> Optional[bytes]:
         return None
 
 
-def save_tile(year: int, event_name: str, session_type: str,
-              fetched_at: datetime, layer: str, data: bytes) -> Path:
-    d = _cache_dir(year, event_name, session_type)
+def save_tile(session_dir, fetched_at: datetime, layer: str, data: bytes) -> Path:
+    d = _weather_dir(session_dir)
     d.mkdir(parents=True, exist_ok=True)
     iso = fetched_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out = d / f"{iso}_{layer}.{TILE_EXT}"
@@ -246,7 +245,9 @@ class WeatherRadarCapture:
 
     def __init__(self):
         self._task: Optional[asyncio.Task] = None
-        self._active_key: Optional[tuple[int, str, str]] = None
+        self._active_key: Optional[str] = None       # the session cache dir (str)
+        self._session_dir: Optional[Path] = None
+        self._meeting_name: Optional[str] = None
         self._stop_at: Optional[datetime] = None  # if set, loop exits after this
 
     @property
@@ -254,25 +255,28 @@ class WeatherRadarCapture:
         return self._task is not None and not self._task.done()
 
     @property
-    def active_key(self) -> Optional[tuple[int, str, str]]:
+    def active_key(self) -> Optional[str]:
         return self._active_key
 
-    def start(self, year: int, event_name: str, session_type: str,
+    def start(self, session_dir, meeting_name: str,
               stop_at: Optional[datetime] = None) -> None:
-        if self.active and self._active_key == (year, event_name, session_type):
+        key = str(session_dir)
+        if self.active and self._active_key == key:
             # Already running for the same session — update stop_at if given.
             if stop_at is not None:
                 self._stop_at = stop_at
             return
         if self.active:
-            logger.info("Switching radar capture to %s %s (was %s)",
-                        event_name, session_type, self._active_key)
+            logger.info("Switching radar capture to %s (was %s)",
+                        key, self._active_key)
             self._cancel()
-        self._active_key = (year, event_name, session_type)
+        self._active_key = key
+        self._session_dir = Path(session_dir)
+        self._meeting_name = meeting_name
         self._stop_at = stop_at
         self._task = asyncio.create_task(self._loop())
-        logger.info("Radar capture started for %s %s%s",
-                    event_name, session_type,
+        logger.info("Radar capture started for %s -> %s%s",
+                    meeting_name, key,
                     f" (stop at {stop_at.isoformat()})" if stop_at else "")
 
     def stop(self) -> None:
@@ -281,6 +285,8 @@ class WeatherRadarCapture:
         logger.info("Radar capture stopping for %s", self._active_key)
         self._cancel()
         self._active_key = None
+        self._session_dir = None
+        self._meeting_name = None
         self._stop_at = None
 
     def schedule_stop(self, when: datetime) -> None:
@@ -300,13 +306,11 @@ class WeatherRadarCapture:
                 if self._stop_at and datetime.now(timezone.utc) >= self._stop_at:
                     logger.info("Radar capture reached scheduled stop")
                     break
-                year, event_name, session_type = self._active_key
                 now = datetime.now(timezone.utc)
                 for layer in LAYERS:
-                    data = await fetch_tile(event_name, layer)
+                    data = await fetch_tile(self._meeting_name, layer)
                     if data:
-                        path = save_tile(year, event_name, session_type,
-                                         now, layer, data)
+                        path = save_tile(self._session_dir, now, layer, data)
                         logger.debug("Radar tile saved: %s (%d bytes)",
                                      path, len(data))
                 await asyncio.sleep(REFRESH_INTERVAL_S)
@@ -316,6 +320,8 @@ class WeatherRadarCapture:
             logger.exception("Weather radar capture loop crashed")
         finally:
             self._active_key = None
+            self._session_dir = None
+            self._meeting_name = None
             self._stop_at = None
 
 

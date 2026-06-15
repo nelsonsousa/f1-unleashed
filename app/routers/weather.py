@@ -7,7 +7,7 @@ import httpx
 
 from app.services.weather_radar import (
     LAYERS, TILE_ZOOM, TRACK_LOCATIONS, latest_cached_tile,
-    list_cached_tiles, radar_capture, tile_size_m,
+    radar_capture, tile_size_m,
 )
 
 logger = logging.getLogger(__name__)
@@ -104,9 +104,7 @@ async def get_weather(
 
 @router.get("/weather/radar/latest")
 def radar_latest(
-    year: int = Query(...),
-    event_name: str = Query(..., description="Meeting name, e.g. 'Australian Grand Prix'"),
-    session_type: str = Query(...),
+    session: str = Query(..., description="Session cache key, e.g. 2026_1287_Barcelona_11307_Race"),
     layer: str = Query("precipitationIntensity",
                         description="Radar layer; only precipitationIntensity"),
     t: Optional[int] = Query(
@@ -116,18 +114,22 @@ def radar_latest(
                     "if omitted, returns the latest cached tile.",
     ),
 ):
-    """Return the radar tile (PNG) for the given session+layer. With
-    `t`, picks the cached tile closest in time to that moment (replay
-    use). Without `t`, returns the most recent cached tile (live use).
-    204 if no tiles are cached yet."""
+    """Return the radar tile (PNG) for the session+layer. Tiles live in the
+    session's own cache dir (card). With `t`, picks the cached tile closest in
+    time to that moment (replay use); without `t`, the most recent cached tile
+    (live use). 204 if no tiles are cached yet."""
     if layer not in LAYERS:
         raise HTTPException(status_code=400, detail=f"Unknown layer; use one of {LAYERS}")
+    from app.services.livetiming_fetcher import livetiming_fetcher
+    session_dir = livetiming_fetcher.find_cached_session_path(session)
+    if session_dir is None:
+        return Response(status_code=204)
     if t is not None:
         from app.services.weather_radar import cached_tile_at
         target = datetime.fromtimestamp(t / 1000.0, tz=timezone.utc)
-        path = cached_tile_at(year, event_name, session_type, layer, target)
+        path = cached_tile_at(session_dir, layer, target)
     else:
-        path = latest_cached_tile(year, event_name, session_type, layer)
+        path = latest_cached_tile(session_dir, layer)
     if path is None:
         return Response(status_code=204)
     return FileResponse(
@@ -138,13 +140,10 @@ def radar_latest(
 
 @router.get("/weather/radar/status")
 def radar_status():
-    """Diagnostic: is radar capture running, and for which session?"""
-    key = radar_capture.active_key
+    """Diagnostic: is radar capture running, and for which session dir?"""
     return {
         "active": radar_capture.active,
-        "year": key[0] if key else None,
-        "event_name": key[1] if key else None,
-        "session_type": key[2] if key else None,
+        "session_dir": radar_capture.active_key,
     }
 
 
