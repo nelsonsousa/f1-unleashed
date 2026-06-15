@@ -21,6 +21,7 @@ from typing import Any, Callable, Optional
 
 import json as _json
 
+from app.config import DATA_DIR
 from app.processing.database import SessionDatabase
 from app.processing.file_reader import read_jsonl, load_subscribe_json, RawMessage
 from app.processing.message_bus import SessionMessageBus
@@ -75,7 +76,7 @@ RAW_F1_TOPICS = {
 
 # Topic-discovery baseline: every topic name ever seen. Genuinely-new topics
 # (absent here) raise an alert; first run (file absent) seeds silently.
-KNOWN_TOPICS_FILE = Path("data/known_topics.json")
+KNOWN_TOPICS_FILE = DATA_DIR / "known_topics.json"
 
 
 def _load_known_topics() -> tuple[set, bool]:

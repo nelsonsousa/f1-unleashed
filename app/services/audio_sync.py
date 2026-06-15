@@ -510,7 +510,9 @@ def probe_offset_at(
     matched_combined_s = decoded_start_combined + matched_local_s
     # Dump the reference window too so the offline replay has both halves.
     try:
-        target.astype(np.int16).tofile("/tmp/last_ref.s16")
+        from app.config import TMP_DIR
+        TMP_DIR.mkdir(parents=True, exist_ok=True)
+        target.astype(np.int16).tofile(str(TMP_DIR / "last_ref.s16"))
     except Exception:
         pass
     # Stash diagnostics on the function for the router to surface.
