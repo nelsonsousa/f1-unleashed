@@ -66,6 +66,13 @@ class CachedSessionResponse(BaseModel):
     modified: Optional[str] = None
     has_jsonl: Optional[bool] = None
     has_audio: Optional[bool] = None
+    # 4-state health (absent/corrupted/incomplete/complete) + reasons, and
+    # weather-tile presence (complete/absent) — see cache_health (card).
+    data_status: Optional[str] = None
+    audio_status: Optional[str] = None
+    weather_status: Optional[str] = None
+    data_reason: Optional[str] = None
+    audio_reason: Optional[str] = None
 
 
 @router.get("/meetings/{year}", response_model=list[MeetingResponse])

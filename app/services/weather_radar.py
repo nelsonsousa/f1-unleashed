@@ -132,6 +132,13 @@ def list_cached_tiles(year: int, event_name: str, session_type: str,
     return sorted(d.glob(f"*_{layer}.{TILE_EXT}"))
 
 
+def has_cached_weather(year: int, event_name: str, session_type: str) -> bool:
+    """True if ANY weather-radar tile is cached for the session (any layer).
+    Best-effort presence check for the home-page weather icon (card)."""
+    d = _cache_dir(year, event_name, session_type)
+    return d.exists() and any(d.glob(f"*.{TILE_EXT}"))
+
+
 def latest_cached_tile(year: int, event_name: str, session_type: str,
                         layer: str) -> Optional[Path]:
     tiles = list_cached_tiles(year, event_name, session_type, layer)
