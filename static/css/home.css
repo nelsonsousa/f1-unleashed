@@ -340,10 +340,10 @@ header {
     align-items: baseline;
 }
 .season-select-wrap::before {
-    content: '\25BE';   /* ▾ caret, before the value */
+    content: '\25BC';   /* ▼ full-size caret — legible (▾ was too small) */
     color: var(--text-secondary);
-    margin-right: 4px;
-    font-size: 0.85em;
+    margin-right: 5px;
+    font-size: 0.75em;
     pointer-events: none;
 }
 .year-select {
