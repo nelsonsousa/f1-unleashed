@@ -352,12 +352,14 @@ header {
     -moz-appearance: none;
     background: transparent;
     border: none;
-    padding: 0;
+    /* Right padding so the last digit isn't clipped by the select box; no
+       letter-spacing here (it left a trailing pixel that got clipped). */
+    padding: 0 0.35em 0 0;
     margin: 0;
+    width: auto;
     color: var(--text-secondary);
     font-size: 1.2rem;
     text-transform: uppercase;
-    letter-spacing: 1px;
     cursor: pointer;
 }
 .year-select:focus { outline: none; }
@@ -681,6 +683,13 @@ header {
     padding: 1px 0;
 }
 .storage-actions { display: flex; gap: 8px; }
+/* Buttons share the panel width and shrink to fit instead of overflowing. */
+.storage-actions .btn-secondary {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 8px 10px;
+    text-align: center;
+}
 .btn-secondary {
     background: var(--bg-secondary);
     color: var(--text-primary);
