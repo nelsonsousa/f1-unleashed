@@ -683,6 +683,12 @@ header {
     border-bottom: 1px dotted var(--text-secondary);
 }
 .page-footer a:hover { color: var(--accent); border-color: var(--accent); }
+.page-footer a.update-available {
+    color: #22c55e;
+    border-bottom-color: #22c55e;
+    margin-left: 6px;
+    font-weight: 600;
+}
 
 .loading { padding: 24px; text-align: center; color: var(--text-secondary); }
 .loading.error { color: var(--accent); }

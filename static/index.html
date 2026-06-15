@@ -91,6 +91,7 @@
                 <div class="cached-list" id="cachedList"></div>
                 <div class="storage-actions">
                     <button class="btn-secondary" onclick="refreshCache()">Refresh</button>
+                    <button class="btn-secondary" onclick="openCacheFolder()">Open folder</button>
                 </div>
             </aside>
         </div>
@@ -98,7 +99,8 @@
         <footer class="page-footer">
             <a href="/docs">API docs</a>
             &nbsp;·&nbsp;
-            <span>F1 Unleashed</span>
+            <span>F1 Unleashed <span id="appVersion"></span></span>
+            <a id="updateAvailable" class="update-available hidden" href="#" target="_blank" rel="noopener"></a>
         </footer>
     </div>
 

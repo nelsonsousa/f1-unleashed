@@ -35,7 +35,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     await checkForLiveSession();
     await setupYearDropdown();
     await refreshCache();
+    loadVersionInfo();   // non-blocking — version is informational
 });
+
+// Version + update indicator (footer). Notification only — no auto-update.
+async function loadVersionInfo() {
+    try {
+        const data = await fetchJSON(`${API_BASE}/version`);
+        const vEl = document.getElementById('appVersion');
+        if (vEl && data.version) vEl.textContent = `v${data.version}`;
+        if (data.update_available) {
+            const up = document.getElementById('updateAvailable');
+            if (up) {
+                up.textContent = `· Update available${data.latest ? ` (${data.latest})` : ''}`;
+                if (data.release_url) up.href = data.release_url;
+                up.classList.remove('hidden');
+            }
+        }
+    } catch (e) { /* version is non-critical — ignore */ }
+}
+
+// Open the cache root folder in the OS file explorer.
+window.openCacheFolder = async function() {
+    try {
+        const resp = await fetch(`${API_BASE}/livetiming/open-cache-folder`, { method: 'POST' });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    } catch (e) {
+        console.error(e);
+        alert('Could not open the cache folder.');
+    }
+};
 
 // =========================================================================
 // Auth Functions

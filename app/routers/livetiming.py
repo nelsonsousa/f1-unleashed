@@ -771,3 +771,25 @@ async def delete_cached_session(session_name: str):
     except Exception as e:
         logger.error(f"Failed to delete cached session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/open-cache-folder")
+def open_cache_folder():
+    """Open the cache root directory in the OS file explorer (card)."""
+    import subprocess
+    import sys
+    from app.config import CACHE_DIR
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    path = str(CACHE_DIR)
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        elif sys.platform == "win32":
+            subprocess.Popen(["explorer", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+        return {"success": True, "path": path}
+    except Exception as e:
+        logger.error(f"Failed to open cache folder: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
