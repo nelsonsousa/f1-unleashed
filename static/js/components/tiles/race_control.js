@@ -37,7 +37,21 @@
     function toLocalTimeStr(timestamp) {
         if (!timestamp) return '';
         try {
-            const utc = new Date(timestamp.includes('T') ? timestamp : `2000-01-01T${timestamp}Z`);
+            // The F1 RCM `Utc` field is UTC but ships without a 'Z'/offset
+            // suffix; new Date() would then parse it in the BROWSER's local
+            // zone. When the viewer's zone equals the track's, the local-parse
+            // shift and the GMT-offset addition below cancel, leaving the raw
+            // UTC value on screen (card 95-style). Force UTC by appending 'Z'
+            // when no timezone designator is present.
+            let iso;
+            if (timestamp.includes('T')) {
+                const timePart = timestamp.slice(timestamp.indexOf('T') + 1);
+                const hasTz = /[Zz]$|[+-]\d\d:?\d\d$/.test(timePart);
+                iso = hasTz ? timestamp : `${timestamp}Z`;
+            } else {
+                iso = `2000-01-01T${timestamp}Z`;
+            }
+            const utc = new Date(iso);
             // Track time (matches the header track clock): UTC + the circuit's
             // GMT offset (card 86). A future track/user toggle switches the
             // source for all visible times.

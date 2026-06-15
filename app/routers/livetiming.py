@@ -678,9 +678,11 @@ async def audio_sync_probe(
     # Dump the EXACT bytes used in this correlation so we can replay
     # offline if confidence is low. Raw int16 little-endian at sample_rate Hz.
     try:
-        with open("/tmp/last_probe.s16", "wb") as f:
+        from app.config import TMP_DIR
+        TMP_DIR.mkdir(parents=True, exist_ok=True)
+        with open(TMP_DIR / "last_probe.s16", "wb") as f:
             f.write(body)
-        with open("/tmp/last_probe.meta", "w") as f:
+        with open(TMP_DIR / "last_probe.meta", "w") as f:
             f.write(f"sample_rate={sample_rate}\n")
             f.write(f"target_combined_s={target_combined_s}\n")
             f.write(f"session_path={session_path}\n")

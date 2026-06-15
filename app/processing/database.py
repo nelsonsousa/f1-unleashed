@@ -26,7 +26,8 @@ _RESTORE_EXCLUDE_EXACT = frozenset({"position", "raceControlMessage"})
 
 
 def transient_db_path(session_path: Path) -> Path:
-    """Unique scratch DB path for a session: ./tmp/{year}_{event}_{session}.db."""
+    """Unique scratch DB path for a session under TMP_DIR (= DATA_DIR/tmp):
+    {year}_{event}_{session}.db."""
     name = "_".join(session_path.parts[-3:]) or session_path.name
     safe = "".join(c if (c.isalnum() or c in "._-") else "_" for c in name)
     TRANSIENT_DB_DIR.mkdir(parents=True, exist_ok=True)

@@ -18,6 +18,11 @@ _archive_status_cache: dict = {"status": None, "checked_at": 0}
 # SessionInfo.SessionStatus values that indicate an active session
 LIVE_STATUSES = {"Started", "Aborted"}
 
+# How long after a session's scheduled start it may still be offered as the
+# countdown target before being treated as in-progress/finished (see
+# get_next_session). Covers the gap before live-detection picks the session up.
+STARTED_GRACE = timedelta(minutes=10)
+
 router = APIRouter()
 
 
@@ -101,14 +106,18 @@ def get_next_session():
                 if session_date is None:
                     continue
 
-                # Skip sessions that ended (started more than 3h ago, or
-                # archive is complete for the most recent session)
-                if session_date <= now - timedelta(hours=3):
+                # The countdown target is the next session that hasn't started
+                # yet, plus a short grace window after the scheduled start so the
+                # brief gap before live-detection kicks in still reads as
+                # "starting soon". Beyond the grace window, a session that
+                # started but never showed up as live (already finished, or a
+                # flaky live check) must NOT keep the home page stuck on
+                # "starting soon…" for hours — skip it and move on.
+                if session_date <= now - STARTED_GRACE:
                     continue
-                # If session already started, check if it's finished
-                if session_date <= now:
-                    if _is_session_archived():
-                        continue
+                # Within the grace window but already archived = finished — skip.
+                if session_date <= now and _is_session_archived():
+                    continue
 
                 is_testing = event.get('EventFormat') == 'testing'
                 display_name = session_name
@@ -120,6 +129,7 @@ def get_next_session():
                     "session_name": display_name,
                     "session_type": session_name,
                     "session_date": session_date.isoformat() + "Z",
+                    "started": session_date <= now,
                     "round": int(event["RoundNumber"]) if pd.notna(event.get("RoundNumber")) else 0,
                     "is_testing": is_testing,
                     "country": event.get("Country", ""),
