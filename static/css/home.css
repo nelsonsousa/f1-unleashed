@@ -492,8 +492,6 @@ header {
     background: var(--bg-secondary);
 }
 .ses-ico.st-ok     { color: #22c55e; }
-.ses-ico.st-warn   { color: #eab308; }
-.ses-ico.st-err    { color: #ef4444; }
 .ses-ico.st-absent { color: var(--text-secondary); opacity: 0.35; }
 .ses-redl {
     display: inline-flex;

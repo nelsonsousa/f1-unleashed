@@ -517,25 +517,20 @@ class LiveTimingFetcher:
             for f in ("commentary.aac", "commentary.001.aac")
         )
 
-        # 4-state data/audio health (cached in a status.json sidecar; card).
-        from app.services import cache_health
-        health = cache_health.get_health(session_dir)
-        info["data_status"] = health.get("data_status")
-        info["data_reason"] = health.get("data_reason")
-        info["audio_status"] = health.get("audio_status")
-        info["audio_reason"] = health.get("audio_reason")
-
-        # Weather-tile presence (green/grey) — tiles live outside the session
-        # dir, so this is checked here rather than in the sidecar (card).
+        # Simple present/absent status for data + audio + weather (card 5,
+        # simplified — no incomplete/corrupted classification).
+        info["data_status"] = (
+            "present" if (live_file.exists() and live_file.stat().st_size > 0)
+            else "absent"
+        )
+        info["audio_status"] = "present" if info["has_audio"] else "absent"
         try:
             from app.services import weather_radar
             ev_name = info.get("meeting") or location
-            has_wx = weather_radar.has_cached_weather(
-                int(year), ev_name, session_name
-            )
-            info["weather_status"] = "complete" if has_wx else "absent"
+            has_wx = weather_radar.has_cached_weather(int(year), ev_name, session_name)
         except Exception:
-            info["weather_status"] = "absent"
+            has_wx = False
+        info["weather_status"] = "present" if has_wx else "absent"
 
         return info
 
