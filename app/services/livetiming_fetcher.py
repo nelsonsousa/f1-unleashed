@@ -526,8 +526,7 @@ class LiveTimingFetcher:
         info["audio_status"] = "present" if info["has_audio"] else "absent"
         try:
             from app.services import weather_radar
-            ev_name = info.get("meeting") or location
-            has_wx = weather_radar.has_cached_weather(int(year), ev_name, session_name)
+            has_wx = weather_radar.has_cached_weather(session_dir)
         except Exception:
             has_wx = False
         info["weather_status"] = "present" if has_wx else "absent"

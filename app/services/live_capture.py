@@ -149,6 +149,12 @@ class LiveCaptureService:
 
         return session_id
 
+    def cache_path_for(self, session_id: str):
+        """The on-disk cache directory for an active capture (or None).
+        Used to co-locate weather-radar tiles in the same session dir."""
+        cap = self._captures.get(session_id)
+        return cap.get("cache_path") if cap else None
+
     async def _capture_loop(self, session_id: str, cache_path: Path) -> None:
         """Connect to SignalR and capture messages to disk.
 
