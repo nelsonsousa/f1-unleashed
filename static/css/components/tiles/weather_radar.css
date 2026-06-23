@@ -160,17 +160,26 @@
     z-index: 2;
 }
 
-/* Tomorrow.io map tiles. Geo-aligned with the track SVG so 1 m on the
- * tile = 1 m on the SVG. `--tile-size-px` is set by JS from
- * (svg_rendered_px / svg_physical_m) × tile_physical_m; absent that
- * variable, the tile falls back to the box-fitting defaults so it
- * still shows something while alignment data loads. Tile typically
- * overflows the weather container — clipped by `overflow: hidden`. */
+/* Tomorrow.io map tiles — a centred 2x2 zoom-14 composite. Geo-aligned with
+ * the track SVG so 1 m on the tile = 1 m on the SVG (`--tile-size-px`), and
+ * pinned + rotated onto the track:
+ *   - the element's (0,0) corner sits at the container centre (top/left 50%,
+ *     transform-origin 0 0);
+ *   - translate(-fx, -fy) shifts the tile so the circuit POINT within the
+ *     composite (not the tile centre) lands on that centre;
+ *   - rotate(--tile-rot) = -data-rotation spins the north-up tile about the
+ *     pinned circuit point to match the track's baked-in orientation.
+ * All vars are set by JS (maybeApplyAlignment); their fallbacks (fx=fy=0.5,
+ * rot=0, size=auto) reproduce the old centred behaviour while data loads.
+ * Tile typically overflows the weather container — clipped by overflow:hidden. */
 .weather-radar-tile {
     position: absolute;
     top: 50%;
     left: 50%;
-    transform: translate(-50%, -50%);
+    transform-origin: 0 0;
+    transform: rotate(var(--tile-rot, 0deg))
+               translate(calc(var(--tile-fx, 0.5) * -100%),
+                         calc(var(--tile-fy, 0.5) * -100%));
     width: var(--tile-size-px, auto);
     height: var(--tile-size-px, auto);
     max-width: none;

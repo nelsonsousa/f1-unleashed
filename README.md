@@ -35,7 +35,7 @@ No external setup required. F1Unleashed captures the commentary HLS feed alongsi
 
 ### Weather radar
 
-Uses [tomorrow.io](https://www.tomorrow.io/) for radar imagery + forecasts. A free API key is sufficient for normal use.
+Uses [Rainbow.ai](https://rainbow.ai/) for precipitation-radar imagery (rendered through a blue intensity palette). A free API key (30,000 calls/month, no hourly cap) is sufficient for normal use.
 
 ---
 
@@ -54,7 +54,7 @@ pip install -r requirements.txt
 cp .env.example .env
 # edit .env (all optional):
 #   - NOTIFICATION_WEBHOOK_URL  (= ntfy.sh/<your-topic> for push alerts)
-#   - TOMORROW_API_KEY          (= weather radar)
+#   - RAINBOW_AI_API_KEY        (= weather radar)
 #   - F1U_DATA_DIR              (= override the cache/data location; defaults to
 #                                 an OS-appropriate app-data dir)
 
@@ -106,7 +106,7 @@ This project would not exist without the work others have done in this space:
 - **[Undercut-f1](https://github.com/JustAman62/undercut-f1)** — open-source F1 live-timing analysis app. A constant reference for processor design and live-feed interpretation.
 - **[MultiViewer API](https://api.multiviewer.app/)** — circuit metadata (= corners, marshal sectors, DRS zones, layout SVGs). The track maps are generated from this data.
 - **[OpenF1](https://openf1.org/)** — schedule + meeting data with circuit info URLs.
-- **[tomorrow.io](https://www.tomorrow.io/)** — weather radar imagery and precipitation forecasts.
+- **[Rainbow.ai](https://rainbow.ai/)** — precipitation nowcast radar tiles.
 - **[Tesseract](https://tesseract-ocr.github.io/)** — OCR engine used for visual sync.
 - **[Formula 1](https://www.formula1.com/)** — the underlying timing feed, broadcast audio, and on-track data. F1Unleashed is a viewer + analysis layer, not a redistribution of any of the above.
 

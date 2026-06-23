@@ -6,8 +6,8 @@ from fastapi.responses import FileResponse, Response
 import httpx
 
 from app.services.weather_radar import (
-    LAYERS, TILE_ZOOM, TRACK_LOCATIONS, latest_cached_tile,
-    radar_capture, tile_size_m,
+    LAYERS, TRACK_LOCATIONS, composite_geometry, latest_cached_tile,
+    radar_capture, usage_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -134,7 +134,7 @@ def radar_latest(
         return Response(status_code=204)
     return FileResponse(
         path, media_type="image/png",
-        headers={"Cache-Control": "no-store"},
+        headers={"Cache-Control": "no-store", "X-Tile-Id": path.stem},
     )
 
 
@@ -147,21 +147,34 @@ def radar_status():
     }
 
 
+@router.get("/weather/radar/usage")
+def radar_usage():
+    """Rainbow.ai monthly call usage + remaining budget. Lets a client check
+    before a session whether the radar can run (Rainbow has no usage endpoint
+    of its own, so this is our local counter)."""
+    return usage_status()
+
+
 @router.get("/weather/radar/extent")
 def radar_extent(event_name: str = Query(...)):
-    """Return the geographic context for a circuit's radar tile so the
-    frontend can scale the track SVG to the same metre-per-pixel scale
-    as the tile. The tile is square in pixel space; physical extent is
-    `40_075_017 / 2^zoom · cos(lat)` metres at the tile's latitude."""
+    """Geographic context for a circuit's radar overlay so the frontend can
+    size AND position it over the track. The overlay is a centred 2x2 zoom-14
+    composite; we return its square physical extent (metres) and the circuit's
+    fractional position within it so the frontend can offset the tile to land
+    the rain on the track centre. The tile is north-up; the frontend rotates
+    it to match the track's own (baked-in) `data-rotation`."""
     loc = TRACK_LOCATIONS.get(event_name)
     if not loc:
         raise HTTPException(status_code=404, detail=f"Unknown circuit: {event_name!r}")
     lat, lng = loc
-    tile_m = tile_size_m(lat, TILE_ZOOM)
+    geo = composite_geometry(lat, lng)
     return {
         "lat": lat,
         "lng": lng,
-        "tile_zoom": TILE_ZOOM,
-        "tile_width_m": tile_m,
-        "tile_height_m": tile_m,
+        "tile_zoom": geo["zoom"],
+        "composite_tiles": geo["tiles"],
+        "tile_width_m": geo["width_m"],
+        "tile_height_m": geo["height_m"],
+        "circuit_frac_x": geo["circuit_frac_x"],
+        "circuit_frac_y": geo["circuit_frac_y"],
     }
