@@ -15,11 +15,16 @@
         sessionType: null,
         radarTimer: null,
         radarObjectUrls: {},   // layer name → blob URL currently in use
+        radarTileId: {},       // layer → currently-shown tile id (skip redundant swaps)
+        lastRadarClockMs: null,// playback-clock ms at the last radar refresh
         // Geographic alignment state — set once SVG + extent are both known.
         svgWidthM: null,
         svgHeightM: null,
         svgViewBoxAspect: null,  // viewBox.width / viewBox.height
+        trackRotation: 0,        // SVG data-rotation (deg) baked into the track
         tileWidthM: null,
+        circuitFracX: 0.5,       // circuit position within the 2x2 z14 composite
+        circuitFracY: 0.5,       // (0..1 from NW corner); from /radar/extent
         extentFetched: false,
         // Weather-condition icon state
         condLat: null,
@@ -29,6 +34,9 @@
     };
 
     const RADAR_POLL_INTERVAL_MS = 30000;
+    // Refresh the tile each time the PLAYBACK clock advances this much, so the
+    // overlay keeps up at high replay speeds (real-time polling can't).
+    const RADAR_CLOCK_STEP_MS = 30000;
     const RADAR_LAYERS = ["precipitationIntensity"];
 
     function handleWeather(data) {
@@ -62,8 +70,8 @@
             container.classList.toggle('raining', rainfall);
         }
         // Track rainfall transitions so the radar poll can throttle when
-        // it's been dry for a while (= save tomorrow.io quota when
-        // refreshes won't change the picture). See fetchAndShowRadar.
+        // it's been dry for a while (= avoid needless refetches when the
+        // picture won't change). See fetchAndShowRadar.
         if (rainfall) {
             state.lastRainfallTs = Date.now();
         }
@@ -111,15 +119,19 @@
     function extractMainTrackDimensions(svgEl) {
         if (state.trackSvgLoaded || !svgEl) return;
         const vb = (svgEl.getAttribute('viewBox') || '').split(/\s+/).map(Number);
-        const dataScale = parseFloat(
-            svgEl.querySelector('#track-root')?.dataset?.scale || ''
-        );
+        const trackRoot = svgEl.querySelector('#track-root');
+        const dataScale = parseFloat(trackRoot?.dataset?.scale || '');
         if (vb.length !== 4 || !(dataScale > 0)) return;
         // SVG raw coords are 0.1 m units; data-scale = viewBox-units
         // per raw-unit, so width-in-metres = viewBox_w / data_scale / 10.
         state.svgWidthM = vb[2] / dataScale / 10;
         state.svgHeightM = vb[3] / dataScale / 10;
         state.svgViewBoxAspect = vb[2] / vb[3];
+        // The track geometry is baked pre-rotated by data-rotation (deg, in
+        // F1's y-up frame, then y-flipped to SVG). The radar tile is north-up,
+        // so it must be rotated by -data-rotation to share the track's
+        // orientation. See maybeApplyAlignment.
+        state.trackRotation = parseFloat(trackRoot?.dataset?.rotation || '') || 0;
         state.trackSvgLoaded = true;
         maybeApplyAlignment();
     }
@@ -133,6 +145,8 @@
             if (!resp.ok) return;
             const data = await resp.json();
             state.tileWidthM = data.tile_width_m;
+            if (data.circuit_frac_x != null) state.circuitFracX = data.circuit_frac_x;
+            if (data.circuit_frac_y != null) state.circuitFracY = data.circuit_frac_y;
             state.condLat = data.lat;
             state.condLng = data.lng;
             maybeApplyAlignment();
@@ -179,6 +193,14 @@
         // Match the tile's pixel size to the same scale.
         const tilePx = state.tileWidthM * ppm;
         container.style.setProperty('--tile-size-px', `${tilePx.toFixed(1)}px`);
+        // Pin the tile's circuit point (not its centre) to the track centre,
+        // and rotate the north-up tile to the track's orientation. The CSS
+        // does the geometry: translate(-fx,-fy) lands the circuit point on the
+        // container centre, then rotate(-data-rotation) spins the tile about
+        // that point. See weather_radar.css .weather-radar-tile.
+        container.style.setProperty('--tile-fx', state.circuitFracX.toFixed(4));
+        container.style.setProperty('--tile-fy', state.circuitFracY.toFixed(4));
+        container.style.setProperty('--tile-rot', `${(-state.trackRotation).toFixed(2)}deg`);
     }
 
     // Re-apply alignment on viewport resize so the tile keeps the
@@ -279,6 +301,17 @@
         if (!data || !data.time) return;
         fetchCondition(data.time.toISOString().slice(0, 10));
         updateConditionIcon();
+        // Drive the radar tile off the PLAYBACK clock (not wall-clock) so it
+        // keeps pace at 1×–50×. Gate on clock delta to avoid refetching every
+        // tick; force-fetch bypasses the real-time dry-skip throttle, and the
+        // tile-id guard in fetchLayer skips redundant image swaps.
+        if (!state.year || !state.eventName || !state.sessionType) return;
+        const clockMs = data.time.getTime();
+        if (state.lastRadarClockMs == null ||
+            Math.abs(clockMs - state.lastRadarClockMs) >= RADAR_CLOCK_STEP_MS) {
+            state.lastRadarClockMs = clockMs;
+            fetchAndShowRadar(true);
+        }
     });
 
     messageBus.on('weatherData', handleWeather);
@@ -311,11 +344,20 @@
     function maybeStartRadarPolling() {
         if (state.radarTimer) return;
         if (!state.year || !state.eventName || !state.sessionType) return;
-        fetchAndShowRadar();
-        state.radarTimer = setInterval(fetchAndShowRadar, RADAR_POLL_INTERVAL_MS);
+        fetchAndShowRadar(true);   // initial paint: always fetch, unthrottled
+        state.radarTimer = setInterval(() => fetchAndShowRadar(false),
+                                       RADAR_POLL_INTERVAL_MS);
     }
 
-    async function fetchAndShowRadar() {
+    async function fetchAndShowRadar(force = false) {
+        // The dry-skip throttle only governs the periodic poll — it must
+        // never suppress a fetch that's needed NOW (initial paint, or a
+        // playback skip, where the clock jumped and the tile must change).
+        if (force) {
+            state.drySkipCount = 0;
+            await Promise.all(RADAR_LAYERS.map(fetchLayer));
+            return;
+        }
         // Throttle when it's been dry for a while: after 10 min of no
         // local rainfall AND no rainfall ever observed this session,
         // skip the fetch entirely — the picture won't change. Keep one
@@ -353,19 +395,44 @@
                     `&_=${Date.now()}`;
         try {
             const resp = await fetch(url);
+            if (resp.status === 204) {
+                // No tile at/before the current clock (e.g. skipped before the
+                // first capture) — remove any stale overlay so none is shown.
+                clearRadarLayer(layer);
+                return;
+            }
             if (resp.status !== 200) return;
+            // Skip the swap if the same tile is already shown — avoids needless
+            // blob/image churn when the clock advances within one tile window.
+            const tileId = resp.headers.get('X-Tile-Id');
+            if (tileId && state.radarTileId[layer] === tileId) return;
             const blob = await resp.blob();
+            state.radarTileId[layer] = tileId;
             showRadarLayer(layer, URL.createObjectURL(blob));
         } catch (e) {
             // Network blip — swallow; next tick will retry.
         }
     }
 
+    function clearRadarLayer(layer) {
+        const container = document.getElementById('weatherRadarMap');
+        if (!container) return;
+        const img = container.querySelector(`.weather-radar-tile[data-layer="${layer}"]`);
+        if (img) img.remove();
+        const previous = state.radarObjectUrls[layer];
+        if (previous) {
+            URL.revokeObjectURL(previous);
+            delete state.radarObjectUrls[layer];
+        }
+        delete state.radarTileId[layer];
+    }
+
     // Replays: refresh the radar tile immediately on a seek so we don't
     // wait up to RADAR_POLL_INTERVAL_MS to show the right rain.
     messageBus.on('state:seek-complete', () => {
         if (state.year && state.eventName && state.sessionType) {
-            fetchAndShowRadar();
+            if (messageBus.clockTime) state.lastRadarClockMs = messageBus.clockTime.getTime();
+            fetchAndShowRadar(true);   // skip: force the tile to the new clock
         }
     });
 
@@ -397,6 +464,7 @@
         state.weather = {};
         state.conditionDate = null;
         state.conditionHourly = null;
+        state.lastRadarClockMs = null;
         const cond = document.querySelector('#weatherRadarMap .weather-condition');
         if (cond) cond.remove();
     });
