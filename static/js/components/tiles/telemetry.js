@@ -842,9 +842,26 @@
         if (hasSegments) {
             for (const num of Object.keys(state.drivers)) {
                 const segs = state.lapSegments[num] || {};
-                const partLaps = Object.entries(segs)
-                    .filter(([, seg]) => seg === activePart)
-                    .map(([abs]) => parseInt(abs))
+                // Candidate laps = EVERY lap we know about (part-tagged + timed +
+                // classified + on-disk telemetry). Out-laps and untimed in-laps
+                // have no lap-time → no `part` tag, so without this they'd never
+                // get a pill even though their telemetry exists. Infer a missing
+                // lap's part from the nearest part-tagged lap.
+                const known = Object.keys(segs).map(Number).filter(n => !isNaN(n)).sort((a, b) => a - b);
+                const segOf = (lap) => {
+                    if (segs[lap]) return segs[lap];
+                    if (!known.length) return 0;
+                    let best = known[0];
+                    for (const k of known) if (Math.abs(k - lap) < Math.abs(best - lap)) best = k;
+                    return segs[best];
+                };
+                const cand = new Set(known);
+                for (const k of Object.keys(state.lapTimes[num] || {})) cand.add(parseInt(k));
+                for (const k of Object.keys(state.lapCls[num] || {})) cand.add(parseInt(k));
+                const tl = state.telemetryLaps[num];
+                if (tl) for (const n of tl) cand.add(n);
+                const partLaps = Array.from(cand)
+                    .filter(l => !isNaN(l) && segOf(l) === activePart)
                     .sort((a, b) => a - b);
                 localPos[num] = {};
                 partLaps.forEach((absLap, idx) => { localPos[num][absLap] = idx + 1; });

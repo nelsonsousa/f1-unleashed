@@ -227,6 +227,13 @@ const messageBus = {
                 for (const m of data) {
                     this.emit(m.topic, m.data, m.offset_ms);
                 }
+                // Advance the display clock to the seek target BEFORE emitting
+                // seek-complete, so consumers (audio's alignAudioToClock, tiles)
+                // align to the NEW position — `state:clock` arrives a beat later,
+                // so without this they'd align to the stale pre-seek clock. (Fix B)
+                if (this.startTime && msg.offset_ms != null) {
+                    this.clockTime = new Date(this.startTime.getTime() + msg.offset_ms);
+                }
                 this.emit('state:seek-complete', {
                     offset_ms: msg.offset_ms,
                 });
