@@ -1,0 +1,76 @@
+/* Video sync (Trello: 3-video-sync) — header control + crop-selector panel. */
+
+.btn-video-sync {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.video-sync-light {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #555;
+    flex: 0 0 auto;
+}
+.video-sync-light.arming { background: #e0b020; }       /* selecting crop */
+.video-sync-light.ok     { background: #34c759; }       /* in sync (green) */
+.video-sync-light.adjust { background: #e0b020; }       /* correcting: hold / jump (yellow) */
+.video-sync-light.error  { background: #ff4d4d; }       /* cannot sync (red) */
+
+.video-sync-status {
+    font-size: 12px;
+    color: #aaa;
+    white-space: nowrap;
+}
+.video-sync-status.ok    { color: #34c759; }
+.video-sync-status.warn  { color: #e0b020; }
+.video-sync-status.error { color: #ff4d4d; }
+
+/* Crop-selector overlay shown while the user boxes the on-screen clock. */
+.video-sync-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.video-sync-panel .vsp-inner {
+    background: #141414;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 16px;
+    max-width: calc(100vw - 40px);
+    max-height: calc(100vh - 40px);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.video-sync-panel .vsp-help {
+    margin: 0;
+    color: #ddd;
+    font-size: 14px;
+}
+.video-sync-panel .vsp-stage {
+    position: relative;
+    cursor: crosshair;
+    user-select: none;
+    line-height: 0;
+}
+.video-sync-panel .vsp-stage canvas {
+    display: block;
+    max-width: 100%;
+}
+.video-sync-panel .vsp-rect {
+    position: absolute;
+    border: 2px solid #34c759;
+    background: rgba(52, 199, 89, 0.15);
+    pointer-events: none;
+}
+.video-sync-panel .vsp-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
