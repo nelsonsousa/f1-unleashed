@@ -269,21 +269,35 @@
         }
     });
 
-    // driverGap:{num} {gap, cutoff}; cutoff=in knockout zone → red gap.
+    // driverGap:{num} {gap, cutoff, trend}; cutoff=in knockout zone → red gap;
+    // trend (race) green=shrinking / yellow=growing vs previous value.
     messageBus.on('driverGap:', (topic, data) => {
         const num = topic.split(':')[1];
         if (!num || !data) return;
         const e = ensureData(num);
         e.gap = data.gap || '';
         e.gapIsRed = !!data.cutoff;
+        e.gapTrend = data.trend || '';
         render();
     });
 
-    // driverInt:{num} — interval to car ahead (race), a string.
+    // driverInt:{num} {interval, trend} — interval to car ahead (race).
     messageBus.on('driverInt:', (topic, data) => {
         const num = topic.split(':')[1];
         if (!num) return;
-        ensureData(num).interval = data || '';
+        const e = ensureData(num);
+        // Tolerate the legacy bare-string payload as well as {interval, trend}.
+        if (typeof data === 'string') { e.interval = data || ''; e.intTrend = ''; }
+        else { e.interval = (data && data.interval) || ''; e.intTrend = (data && data.trend) || ''; }
+        render();
+    });
+
+    // driverPaceColour:{num} {lap, colour} — race only. Last-lap pace band vs the
+    // leader's reference lap (purple/blue/green/yellow/orange/red, white=in/out).
+    messageBus.on('driverPaceColour:', (topic, data) => {
+        const num = topic.split(':')[1];
+        if (!num || !data) return;
+        ensureData(num).paceColour = data.colour || null;
         render();
     });
 
@@ -736,19 +750,27 @@
         const last = (source && source.lapTime) || '';
         let cls = 'lap-empty';
         if (last) {
-            // overallFastest in the snapshot is frozen at the moment the
-            // lap completed — F1 doesn't re-emit demotions. Compute the
-            // purple tint live by comparing against the running overall
-            // best so a beaten lap drops to green / yellow.
-            const lastMs = parseLapMs(last);
-            if (state.overallBestLapMs != null
-                    && lastMs != null
-                    && lastMs === state.overallBestLapMs) {
-                cls = 'lap-purple';
-            } else if (source.personalFastest) {
-                cls = 'lap-green';
+            if (IS_RACE) {
+                // Race: colour by pace vs the leader's reference lap (server-
+                // computed, replaces the PB/SB colouring). White for in/out laps
+                // and until a pace colour arrives.
+                const pc = (state.driverData[num] || {}).paceColour;
+                cls = pc ? `lap-pace-${pc}` : 'lap-pace-white';
             } else {
-                cls = 'lap-yellow';
+                // P/Q: overallFastest in the snapshot is frozen at the moment the
+                // lap completed — F1 doesn't re-emit demotions. Compute the purple
+                // tint live vs the running overall best so a beaten lap drops to
+                // green / yellow.
+                const lastMs = parseLapMs(last);
+                if (state.overallBestLapMs != null
+                        && lastMs != null
+                        && lastMs === state.overallBestLapMs) {
+                    cls = 'lap-purple';
+                } else if (source.personalFastest) {
+                    cls = 'lap-green';
+                } else {
+                    cls = 'lap-yellow';
+                }
             }
         }
         return `<span class="lap-time lap-last ${cls}">${last || '--:--.---'}</span>`;
@@ -920,16 +942,22 @@
                 return '<span class="pred"></span>';
             }
         }
+        // Positions gained: green up-triangle + WHITE count, right-aligned.
+        const posHtml = (p.placesGained != null && p.placesGained > 0)
+            ? `<span class="pred-pos-gain"><span class="pred-pos-arrow">&#9650;</span>`
+              + `<span class="pred-pos-num">${p.placesGained}</span></span>`
+            : '';
+        // On completion (observed) only the positions gained are shown — the delta
+        // time is dropped, but its slot is kept (empty) so the positions stay in
+        // the same fixed column position as during the live projection.
+        if (p.observed) {
+            return `<span class="pred"><span class="pred-delta"></span>${posHtml}</span>`;
+        }
+        // Live projection: delta (0.1s) on the left, positions gained on the right.
         const deltaSec = p.delta / 1000;
         const sign = deltaSec < 0 ? '−' : '+';
-        // Live projection shows 0.1s; the observed completed-lap delta is exact
-        // to 0.001s (card 67).
-        const deltaText = `${sign}${Math.abs(deltaSec).toFixed(p.observed ? 3 : 1)}`;
+        const deltaText = `${sign}${Math.abs(deltaSec).toFixed(1)}`;
         const deltaCls = deltaSec < 0 ? 'pred-delta-neg' : 'pred-delta-pos';
-        // Positions gained: green up-triangle + count, right-aligned (card 64).
-        const posHtml = (p.placesGained != null && p.placesGained > 0)
-            ? `<span class="pred-pos-gain">&#9650;${p.placesGained}</span>`
-            : '';
         return `<span class="pred">`
             + `<span class="pred-delta ${deltaCls}">${deltaText}</span>`
             + posHtml
@@ -979,12 +1007,16 @@
             return `<span class="gap p1-lap">L${state.currentLap || ''}</span>`;
         }
         const e = state.driverData[num] || {};
-        return `<span class="gap">${e.gap || ''}</span>`;
+        const t = e.gapTrend === 'green' ? ' gap-trend-green'
+                : e.gapTrend === 'yellow' ? ' gap-trend-yellow' : '';
+        return `<span class="gap${t}">${e.gap || ''}</span>`;
     }
 
     function intervalCell(num) {
         const e = state.driverData[num] || {};
-        return `<span class="interval">${e.interval || ''}</span>`;
+        const t = e.intTrend === 'green' ? ' int-trend-green'
+                : e.intTrend === 'yellow' ? ' int-trend-yellow' : '';
+        return `<span class="interval${t}">${e.interval || ''}</span>`;
     }
 
     function buildRow(num, idx) {

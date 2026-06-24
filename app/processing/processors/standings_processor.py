@@ -76,9 +76,15 @@ class StandingsProcessor(Processor):
                         order_changed = True
                 except (TypeError, ValueError):
                     pass
-            if self._is_qualifying and d.get("KnockedOut") and num not in self._eliminated:
-                self._eliminated.add(num)
-                elim_changed = True
+            # KnockedOut is REVERSIBLE — a reinstated driver (e.g. when the P16 car
+            # loses its best lap to track limits) is un-knocked — so track both
+            # directions rather than latching.
+            if self._is_qualifying and "KnockedOut" in d:
+                ko = bool(d["KnockedOut"])
+                if ko and num not in self._eliminated:
+                    self._eliminated.add(num); elim_changed = True
+                elif not ko and num in self._eliminated:
+                    self._eliminated.discard(num); elim_changed = True
 
         if order_changed:
             self._emit_standings(clock_time)

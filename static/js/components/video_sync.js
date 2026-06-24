@@ -58,10 +58,13 @@
     // has drifted). The element returning after a dropout also forces a re-check.
     const RECHECK_INTERVAL_MS = 60000;
 
-    // Within INSYNC_S we treat it as synced (the displayed clock is whole-second,
-    // so value granularity is 1 s); beyond that we seek the data+audio straight
-    // to the TV's position — backward or forward, no waiting.
-    const INSYNC_S = 1;
+    // Within INSYNC_S we treat it as synced and DON'T re-sync; beyond that we seek
+    // the data+audio straight to the TV's position — backward or forward.
+    const INSYNC_S = 0.5;
+    // The server takes a moment to fetch the exact instant, so seeks land a touch
+    // short. Bias ENTER / "+" jumps this far AHEAD of the requested instant
+    // (manual "−" pause/play and the scrubber are unaffected).
+    const LAG_COMP_S = 0.5;
 
     // Robustness: the synced element (session clock / lap counter) isn't always
     // on screen — commercials, replays — and OCR can misread. We reject reads
@@ -538,7 +541,7 @@
         if (cur == null) return;
         state.alignedLap = d.lap;
         const offsetS = (d.at - t.at) / 1000;   // +: data crossed later ⇒ behind ⇒ seek forward
-        if (Math.abs(offsetS) < 0.15) { setLight('ok'); return; }
+        if (Math.abs(offsetS) < INSYNC_S) { setLight('ok'); return; }   // within deadband → don't re-sync
         seekTo(cur + offsetS);
         state.cooldownUntil = now + SEEK_COOLDOWN_MS;
         setLight('adjust');
@@ -701,16 +704,20 @@
         state.dataLap = L;
     });
 
-    // ── Race-start anchor (ENTER) ────────────────────────────────────────
-    // GREEN flag = lights-out (known upfront from session:events).
-    let raceStartMs = null;
+    // ── Start / restart anchors (ENTER) ──────────────────────────────────
+    // GREEN markers from session:events = session starts + restarts (after red
+    // flags). For a race the FIRST green is lights-out; for P/Q each green is a
+    // part start or a restart.
+    let raceStartMs = null;        // race lights-out (first green)
+    let greenOffsetsMs = [];       // all green offsets, ascending
     messageBus.on('session:events', (events) => {
         if (!Array.isArray(events)) return;
-        const greens = events
+        greenOffsetsMs = events
             .filter(e => String((e.data && (e.data.event || e.data)) || '').toUpperCase() === 'GREEN')
             .map(e => e.offset_ms)
-            .filter(o => typeof o === 'number');
-        if (greens.length) raceStartMs = Math.min(...greens);
+            .filter(o => typeof o === 'number')
+            .sort((a, b) => a - b);
+        raceStartMs = greenOffsetsMs.length ? greenOffsetsMs[0] : null;
     });
     // Scheduled session start (formation-lap start), UTC ms — from sessionInfo.
     let scheduledStartMs = null;
@@ -725,26 +732,61 @@
         }
         dbg('sessionInfo startDate=', d && d.startDate, 'gmt=', d && d.gmtOffset, '→ scheduledStartMs', scheduledStartMs);
     });
-    // ENTER marks the start. Within ±1 min of the scheduled start it anchors the
-    // SCHEDULED start (formation lap); more than 1 min past it anchors LIGHTS-OUT.
-    // Press it at the matching moment on the broadcast; lap-increment sync then
-    // keeps it aligned.
+    // Seek with lag compensation — ENTER / "+" only (bias the target ahead so the
+    // server's fetch lag doesn't undershoot the requested instant).
+    function seekAhead(offsetS) { seekToOffset(Math.max(0, offsetS + LAG_COMP_S)); }
+
+    // ENTER — jump to the next start / restart.
+    //   Practice / Qualifying: the next GREEN (part start, or restart after a red
+    //     flag) AFTER the current position.
+    //   Race: > 1 min before lights-out (or no green known yet) → scheduled start
+    //     (formation lap); from there through the end of lap 1 → lights-out;
+    //     lap 2 onward → no-op (lap-increment sync owns it).
     document.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter') return;
         const tag = (e.target && e.target.tagName) || '';
         if (tag === 'INPUT' || tag === 'TEXTAREA' || e.isComposing) return;
-        if (!isRace() || typeof seekToOffset !== 'function') return;
+        if (typeof seekToOffset !== 'function') return;
         const b = bus();
-        if (!b || !b.clockTime || !b.startTime) return;
-        const ds = b.startTime.getTime();
-        const nearScheduled = scheduledStartMs != null &&
-            b.clockTime.getTime() <= scheduledStartMs + 60000;
-        if (nearScheduled) {
+        if (!b || !b.startTime || typeof b.getCurrentOffset !== 'function') return;
+        const cur = b.getCurrentOffset();
+
+        if (isRace()) {
+            if (state.dataLap != null && state.dataLap >= 2) return;   // lap 2+ → disabled
+            const greenS = raceStartMs != null ? raceStartMs / 1000 : null;
+            const schedS = scheduledStartMs != null
+                ? (scheduledStartMs - b.startTime.getTime()) / 1000 : null;
+            if (greenS == null || cur < greenS - 60) {
+                if (schedS != null) { e.preventDefault(); seekAhead(schedS); }   // → scheduled start
+            } else {
+                e.preventDefault(); seekAhead(greenS);                            // → lights-out
+            }
+            return;
+        }
+        // Practice / Qualifying: jump to the next green/restart ahead of us.
+        const next = greenOffsetsMs.find(o => o / 1000 > cur + 1);
+        if (next != null) { e.preventDefault(); seekAhead(next / 1000); }
+    });
+
+    // Manual fine nudges while video sync is active:
+    //   "+" / "=" : TV ahead → skip the data forward ~0.5 s (with lag comp).
+    //   "−"       : TV behind → pause ~0.1 s and resume so the TV catches up
+    //               (no seek → unaffected by server response time).
+    document.addEventListener('keydown', (e) => {
+        const tag = (e.target && e.target.tagName) || '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || e.isComposing) return;
+        if (!state.active) return;
+        const b = bus();
+        if (e.key === '+' || e.key === '=') {
             e.preventDefault();
-            seekToOffset((scheduledStartMs - ds) / 1000);     // → scheduled start (formation lap)
-        } else if (raceStartMs != null) {
+            const cur = (b && typeof b.getCurrentOffset === 'function') ? b.getCurrentOffset() : null;
+            if (cur != null) seekTo(cur + 0.5 + LAG_COMP_S);
+        } else if (e.key === '-') {
             e.preventDefault();
-            seekToOffset(raceStartMs / 1000);                 // → lights-out (GREEN)
+            if (b && b.isPlaying && typeof b.send === 'function') {
+                b.send({ cmd: 'pause' });
+                setTimeout(() => b.send({ cmd: 'play' }), 100);
+            }
         }
     });
 

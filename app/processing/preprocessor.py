@@ -41,6 +41,7 @@ from app.processing.processors.telemetry_processor import TelemetryProcessor
 from app.processing.processors.lap_timing_processor import LapTimingProcessor
 from app.processing.processors.lap_delta_processor import LapDeltaProcessor
 from app.processing.processors.driver_gap_processor import DriverGapProcessor
+from app.processing.processors.race_pace_processor import RacePaceProcessor
 from app.processing.processors.sector_timing_processor import SectorTimingProcessor
 from app.processing.processors.tyre_processor import TyreProcessor
 from app.processing.processors.track_status_processor import TrackStatusProcessor
@@ -275,25 +276,11 @@ class SessionPreProcessor:
         if self._expected_key is None:
             self._expected_key = session_info.get("Key")
 
-        # Parse the SCHEDULED session start (UTC). SessionInfo.StartDate
-        # is in track-local time without timezone; GmtOffset gives the
-        # local-vs-UTC delta. Used to filter scrubber events: anything
-        # before scheduled start is suppressed (pre-session noise). The
-        # threshold can be moved EARLIER by a brought-forward RCM.
+        # Scheduled session start (UTC) — used to suppress pre-session scrubber
+        # `event` markers. Sourced from the SessionInfoProcessor's emitted
+        # `sessionInfo` (derived from live.jsonl), NOT subscribe.json (a capture
+        # snapshot that can reflect a later state). Set on the first emit (below).
         self._scheduled_start_utc: Optional[datetime] = None
-        try:
-            sd = session_info.get("StartDate")
-            gmt = session_info.get("GmtOffset") or "00:00:00"
-            if sd:
-                local_dt = datetime.fromisoformat(
-                    sd.replace("Z", "").split("+")[0].split(".")[0]
-                )
-                sign = -1 if str(gmt).startswith("-") else 1
-                h, m, s = (int(x) for x in str(gmt).lstrip("-+").split(":"))
-                off = timedelta(seconds=sign * (h * 3600 + m * 60 + s))
-                self._scheduled_start_utc = (local_dt - off).replace(tzinfo=timezone.utc)
-        except Exception:
-            logger.warning(f"Could not parse SessionInfo.StartDate for {self._session_path.name}")
 
         self._init_processors()
         self._bus.set_persist_sink(self._capture_output)
@@ -568,6 +555,7 @@ class SessionPreProcessor:
             SectorTimingProcessor(self._bus, self._session_type),
             TyreProcessor(self._bus, self._session_type),
             StandingsProcessor(self._bus, self._session_type),
+            RacePaceProcessor(self._bus, self._session_type),
             RaceControlProcessor(self._bus, self._session_type),
             # FIA Stewards stack — only meaningful for race + sprint;
             # the processor itself no-ops if registered elsewhere.
@@ -584,6 +572,29 @@ class SessionPreProcessor:
         for p in self._processors:
             p.skip_animations = True
             p.subscribe()
+        # Scheduled start (for pre-session scrubber-event suppression) comes from
+        # the SessionInfoProcessor's emitted sessionInfo (live.jsonl-derived),
+        # registered AFTER the processors so its emit reaches this handler.
+        self._bus.on("sessionInfo", self._on_session_info)
+
+    def _on_session_info(self, data: Any, clock_time: datetime) -> None:
+        """Derive the scheduled start (UTC) from the emitted sessionInfo
+        (startDate local + gmtOffset, both from live.jsonl). Once only —
+        startDate is static session metadata."""
+        if self._scheduled_start_utc is not None or not isinstance(data, dict):
+            return
+        sd = data.get("startDate")
+        gmt = data.get("gmtOffset") or "00:00:00"
+        if not sd:
+            return
+        try:
+            local_dt = datetime.fromisoformat(sd.replace("Z", "").split("+")[0].split(".")[0])
+            sign = -1 if str(gmt).startswith("-") else 1
+            h, m, s = (int(x) for x in str(gmt).lstrip("-+").split(":"))
+            off = timedelta(seconds=sign * (h * 3600 + m * 60 + s))
+            self._scheduled_start_utc = (local_dt - off).replace(tzinfo=timezone.utc)
+        except Exception:
+            logger.warning(f"Could not parse sessionInfo.startDate for {self._session_path.name}")
 
     def _discover_topic(self, topic: str) -> None:
         """Track raw topics; alert on genuinely-new ones no processor handles.

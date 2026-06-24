@@ -3,7 +3,7 @@ Driver Gap Processor — gap column (+ race interval) per driver.
 
 Subscribes to: TimingData
 Emits:
-  driverGap:{num}  {gap, cutoff}
+  driverGap:{num}  {gap, cutoff, trend}   (race trend: green=shrinking, yellow=growing)
       race       : gap = GapToLeader,             cutoff False
       practice   : gap = TimeDiffToFastest (direct per-line field), cutoff False
       qualifying : cutoff = driver is in the elimination zone (POSITIONAL —
@@ -19,7 +19,8 @@ Emits:
                    cutoff True  -> gap = gap to cutoff (driverBest - CutOffTime)
                    gap = "" when the driver has no best lap yet.
 
-  driverInt:{num}  interval to the car ahead — RACE ONLY (IntervalToPositionAhead)
+  driverInt:{num}  {interval, trend} — car ahead, RACE ONLY (IntervalToPositionAhead;
+                   trend green=shrinking / yellow=growing vs previous value)
 
 SessionPart / CutOffTime are top-level TimingData fields. Because a
 driver can be bumped into/out of the zone by someone else's lap, the whole quali
@@ -47,6 +48,29 @@ def _parse_ms(s: Any) -> Optional[int]:
 
 def _fmt_gap(ms: int) -> str:
     return f"{'+' if ms >= 0 else '-'}{abs(ms) / 1000:.3f}"
+
+
+def _secs(s: Any) -> Optional[float]:
+    """Seconds from a gap/interval string ("+1.234", "+1:23.456", "-0.5").
+    Returns None for non-numeric values ("+1 LAP", "LAP", "", placeholders)."""
+    if not isinstance(s, str):
+        return None
+    s = s.strip()
+    if not s or "L" in s.upper():        # "1 LAP", "LAP", "1L" — lapped, not a time
+        return None
+    neg = s.startswith("-")
+    body = s.lstrip("+-").strip()
+    if not body:
+        return None
+    try:
+        if ":" in body:
+            mm, rest = body.split(":", 1)
+            val = int(mm) * 60 + float(rest)
+        else:
+            val = float(body)
+    except ValueError:
+        return None
+    return -val if neg else val
 
 
 def _stats_timediff(stats: Any, key: str) -> Optional[str]:
@@ -77,6 +101,11 @@ class DriverGapProcessor(Processor):
         # emit dedup
         self._last_gap: dict[str, dict] = {}
         self._last_int: dict[str, Any] = {}
+        # race gap/int trend: NoL per driver (lap-2 gate) + recent numeric history
+        # (compared 3 updates back so near-constant gaps still register a trend).
+        self._laps: dict[str, int] = {}
+        self._gap_hist: dict[str, list] = {}
+        self._int_hist: dict[str, list] = {}
 
     def subscribe(self) -> None:
         self._bus.on("TimingData", self._handle)
@@ -94,26 +123,59 @@ class DriverGapProcessor(Processor):
         else:
             self._handle_practice(lines, clock_time)
 
-    def _emit_gap(self, num: str, gap: Optional[str], cutoff: bool, clock_time: datetime) -> None:
-        payload = {"gap": gap if gap is not None else "", "cutoff": cutoff}
+    def _emit_gap(self, num: str, gap: Optional[str], cutoff: bool,
+                  clock_time: datetime, trend: str = "") -> None:
+        payload = {"gap": gap if gap is not None else "", "cutoff": cutoff, "trend": trend}
         if payload != self._last_gap.get(num):
             self._last_gap[num] = payload
             self._bus.emit(f"driverGap:{num}", payload, clock_time)
+
+    def _trend(self, cur_s: Optional[float], hist_map: dict, num: str, nol: int) -> str:
+        """Colour vs the value 3 updates ago (near-constant gaps still register a
+        trend) with a ±0.1 s deadzone: green if it shrank by >0.1 s, yellow if it
+        grew by >0.1 s. "" (white) for non-numeric values, the first few updates,
+        and the whole of lap 1 (NoL < 1 ⇒ currentLap 1). History only accrues for
+        numeric values."""
+        if cur_s is None:
+            return ""
+        h = hist_map.setdefault(num, [])
+        prev = h[-3] if len(h) >= 3 else None        # value 3 updates ago
+        trend = ""
+        if prev is not None and nol >= 1:            # NoL>=1 ⇒ on lap 2+
+            d = cur_s - prev
+            if d < -0.1:
+                trend = "green"
+            elif d > 0.1:
+                trend = "yellow"
+        h.append(cur_s)
+        if len(h) > 8:
+            del h[0]
+        return trend
 
     # ── Race ──
     def _handle_race(self, lines: dict, clock_time: datetime) -> None:
         for num, d in lines.items():
             if not isinstance(d, dict):
                 continue
+            if "NumberOfLaps" in d:
+                try:
+                    self._laps[num] = int(d["NumberOfLaps"])
+                except (TypeError, ValueError):
+                    pass
+            nol = self._laps.get(num, 0)
             if "GapToLeader" in d:
-                self._emit_gap(num, d["GapToLeader"], False, clock_time)
+                g = d["GapToLeader"]
+                trend = self._trend(_secs(g), self._gap_hist, num, nol)
+                self._emit_gap(num, g, False, clock_time, trend)
             if "IntervalToPositionAhead" in d:
                 v = d["IntervalToPositionAhead"]
                 if isinstance(v, dict):
                     v = v.get("Value", "")
-                if v != self._last_int.get(num):
-                    self._last_int[num] = v
-                    self._bus.emit(f"driverInt:{num}", v, clock_time)
+                trend = self._trend(_secs(v), self._int_hist, num, nol)
+                payload = {"interval": v, "trend": trend}
+                if payload != self._last_int.get(num):
+                    self._last_int[num] = payload
+                    self._bus.emit(f"driverInt:{num}", payload, clock_time)
 
     # ── Practice ── (TimeDiffToFastest is a direct per-line field, no Stats)
     def _handle_practice(self, lines: dict, clock_time: datetime) -> None:
