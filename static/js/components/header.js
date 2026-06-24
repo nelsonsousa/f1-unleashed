@@ -728,6 +728,13 @@
             }
             return;
         }
+        // Seekable static file still loading its metadata (readyState <
+        // HAVE_METADATA): don't abandon it for the ?t= reload path — it will
+        // become seekable and use native seeking above. Only a genuinely
+        // non-seekable LIVE (tail-follow) stream — readyState ready yet seekable
+        // empty — falls through to the reload. (Fix A: stop the premature reload
+        // that aborted the seekable replay file and forced slow ?t= reloads.)
+        if (audio.readyState < 1) { adbg('align: source loading (readyState 0) — wait for native seek'); return; }
         // Non-seekable (= live chunked stream). audio.currentTime is
         // "seconds since the most recent fetch's byte 0", NOT "seconds
         // since the file's start". The previous reload set seekOffset =
@@ -743,6 +750,7 @@
         // both advance at 1× and stay in sync without intervention;
         // we only need to correct after a buffer underrun.
         if (Math.abs(drift) > 5) {
+            adbg('align: reload ?t=', targetSec.toFixed(2), '(non-seekable, drift', drift.toFixed(2), ')');
             reloadAudioAtOffset(targetSec);
         }
     }
@@ -877,8 +885,13 @@
                 } else {
                     adbg('sync: no-seek (Δ', (audio.currentTime - targetSec).toFixed(2), '≤ 0.5s)');
                 }
+            } else if (audio.readyState < 1) {
+                // Seekable static file still loading metadata — don't reload via
+                // ?t= (that aborts it and locks onto the slow non-seekable path).
+                // Wait; it becomes seekable and uses native seeking above (Fix A).
+                adbg('sync: source loading (readyState 0) — wait for native seek');
             } else {
-                // Non-seekable (= live chunked). Reload via ?t= when
+                // Genuinely non-seekable (= live chunked). Reload via ?t= when
                 // the audible position has drifted > 5 s from the data
                 // clock. The OLD gate of "only when actually playing"
                 // caused a stuck-paused state during buffer underrun
@@ -891,6 +904,7 @@
                 const now = Date.now();
                 const sinceLast = now - (state.audio.lastReloadAt || 0);
                 if (Math.abs(playPos - targetSec) > 5 && sinceLast > 10000) {
+                    adbg('sync: reload ?t=', targetSec.toFixed(2), '(non-seekable live)');
                     state.audio.lastReloadAt = now;
                     reloadAudioAtOffset(targetSec);
                 }
