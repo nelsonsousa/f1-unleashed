@@ -13,8 +13,8 @@ Priority (highest wins):
 DSQ is a latch set by a black flag — delivered (2024 São Paulo) as an
 "FIA STEWARDS: BLACK FLAG FOR CAR N" text RCM (also accept a Flag="BLACK"
 driver-flag form); NOT black-and-white (that's a track-limits warning). It
-outranks everything. ELIMINATED is the qualifying knockout
-(KnockedOut) — terminal for the session. RET/STOP/OUT/PIT come from TimingData
+outranks everything. ELIMINATED is the qualifying knockout (KnockedOut), which is
+REVERSIBLE (a reinstated driver is un-knocked). RET/STOP/OUT/PIT come from TimingData
 booleans (Retired, Stopped, PitOut, InPit), each set when its field is True and
 cleared when False. FINISHED is a latched flag set when the driver takes the
 chequered flag — it sits BELOW PIT, so a driver who finishes and then pits
@@ -127,11 +127,16 @@ class DriverStatusProcessor(Processor):
                 except (TypeError, ValueError):
                     pass
 
-            # Qualifying knockout — terminal for the session (ELIMINATED).
-            if (self._is_qualifying and d.get("KnockedOut")
-                    and num not in self._knocked):
-                self._knocked.add(num)
-                touched = True
+            # Qualifying knockout (ELIMINATED). KnockedOut is REVERSIBLE — a driver
+            # promoted back above the cutoff (e.g. the P16 car loses its best lap to
+            # track limits, demoting it and reinstating the P17 car) is un-knocked —
+            # so track both directions, not just the latch.
+            if self._is_qualifying and "KnockedOut" in d:
+                ko = bool(d["KnockedOut"])
+                if ko and num not in self._knocked:
+                    self._knocked.add(num); touched = True
+                elif not ko and num in self._knocked:
+                    self._knocked.discard(num); touched = True
 
             crossed = False
             if "NumberOfLaps" in d:

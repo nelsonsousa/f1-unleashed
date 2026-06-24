@@ -20,7 +20,7 @@ start and end at S/F is timed (PUSH/SLOW for P/Q, "" for race).
 TIMED laps (P/Q):
   - PUSH by default; SLOW when, between 10%–90% track distance, delta blows out:
     deltaPct = driverDelta.deltaMs / driverLaps.overallBestLap.time × 100, SLOW iff
-    deltaPct > 20 AND deltaMs > 5000. Before 10% stays PUSH; after 90% no flips.
+    deltaPct > 7.5 AND deltaMs > 5000. Before 10% stays PUSH; after 90% no flips.
   - Rule 1 (multi-lap prep): at the start of a timed lap N, walking back from
     N-2 while each prior lap is PUSH, reclassify it SLOW if its lap time exceeds
     lapTime(N-1) + 10 s (guarded by N-1 being a timed lap). Re-emits the lap.
@@ -39,7 +39,7 @@ from app.processing.message_bus import SessionMessageBus
 from app.processing.processors.base import Processor
 
 PREP_GAP_MS = 10_000
-SLOW_PCT = 20.0
+SLOW_PCT = 7.5
 SLOW_MIN_MS = 5_000
 WINDOW_LO = 10.0
 WINDOW_HI = 90.0

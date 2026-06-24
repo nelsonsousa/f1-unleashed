@@ -119,6 +119,11 @@ class F1SignalRClient:
 
         self._output_file = None
         self._subscribe_data: dict[str, Any] = {}
+        # subscribe.json must be the INITIAL capture snapshot (state at the start
+        # of live.jsonl). F1 re-sends a full CompletionMessage on every reconnect,
+        # so only the FIRST is captured — later ones would overwrite it with a
+        # mid/end-session state and make subscribe.json stale.
+        self._subscribe_captured = False
         self._session_start: Optional[datetime] = None
         self._t_last_message: float = 0
         self._message_count = 0
@@ -147,18 +152,24 @@ class F1SignalRClient:
 
         try:
             if isinstance(msg, CompletionMessage):
-                # Initial subscription response with current state
+                # Subscription response with current state. Every reconnect sends a
+                # fresh one; feed it ALL into live.jsonl (the resume baseline), but
+                # capture subscribe.json from the FIRST only (the initial state).
+                first = not self._subscribe_captured
                 for key, value in msg.result.items():
-                    self._subscribe_data[key] = value
+                    if first:
+                        self._subscribe_data[key] = value
                     self._process_message(key, value, timestamp)
 
-                # Write subscribe.json immediately so replay clients can use it
-                subscribe_file = self.cache_path / "subscribe.json"
-                try:
-                    with open(subscribe_file, "w", encoding="utf-8") as f:
-                        json.dump(self._subscribe_data, f, indent=2)
-                except Exception as e:
-                    logger.error(f"Failed to write subscribe.json: {e}")
+                if first:
+                    self._subscribe_captured = True
+                    # Write subscribe.json immediately so replay clients can use it
+                    subscribe_file = self.cache_path / "subscribe.json"
+                    try:
+                        with open(subscribe_file, "w", encoding="utf-8") as f:
+                            json.dump(self._subscribe_data, f, indent=2)
+                    except Exception as e:
+                        logger.error(f"Failed to write subscribe.json: {e}")
 
             elif isinstance(msg, list):
                 # Regular message: [topic, data, extra?]

@@ -234,31 +234,71 @@ def detect_first_audible_offset(audio_file: Path) -> Optional[float]:
     return ends[-1]
 
 
-def session_start_utc(session_path: Path) -> Optional[datetime]:
-    """Read session start from subscribe.json's SessionInfo.
+def _session_key_from_path(session_path: Path) -> Optional[int]:
+    head = session_path.name.split("_", 1)[0]
+    return int(head) if head.isdigit() else None
 
-    StartDate is in local track time (no offset suffix). GmtOffset is
-    e.g. "-04:00:00" or "+11:00:00". We combine them into a UTC datetime.
-    """
-    sub = session_path / "subscribe.json"
-    if not sub.exists():
+
+def _session_info_from_live(session_path: Path) -> Optional[dict]:
+    """First SessionInfo (matching the folder's session key, if present) from
+    live.jsonl — the authoritative, session-correct source. subscribe.json is
+    only a capture-time snapshot and can be stale across sessions, so it is not
+    used here (the project rule: replay must rely on live.jsonl)."""
+    live = session_path / "live.jsonl"
+    if not live.exists():
         return None
+    expected_key = _session_key_from_path(session_path)
     try:
-        data = json.loads(sub.read_text())
-    except json.JSONDecodeError:
+        with live.open(encoding="utf-8") as f:
+            for line in f:
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if msg.get("Type") != "SessionInfo":
+                    continue
+                info = msg.get("Json")
+                if isinstance(info, str):
+                    try:
+                        info = json.loads(info)
+                    except json.JSONDecodeError:
+                        continue
+                if not isinstance(info, dict) or not info.get("StartDate"):
+                    continue
+                key = info.get("Key")
+                if expected_key is not None and key is not None and key != expected_key:
+                    continue
+                return info
+    except OSError:
         return None
+    return None
 
-    info = data.get("SessionInfo") or {}
+
+def session_start_utc(session_path: Path) -> Optional[datetime]:
+    """Session start (UTC) from live.jsonl's SessionInfo (authoritative).
+
+    StartDate is local track time (no offset suffix); GmtOffset is e.g.
+    "-04:00:00" / "+11:00:00", combined into a UTC datetime. Falls back to
+    subscribe.json ONLY if live.jsonl carries no SessionInfo.
+    """
+    info = _session_info_from_live(session_path)
+    if info is None:
+        sub = session_path / "subscribe.json"   # last resort (may be stale)
+        if not sub.exists():
+            return None
+        try:
+            info = (json.loads(sub.read_text()) or {}).get("SessionInfo") or {}
+        except json.JSONDecodeError:
+            return None
+
     start_str = info.get("StartDate")
     gmt_str = info.get("GmtOffset", "00:00:00")
     if not start_str:
         return None
-
     try:
         local = datetime.fromisoformat(start_str)
     except ValueError:
         return None
-
     sign = -1 if gmt_str.startswith("-") else 1
     parts = gmt_str.lstrip("-+").split(":")
     off_seconds = int(parts[0]) * 3600 + int(parts[1]) * 60

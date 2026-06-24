@@ -668,6 +668,9 @@
         setTimeout(alignAudioToClock, 500);
     }
 
+    // Debug: enable with  localStorage.setItem('audioSyncDebug','1')  then reload.
+    function adbg(...a) { try { if (localStorage.getItem('audioSyncDebug') === '1') console.log('[audio-sync]', ...a); } catch (e) {} }
+
     // Map a data-clock instant (ms) → position in the combined audio stream
     // (seconds), using the per-segment map so inter-segment capture gaps are
     // skipped (I15). Returns null when the clock is in a gap or before the
@@ -700,8 +703,14 @@
     // alignAudioToClock when the data clock catches up.
     function alignAudioToClock() {
         const audio = state.audio.element;
-        if (!audio || !state.audio.startUtc || !messageBus.clockTime) return;
+        if (!audio || !state.audio.startUtc || !messageBus.clockTime) {
+            adbg('align: bail', { audio: !!audio, startUtc: !!state.audio.startUtc, clock: !!messageBus.clockTime });
+            return;
+        }
         let targetSec = clockToAudioSec(messageBus.clockTime.getTime());
+        adbg('align@seek-complete: clock=', messageBus.clockTime.toISOString().slice(11, 23),
+            'target=', targetSec == null ? null : targetSec.toFixed(2),
+            'cur=', audio.currentTime.toFixed(2), 'playState=', state.audio.playState, 'paused=', audio.paused);
         // In an inter-segment gap (I15): no audio for this data-time → pause.
         if (targetSec === null) { if (!audio.paused) audio.pause(); return; }
         // Clamp to 0 instead of pausing — a user nudge that pushes
@@ -712,7 +721,10 @@
             && audio.seekable.end(audio.seekable.length - 1) > 0;
         if (canSeek) {
             if (Math.abs(audio.currentTime - targetSec) > 1) {
+                adbg('align: SEEK', audio.currentTime.toFixed(2), '→', targetSec.toFixed(2));
                 audio.currentTime = targetSec;
+            } else {
+                adbg('align: no-seek (Δ', (audio.currentTime - targetSec).toFixed(2), '≤ 1s)');
             }
             return;
         }
@@ -808,6 +820,9 @@
     function syncAudio() {
         const audio = state.audio.element;
         if (!audio || !state.audio.isReady) return;
+        adbg('sync: enter playState=', state.audio.playState, 'shouldPlay=', audioShouldPlay(),
+            'clock=', messageBus.clockTime && messageBus.clockTime.toISOString().slice(11, 23),
+            'cur=', audio.currentTime.toFixed(2));
 
         if (!audioShouldPlay()) {
             if (!audio.paused) audio.pause();
@@ -856,7 +871,11 @@
 
             if (canSeek) {
                 if (Math.abs(audio.currentTime - targetSec) > 0.5) {
+                    adbg('sync: SEEK', audio.currentTime.toFixed(2), '→', targetSec.toFixed(2),
+                        'clock=', messageBus.clockTime.toISOString().slice(11, 23));
                     audio.currentTime = targetSec;
+                } else {
+                    adbg('sync: no-seek (Δ', (audio.currentTime - targetSec).toFixed(2), '≤ 0.5s)');
                 }
             } else {
                 // Non-seekable (= live chunked). Reload via ?t= when

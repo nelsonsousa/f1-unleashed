@@ -199,6 +199,15 @@
 .lap-time.lap-green { color: #00ff88; }
 .lap-time.lap-purple { color: #cc66ff; }
 
+/* Race "current pace" bands — last lap vs the leader's reference lap. */
+.lap-time.lap-pace-white  { color: #ffffff; }
+.lap-time.lap-pace-purple { color: #cc66ff; }
+.lap-time.lap-pace-blue   { color: #3399ff; }
+.lap-time.lap-pace-green  { color: #00ff88; }
+.lap-time.lap-pace-yellow { color: #ffcc00; }
+.lap-time.lap-pace-orange { color: #ff9933; }
+.lap-time.lap-pace-red    { color: #ff5555; }
+
 .gap {
     text-align: right;
     font-size: 17px;
@@ -208,6 +217,10 @@
 
 .gap.gap-red { color: #ff5555; }
 .gap.gap-empty { color: var(--text-muted); }
+
+/* Race gap trend vs the previous value (±0.1 s deadzone stays default/white). */
+.gap.gap-trend-green { color: #00ff88; }
+.gap.gap-trend-yellow { color: #ffd700; }
 
 .gap.p1-lap {
     color: #ffcc00;
@@ -304,8 +317,8 @@
    Enlarge its icon + lap count so the current set stands out; previous
    sets keep the base (smaller) size. */
 .tyre-stint:first-child .tyre-stint-icon {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
 }
 
 .tyre-stint:first-child .tyre-stint-laps {
@@ -325,6 +338,10 @@
     color: #cfcfcf;
     min-width: 0;
 }
+
+/* Race interval trend vs the previous value (±0.1 s deadzone stays default). */
+.interval.int-trend-green { color: #00ff88; }
+.interval.int-trend-yellow { color: #ffd700; }
 
 /* Penalties cell (race) */
 .pens {
@@ -384,7 +401,12 @@
     font-size: 16px;
     flex: 0 0 auto;
     text-align: right;
+    min-width: 2.5em;          /* fixed slot so positions stay aligned with/without the delta */
 }
+
+/* Positions gained: green arrow, white count (card "Deltas fine-tuning"). */
+.pred-pos-arrow { color: #00ff88; }
+.pred-pos-num { color: #ffffff; }
 
 /* FIA Stewards penalty / flag stack.
  * Lives inside the status badge. Horizontal flexbox, h-scrolls when

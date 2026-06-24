@@ -11,9 +11,9 @@ Emits:
       currentLap is the lap the driver is on (NoL in P/Q, NoL+1 in race).
       Consumers needing per-lap history accumulate it from lastLap; seek/restore
       replays the full driverLaps history up to the offset.
-      bestLap is the driver's fastest lap flagged PersonalFastest OR
-      OverallFastest by F1 — this excludes out/in/cool laps (never flagged), so
-      a driver with only an out-lap done has bestLap=null (no valid reference).
+      bestLap is the driver's fastest lap per F1's sticky PersonalFastest flag —
+      this excludes out/in/cool laps (flagged PersonalFastest False), so a driver
+      with only an out-lap done has bestLap=null (no valid reference).
       In QUALIFYING bestLap is scoped to the CURRENT part (Q1/Q2/Q3) and resets
       each part (card 63); overallBestLap is the session-wide best, kept as the
       delta-prediction reference. `part` (1/2/3, or null outside quali) tags the
@@ -134,10 +134,18 @@ class LapTimingProcessor(Processor):
         return nol if self._is_race else nol - 1
 
     def _handle_timing(self, data: Any, clock_time: datetime) -> None:
-        if not self._started:    # laps only count once the session has started
-            return
         lines = data.get("Lines") if isinstance(data, dict) else None
         if not isinstance(lines, dict):
+            return
+        # Capture the STICKY PersonalFastest/OverallFastest flags even BEFORE the
+        # session starts: F1 sends each driver's initial flag state pre-green and
+        # then only re-sends it on change, so gating this until _started drops the
+        # first-lap PB flag — the lap then reads as un-flagged and its best is lost
+        # (and with it overallBestLap, which the SLOW classifier needs).
+        for num, d in lines.items():
+            if isinstance(d, dict):
+                self._capture_flags(num, d)
+        if not self._started:    # laps only count once the session has started
             return
         changed = set()
         for num, d in lines.items():
@@ -145,6 +153,16 @@ class LapTimingProcessor(Processor):
                 changed.add(num)
         for num in changed:
             self._emit(num, clock_time)
+
+    def _capture_flags(self, num: str, d: dict) -> None:
+        """Update the per-driver sticky PersonalFastest/OverallFastest state. The
+        flags are per driver — one car's flag never carries to another."""
+        llt = d.get("LastLapTime")
+        if isinstance(llt, dict):
+            if "PersonalFastest" in llt:
+                self._pb[num] = bool(llt["PersonalFastest"])
+            if "OverallFastest" in llt:
+                self._ob[num] = bool(llt["OverallFastest"])
 
     def _process(self, num: str, d: dict, clock_time: datetime) -> bool:
         ll = None
@@ -232,12 +250,12 @@ class LapTimingProcessor(Processor):
         if ms is None:
             return
         self._sticky_ll[num] = dict(ll)   # carry forward for same-time recovery
-        # Best lap from F1's (sticky) personal/overall-fastest flag — this
-        # excludes out/in/cool laps (F1 flags PersonalFastest False on the first
-        # non-improving lap). PersonalFastest alone is insufficient: a lap that
-        # is BOTH a PB and the overall best is sometimes flagged
-        # OverallFastest-only, so accept either.
-        if ll.get("personalBest") or ll.get("overallBest"):
+        # PersonalFastest (sticky, per-driver) marks the driver's best of the
+        # session — that alone drives the per-driver best (which also feeds the
+        # per-part global fastest / purple via the per-part minimum). OverallFastest
+        # is the session-global fastest flag, handled separately. Out/in/cool laps
+        # are flagged PersonalFastest False so they never become the best.
+        if ll.get("personalBest"):
             self._update_best(num, lap, ll["time"], ms, part, clock_time)
 
     def _update_best(self, num: str, lap: int, time: str, ms: int,
