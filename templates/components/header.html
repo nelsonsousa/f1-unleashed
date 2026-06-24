@@ -20,19 +20,12 @@
     </div>
 
     <div class="sync-controls" id="syncControls">
-        <!-- TV signal capture: picks an audio input device (= BlackHole)
-             and starts streaming its PCM into a ring buffer for matching. -->
-        <button class="btn btn-tv-signal" id="tvSignalBtn" onclick="toggleTvSignal()" title="Capture TV audio (BlackHole-2ch)">
-            <span class="tv-signal-light" id="tvSignalLight"></span>
-            <span class="tv-signal-label">TV signal</span>
+        <!-- Video sync: screen-share the (muted) TV, OCR its session clock and
+             compare to the data clock. See video_sync.js (3-video-sync). -->
+        <button class="btn btn-video-sync" id="videoSyncBtn" onclick="toggleVideoSync()" title="Sync to TV picture (screen share)">
+            <span class="video-sync-light" id="videoSyncLight"></span>
+            <span class="video-sync-label">Video sync</span>
         </button>
-        <!-- Sync button: takes the last few seconds of captured TV audio,
-             cross-correlates against the in-playback commentary, and
-             aligns the data clock to the broadcast. -->
-        <button class="btn btn-sync" id="syncBtn" onclick="triggerSync()" title="Align data to TV broadcast" disabled>
-            Sync
-        </button>
-        <span class="sync-status" id="syncStatus"></span>
     </div>
 
     <div class="audio-controls" id="audioControls">
