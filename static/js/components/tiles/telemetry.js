@@ -1003,14 +1003,19 @@
         const sessionType = (window.SESSION_CONFIG && window.SESSION_CONFIG.sessionType) || '';
         const isRace = (sessionType === 'race');
 
-        // In-progress lap = the highest lap with a classification but
-        // no lap_time. In P/Q, don't render a pill — can't be selected
-        // (lap not complete). In RACE, keep the pill — every lap matters
-        // for race-engineer view, and the partial trace is still useful.
+        // In-progress lap = the highest lap still being DRIVEN — no lap_time and
+        // not yet a completed lap. In P/Q, don't render a pill (can't be selected
+        // mid-lap). An IN/OUT/STOP lap is complete the moment the driver pits/stops
+        // (its telemetry is committed there) even though F1 reports its lap-time
+        // only at the next out-lap — so those, and any lap with committed
+        // telemetry, are NOT in-progress and DO get a (grey, selectable) pill.
         let inProgressLap = null;
         if (!_isRaceLike) {
             for (const lap of allLaps) {
-                if (lap in times) continue;
+                if (lap in times) continue;                       // has a lap-time → complete
+                const st = cls[lap];
+                if (st === 'PIT' || st === 'STOP' || st === 'OUT') continue;  // completed in/out/stop lap
+                if (teleLaps && teleLaps.has(lap)) continue;      // committed telemetry → selectable
                 if (inProgressLap === null || lap > inProgressLap) {
                     inProgressLap = lap;
                 }
