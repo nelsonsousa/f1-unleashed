@@ -35,12 +35,19 @@
     function isRace() {
         return ((window.SESSION_CONFIG || {}).sessionType || '').toLowerCase() === 'race';
     }
-    // Pre-race countdown region (content fractions) — counts down to the SCHEDULED
-    // start (formation lap), shown up to ~30 min out. CALIBRATE against your feed.
-    const RACE_COUNTDOWN_REGION = [0.04, 0.117, 0.13, 0.167];
+    // Pre-race countdown — LAYOUT-AGNOSTIC. The countdown graphic's size/position
+    // varies by broadcaster and even by graphic (a small persistent badge vs a
+    // large "STARTS IN" overlay), so we can't hardcode a tight box. We OCR a WIDE
+    // upper-left sweep, regex out every MM:SS, and accept the one that actually
+    // ticks DOWN at wall-clock rate (the real countdown; static numbers don't).
+    const RACE_COUNTDOWN_REGION = [0.0, 0.04, 0.22, 0.30];  // wide upper-left sweep
+    const CD_MAX_MS = 45 * 60 * 1000;   // sane countdown ceiling
+    const CD_MATCH_TOL_MS = 1200;       // |observed − (anchor − elapsed)| to be "the same countdown"
+    const CD_CONFIRM_MS = 2500;         // must track this long (drop ~2.5s) before we trust it
 
     const OCR_UPSCALE = 3;                          // enlarge crop for legibility
     const LUMA_THRESHOLD = 140;                     // light text → dark on white
+    const WHITE_THR = 165;                          // near-white caption isolation (wide sweep)
 
     // Sampling strategy: on start we OCR back-to-back ("acquire") to catch the
     // exact frame the TV clock ticks; once found we lock to 1 Hz, sampling just
@@ -73,6 +80,8 @@
         video: null,                                // hidden <video> of the stream
         content: { x0: 0, y0: 0, x1: 1, y1: 1 },     // 16:9 video rect within the frame (letterbox-aware)
         worker: null,
+        sparseWorker: null,                         // psm-11 worker for the wide countdown sweep
+        cdAnchors: [],                              // [{val,at}] countdown candidates being verified
         ocrTimer: null,
         jumpFrom: null,                             // data offset at last forward-seek (live-edge check)
         lastTvMs: null,                             // last ACCEPTED TV read (plausibility filter)
@@ -114,6 +123,51 @@
         if (l) l.className = 'video-sync-light' + (cls ? ' ' + cls : '');
     }
 
+    // Debug: enable with  localStorage.setItem('videoSyncDebug','1')  then reload.
+    // Logs to the console and shows the OCR crop (top-right) so you can check the
+    // region lands on the element and see what's being read.
+    function debugOn() { try { return localStorage.getItem('videoSyncDebug') === '1'; } catch (e) { return false; } }
+    function dbg(...a) { if (debugOn()) console.log('[video-sync]', ...a); }
+    function showDebugCrop(canvas, label) {
+        if (!debugOn() || !canvas) return;
+        let box = $('vsDebug');
+        if (!box) {
+            box = document.createElement('div'); box.id = 'vsDebug';
+            box.style.cssText = 'position:fixed;top:8px;right:8px;z-index:2000;background:#000;'
+                + 'border:1px solid #0f0;padding:4px;font:11px monospace;color:#0f0;text-align:center';
+            document.body.appendChild(box);
+        }
+        const img = canvas.toDataURL();
+        box.innerHTML = `<div>${label || ''}</div><img src="${img}" style="max-width:280px;display:block">`;
+    }
+    // Debug: the whole captured frame with the content rect (cyan) and the OCR
+    // regions drawn, so you can see whether the boxes land on the elements.
+    function showDebugFrame() {
+        if (!debugOn() || !state.video) return;
+        let box = $('vsDebug2');
+        if (!box) {
+            box = document.createElement('div'); box.id = 'vsDebug2';
+            box.style.cssText = 'position:fixed;bottom:8px;right:8px;z-index:2000;background:#000;'
+                + 'border:1px solid #0ff;padding:4px;font:11px monospace;color:#0ff';
+            document.body.appendChild(box);
+        }
+        const v = state.video, w = 360, h = Math.round(360 * v.videoHeight / v.videoWidth);
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        const ctx = c.getContext('2d'); ctx.drawImage(v, 0, 0, w, h);
+        const cr = state.content, cw = cr.x1 - cr.x0, ch = cr.y1 - cr.y0;
+        const rect = (reg, col) => {
+            ctx.strokeStyle = col; ctx.lineWidth = 2;
+            ctx.strokeRect((cr.x0 + reg[0] * cw) * w, (cr.y0 + reg[1] * ch) * h,
+                           (reg[2] - reg[0]) * cw * w, (reg[3] - reg[1]) * ch * h);
+        };
+        ctx.strokeStyle = '#0ff'; ctx.lineWidth = 1;
+        ctx.strokeRect(cr.x0 * w, cr.y0 * h, cw * w, ch * h);          // content rect
+        if (isRace()) { rect(RACE_COUNTDOWN_REGION, 'yellow'); rect(sessionRegions()[0], 'lime'); }
+        else sessionRegions().forEach(r => rect(r, 'lime'));
+        box.innerHTML = '<div>frame · cyan=content yellow=countdown green=clock/lap</div>';
+        box.appendChild(c);
+    }
+
     // ── Clock parsing ────────────────────────────────────────────────────
     // Accepts "H:MM:SS", "MM:SS", "M:SS.s" → milliseconds. Returns null if no
     // sane time is present (OCR noise, blank, etc.).
@@ -141,7 +195,10 @@
         if (state.active || state.stream) { stop(); return; }
         try {
             state.stream = await navigator.mediaDevices.getDisplayMedia({
-                video: { frameRate: { ideal: 30 } }, audio: false,  // ≥10 fps to time the tick edge
+                // Prefer a full monitor (so the fullscreen video fills the frame);
+                // ≥10 fps to time the tick edge. The black-area crop (detectContentRect)
+                // then trims letterbox bars / surrounding desktop down to the video.
+                video: { displaySurface: 'monitor', frameRate: { ideal: 30 } }, audio: false,
             });
         } catch (e) {
             setLight('');                           // share cancelled / denied
@@ -174,9 +231,38 @@
         await worker.setParameters({
             tessedit_char_whitelist: '0123456789:./',  // clock MM:SS and lap n/total
             tessedit_pageseg_mode: '7',             // single text line
+            debug_file: '/dev/null',                // quiet Tesseract's core stats spam
         });
         state.worker = worker;
         return worker;
+    }
+
+    // Second worker for the wide pre-race countdown sweep: sparse-text mode reads
+    // digits scattered anywhere in the crop (the single-line worker can't).
+    async function ensureSparseWorker() {
+        if (state.sparseWorker) return state.sparseWorker;
+        if (typeof Tesseract === 'undefined') return null;
+        const worker = await Tesseract.createWorker('eng');
+        await worker.setParameters({
+            tessedit_char_whitelist: '0123456789:',
+            tessedit_pageseg_mode: '11',            // sparse text: find scattered digits
+            debug_file: '/dev/null',
+        });
+        state.sparseWorker = worker;
+        return worker;
+    }
+
+    // Every MM:SS in the OCR text that could be a countdown (≤ CD_MAX), in ms.
+    function cdCandidates(text) {
+        const out = [], re = /(\d{1,2}):(\d{2})/g;
+        let m;
+        while ((m = re.exec(String(text))) !== null) {
+            const min = +m[1], sec = +m[2];
+            if (sec > 59) continue;
+            const ms = (min * 60 + sec) * 1000;
+            if (ms > 0 && ms <= CD_MAX_MS) out.push(ms);
+        }
+        return out;
     }
 
     // Detect the 16:9 video rect inside the captured frame by trimming near-black
@@ -191,20 +277,28 @@
         const ctx = _dc.getContext('2d');
         ctx.drawImage(v, 0, 0, w, h);
         const d = ctx.getImageData(0, 0, w, h).data;
-        const rowDark = (y) => { for (let x = 0; x < w; x++) { const i = (y * w + x) * 4; if (d[i] > 24 || d[i + 1] > 24 || d[i + 2] > 24) return false; } return true; };
-        const colDark = (x) => { for (let y = 0; y < h; y++) { const i = (y * w + x) * 4; if (d[i] > 24 || d[i + 1] > 24 || d[i + 2] > 24) return false; } return true; };
-        let top = 0; while (top < h && rowDark(top)) top++;
-        let bot = h - 1; while (bot > top && rowDark(bot)) bot--;
-        let left = 0; while (left < w && colDark(left)) left++;
-        let right = w - 1; while (right > left && colDark(right)) right--;
-        if (bot - top < h * 0.5 || right - left < w * 0.5) return { x0: 0, y0: 0, x1: 1, y1: 1 };
+        const bright = (x, y) => { const i = (y * w + x) * 4; return (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) > 32; };
+        // A row/col is "video" only if a fraction of it is non-black — robust to a
+        // video that doesn't fill the captured frame (shared whole/extended
+        // desktop) and to stray bright pixels, unlike per-pixel edge trimming.
+        const FR = 0.06;
+        const rowOn = [], colOn = [];
+        for (let y = 0; y < h; y++) { let c = 0; for (let x = 0; x < w; x++) if (bright(x, y)) c++; rowOn[y] = c / w >= FR; }
+        for (let x = 0; x < w; x++) { let c = 0; for (let y = 0; y < h; y++) if (bright(x, y)) c++; colOn[x] = c / h >= FR; }
+        let top = 0; while (top < h && !rowOn[top]) top++;
+        let bot = h - 1; while (bot > top && !rowOn[bot]) bot--;
+        let left = 0; while (left < w && !colOn[left]) left++;
+        let right = w - 1; while (right > left && !colOn[right]) right--;
+        if (bot - top < h * 0.3 || right - left < w * 0.3) return { x0: 0, y0: 0, x1: 1, y1: 1 };
         return { x0: left / w, y0: top / h, x1: (right + 1) / w, y1: (bot + 1) / h };
     }
 
     const _c = document.createElement('canvas');
-    function cropToCanvas(region) {
+    function cropToCanvas(region, opts) {
         const v = state.video;
         if (!region || !v) return null;
+        const up = (opts && opts.upscale) || OCR_UPSCALE;
+        const mode = (opts && opts.mode) || 'otsu';
         const c = state.content;                    // content-relative → frame fractions
         const cw = c.x1 - c.x0, ch = c.y1 - c.y0;
         const fx0 = c.x0 + region[0] * cw, fy0 = c.y0 + region[1] * ch;
@@ -212,18 +306,43 @@
         const sx = fx0 * v.videoWidth, sy = fy0 * v.videoHeight;
         const sw = (fx1 - fx0) * v.videoWidth, sh = (fy1 - fy0) * v.videoHeight;
         if (sw < 1 || sh < 1) return null;
-        _c.width = Math.round(sw * OCR_UPSCALE);
-        _c.height = Math.round(sh * OCR_UPSCALE);
+        _c.width = Math.round(sw * up);
+        _c.height = Math.round(sh * up);
         const ctx = _c.getContext('2d');
         ctx.imageSmoothingEnabled = true;
         ctx.drawImage(v, sx, sy, sw, sh, 0, 0, _c.width, _c.height);
-        // Binarise: light text → black on white (Tesseract prefers dark-on-light).
         const img = ctx.getImageData(0, 0, _c.width, _c.height);
-        const d = img.data;
-        for (let i = 0; i < d.length; i += 4) {
-            const luma = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-            const v2 = luma > LUMA_THRESHOLD ? 0 : 255;
-            d[i] = d[i + 1] = d[i + 2] = v2; d[i + 3] = 255;
+        const d = img.data, n = d.length / 4;
+        if (mode === 'white') {
+            // Keep only near-white pixels (broadcast captions are white) → black on
+            // white. For a WIDE crop over a mixed bright/dark scene, global Otsu
+            // fails (bright track merges with white text); white-isolation doesn't.
+            for (let i = 0; i < d.length; i += 4) {
+                const mn = Math.min(d[i], d[i + 1], d[i + 2]);
+                const px = mn > WHITE_THR ? 0 : 255;
+                d[i] = d[i + 1] = d[i + 2] = px; d[i + 3] = 255;
+            }
+        } else {
+            // Otsu auto-threshold over this crop's luma histogram (tight single-
+            // element regions), then binarise light text → dark on white.
+            const hist = new Array(256).fill(0), lum = new Uint8Array(n);
+            for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+                const l = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) | 0;
+                lum[j] = l; hist[l]++;
+            }
+            let sum = 0; for (let t = 0; t < 256; t++) sum += t * hist[t];
+            let sumB = 0, wB = 0, maxVar = -1, thr = LUMA_THRESHOLD;
+            for (let t = 0; t < 256; t++) {
+                wB += hist[t]; if (!wB) continue;
+                const wF = n - wB; if (!wF) break;
+                sumB += t * hist[t];
+                const mB = sumB / wB, mF = (sum - sumB) / wF, vv = wB * wF * (mB - mF) * (mB - mF);
+                if (vv > maxVar) { maxVar = vv; thr = t; }
+            }
+            for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+                const px = lum[j] > thr ? 0 : 255;
+                d[i] = d[i + 1] = d[i + 2] = px; d[i + 3] = 255;
+            }
         }
         ctx.putImageData(img, 0, 0);
         return _c;
@@ -271,6 +390,8 @@
         const worker = await ensureWorker();
         if (!worker) { stop(); return; }
         state.content = detectContentRect();            // strip letterbox bars (16:9 video rect)
+        dbg('content rect', JSON.stringify(state.content), 'video',
+            state.video && (state.video.videoWidth + 'x' + state.video.videoHeight));
         if (isRace()) { resetRace(); runRaceLoop(); }   // lap-increment sync
         else { toAcquire(); runLoop(); }                // P/Q clock tick sync
     }
@@ -280,6 +401,7 @@
         // Hidden tab/window → timers throttle and the capture freezes, so reads
         // are stale. Idle until visible, then re-acquire the tick phase cleanly.
         if (document.hidden) { toAcquire(); state.ocrTimer = setTimeout(runLoop, 1000); return; }
+        showDebugFrame();
 
         const now = performance.now();
         // OCR the session's candidate regions in priority order; first that yields
@@ -288,9 +410,11 @@
         for (const region of sessionRegions()) {
             const canvas = cropToCanvas(region);
             if (!canvas) continue;
+            showDebugCrop(canvas, 'clock region');
             try {
                 const { data } = await state.worker.recognize(canvas);
                 const t = parseClock(data.text);
+                dbg('clock OCR:', JSON.stringify((data.text || '').trim()), '→ ms', t);
                 if (t != null) { raw = t; break; }
             } catch (e) { /* transient OCR error */ }
             if (!state.active) return;
@@ -383,7 +507,7 @@
 
     function resetRace() {
         state.tvLap = null; state.tvCross = null; state.alignedLap = null;
-        state.offLapStreak = 0; state.cooldownUntil = 0;
+        state.offLapStreak = 0; state.cooldownUntil = 0; state.cdAnchors = [];
         // dataLap / dataLapAt / lapIntervalMs are maintained by the raceLaps sub.
     }
 
@@ -426,18 +550,47 @@
     // The data clock is UTC, so the target offset = broadcast_now − data_start.
     async function tryCountdownAlign(now) {
         const b = bus();
-        if (scheduledStartMs == null || !b || !b.clockTime || !b.startTime) return false;
-        if (b.clockTime.getTime() > scheduledStartMs + 5000) return false;   // only pre-start
-        const canvas = cropToCanvas(RACE_COUNTDOWN_REGION);
+        if (scheduledStartMs == null) { dbg('countdown skip: scheduledStartMs unknown (no startDate on sessionInfo — rebuild/reconnect?)'); return false; }
+        if (!b || !b.clockTime || !b.startTime) { dbg('countdown skip: clock not ready'); return false; }
+        if (b.clockTime.getTime() > scheduledStartMs + 5000) { dbg('countdown skip: past scheduled start'); return false; }
+        const worker = await ensureSparseWorker();
+        if (!worker) return false;
+        const canvas = cropToCanvas(RACE_COUNTDOWN_REGION, { upscale: 2, mode: 'white' });
         if (!canvas) return false;
-        let cd = null;
-        try { const { data } = await state.worker.recognize(canvas); cd = parseClock(data.text); }
-        catch (e) { return false; }
-        if (cd == null || cd > 35 * 60 * 1000) return false;                 // sane countdown (≤35 min)
-        const target = (scheduledStartMs - cd - b.startTime.getTime()) / 1000;
-        if (target >= 0 && Math.abs(b.getCurrentOffset() - target) > 2 && now >= state.cooldownUntil) {
-            seekTo(target);
-            state.cooldownUntil = now + SEEK_COOLDOWN_MS;
+        showDebugCrop(canvas, 'countdown sweep');
+        let txt = '';
+        try { const { data } = await worker.recognize(canvas); txt = (data.text || '').trim(); }
+        catch (e) { dbg('countdown OCR error', e); return false; }
+        const cands = cdCandidates(txt);
+        dbg('countdown sweep:', JSON.stringify(txt.replace(/\s+/g, ' ')), '→ cand(s)', cands.map(c => (c / 1000).toFixed(0)));
+        if (!cands.length) { state.cdAnchors = []; return false; }   // nothing time-like → defer to lap/ENTER
+
+        // Match candidates against tracked anchors. A real countdown ticks DOWN at
+        // wall-clock rate, so the observed value should equal (anchor − elapsed);
+        // confirm one only after it has tracked for CD_CONFIRM_MS (static numbers
+        // diverge from anchor−elapsed and get dropped before they can confirm).
+        let confirmed = null;
+        const next = [];
+        for (const a of state.cdAnchors) {
+            const exp = a.val - (now - a.at);
+            const hit = cands.find(c => Math.abs(c - exp) <= CD_MATCH_TOL_MS);
+            if (hit == null) continue;                              // anchor's countdown vanished → drop
+            next.push(a);                                           // keep ORIGINAL val/at (measures total drop)
+            if (now - a.at >= CD_CONFIRM_MS) confirmed = hit;       // tracked long enough → trust it
+        }
+        for (const c of cands) {                                    // seed anchors for untracked candidates
+            if (!next.some(a => Math.abs((a.val - (now - a.at)) - c) <= CD_MATCH_TOL_MS)) next.push({ val: c, at: now });
+        }
+        state.cdAnchors = next;
+
+        if (confirmed == null) { setLight('arming'); return true; } // still verifying which number is the countdown
+
+        const cur = b.getCurrentOffset();
+        const target = (scheduledStartMs - confirmed - b.startTime.getTime()) / 1000;
+        dbg('countdown CONFIRMED', (confirmed / 1000).toFixed(0), 's → target', target.toFixed(1), 'cur', cur.toFixed(1), 'Δ', (cur - target).toFixed(1));
+        if (Math.abs(cur - target) <= 1.5) { setLight('ok'); return true; }   // aligned → green
+        if (target >= 0 && now >= state.cooldownUntil) {
+            seekTo(target); state.cooldownUntil = now + SEEK_COOLDOWN_MS; dbg('countdown SEEK →', target.toFixed(1));
         }
         setLight('adjust');
         return true;
@@ -446,18 +599,46 @@
     async function runRaceLoop() {
         if (!state.active) return;
         if (document.hidden) { state.ocrTimer = setTimeout(runRaceLoop, 1000); return; }
+        showDebugFrame();
 
         const now = performance.now();
-        if (await tryCountdownAlign(now)) {           // pre-race coarse alignment
+        const b = bus();
+        const cur = (b && typeof b.getCurrentOffset === 'function') ? b.getCurrentOffset() : null;
+        const schedOff = (b && b.startTime && scheduledStartMs != null)
+            ? (scheduledStartMs - b.startTime.getTime()) / 1000 : null;
+        const lightsOff = raceStartMs != null ? raceStartMs / 1000 : null;
+
+        // Phase gating. The FORMATION LAP (scheduled start → lights-out) is a sync
+        // dead zone: the upper-left graphics churn and the lap counter isn't live,
+        // so any OCR there only causes false de-syncs. We HOLD (no OCR, assume in
+        // sync) through it, and resume sync via LAP NUMBERS only after lights-out.
+        // Boundaries: scheduledStartMs (sessionInfo) + raceStartMs (GREEN event).
+        if (cur != null && schedOff != null && lightsOff != null && cur >= schedOff && cur < lightsOff) {
+            setLight('ok');
+            state.ocrTimer = setTimeout(runRaceLoop, 500);
+            return;
+        }
+        // Before lights-out: pre-race countdown align ONLY (never lap OCR — the lap
+        // region churns pre-race). After lights-out: fall through to lap-num sync.
+        const beforeLights = (lightsOff != null) ? (cur != null && cur < lightsOff)
+                                                 : (schedOff != null && cur != null && cur < schedOff);
+        if (beforeLights) {
+            if (await tryCountdownAlign(now)) {       // pre-race coarse alignment
+                if (!state.active) return;
+                state.ocrTimer = setTimeout(runRaceLoop, 250);   // fast: anchors track the tick-down
+                return;
+            }
             if (!state.active) return;
-            state.ocrTimer = setTimeout(runRaceLoop, 1500);
+            setLight('adjust');                       // searching for the countdown (use ENTER if absent)
+            state.ocrTimer = setTimeout(runRaceLoop, 300);
             return;
         }
         if (!state.active) return;
         let lap = null;
         const canvas = cropToCanvas(sessionRegions()[0]);   // lap-counter region
         if (canvas) {
-            try { const { data } = await state.worker.recognize(canvas); lap = parseLap(data.text); }
+            showDebugCrop(canvas, 'lap region');
+            try { const { data } = await state.worker.recognize(canvas); lap = parseLap(data.text); dbg('lap OCR:', JSON.stringify((data.text || '').trim()), '→', lap); }
             catch (e) { /* transient OCR error */ }
         }
         if (!state.active) return;
@@ -542,6 +723,7 @@
             const naive = Date.parse(/[zZ]$/.test(d.startDate) ? d.startDate : d.startDate + 'Z');
             if (!isNaN(naive)) scheduledStartMs = naive - parseGmt(d.gmtOffset);
         }
+        dbg('sessionInfo startDate=', d && d.startDate, 'gmt=', d && d.gmtOffset, '→ scheduledStartMs', scheduledStartMs);
     });
     // ENTER marks the start. Within ±1 min of the scheduled start it anchors the
     // SCHEDULED start (formation lap); more than 1 min past it anchors LIGHTS-OUT.
