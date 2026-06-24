@@ -63,6 +63,7 @@ class SessionInfoProcessor(Processor):
         self._session_number: int = 0
         self._session_status: str = ""
         self._gmt_offset: str = ""
+        self._start_date: str = ""        # scheduled session start (local; pair with gmtOffset)
         self._meeting_name: str = ""
         self._circuit: str = ""
         self._qualifying_part: int = 0
@@ -106,6 +107,8 @@ class SessionInfoProcessor(Processor):
             self._session_status = data["SessionStatus"]
         if "GmtOffset" in data:
             self._gmt_offset = data["GmtOffset"]
+        if "StartDate" in data:
+            self._start_date = data["StartDate"]
         meeting = data.get("Meeting")
         if isinstance(meeting, dict):
             if "Name" in meeting:
@@ -200,6 +203,7 @@ class SessionInfoProcessor(Processor):
             "sessionNumber": self._session_number,
             "qualifyingPart": self._qualifying_part,
             "gmtOffset": self._gmt_offset,
+            "startDate": self._start_date,
             "sessionStatus": self._session_status,
         }
         if info != self._last_session_info:

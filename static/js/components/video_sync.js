@@ -35,6 +35,9 @@
     function isRace() {
         return ((window.SESSION_CONFIG || {}).sessionType || '').toLowerCase() === 'race';
     }
+    // Pre-race countdown region (content fractions) — counts down to the SCHEDULED
+    // start (formation lap), shown up to ~30 min out. CALIBRATE against your feed.
+    const RACE_COUNTDOWN_REGION = [0.04, 0.117, 0.13, 0.167];
 
     const OCR_UPSCALE = 3;                          // enlarge crop for legibility
     const LUMA_THRESHOLD = 140;                     // light text → dark on white
@@ -417,11 +420,40 @@
         setLight('adjust');
     }
 
+    // Pre-race: OCR the countdown (which counts down to the SCHEDULED start, not
+    // lights-out) and coarse-align the data to the broadcast wall-clock:
+    //   broadcast_now = scheduled_start − countdown  →  seek data there.
+    // The data clock is UTC, so the target offset = broadcast_now − data_start.
+    async function tryCountdownAlign(now) {
+        const b = bus();
+        if (scheduledStartMs == null || !b || !b.clockTime || !b.startTime) return false;
+        if (b.clockTime.getTime() > scheduledStartMs + 5000) return false;   // only pre-start
+        const canvas = cropToCanvas(RACE_COUNTDOWN_REGION);
+        if (!canvas) return false;
+        let cd = null;
+        try { const { data } = await state.worker.recognize(canvas); cd = parseClock(data.text); }
+        catch (e) { return false; }
+        if (cd == null || cd > 35 * 60 * 1000) return false;                 // sane countdown (≤35 min)
+        const target = (scheduledStartMs - cd - b.startTime.getTime()) / 1000;
+        if (target >= 0 && Math.abs(b.getCurrentOffset() - target) > 2 && now >= state.cooldownUntil) {
+            seekTo(target);
+            state.cooldownUntil = now + SEEK_COOLDOWN_MS;
+        }
+        setLight('adjust');
+        return true;
+    }
+
     async function runRaceLoop() {
         if (!state.active) return;
         if (document.hidden) { state.ocrTimer = setTimeout(runRaceLoop, 1000); return; }
 
         const now = performance.now();
+        if (await tryCountdownAlign(now)) {           // pre-race coarse alignment
+            if (!state.active) return;
+            state.ocrTimer = setTimeout(runRaceLoop, 1500);
+            return;
+        }
+        if (!state.active) return;
         let lap = null;
         const canvas = cropToCanvas(sessionRegions()[0]);   // lap-counter region
         if (canvas) {
@@ -489,11 +521,7 @@
     });
 
     // ── Race-start anchor (ENTER) ────────────────────────────────────────
-    // Press ENTER at lights-out on the broadcast to jump the data+audio to the
-    // race start (the GREEN flag = lights-out, known upfront from session:events).
-    // Works whether or not a pre-race countdown is visible — the countdown is
-    // just the user's visual cue for when to press. The race lap-increment sync
-    // then keeps everything aligned from lap 1 onward.
+    // GREEN flag = lights-out (known upfront from session:events).
     let raceStartMs = null;
     messageBus.on('session:events', (events) => {
         if (!Array.isArray(events)) return;
@@ -503,13 +531,39 @@
             .filter(o => typeof o === 'number');
         if (greens.length) raceStartMs = Math.min(...greens);
     });
+    // Scheduled session start (formation-lap start), UTC ms — from sessionInfo.
+    let scheduledStartMs = null;
+    function parseGmt(s) {
+        const m = String(s || '').match(/(-?)(\d+):(\d+):(\d+)/);
+        return m ? (m[1] === '-' ? -1 : 1) * ((+m[2] * 3600 + +m[3] * 60 + +m[4]) * 1000) : 0;
+    }
+    messageBus.on('sessionInfo', (d) => {
+        if (d && d.startDate) {
+            const naive = Date.parse(/[zZ]$/.test(d.startDate) ? d.startDate : d.startDate + 'Z');
+            if (!isNaN(naive)) scheduledStartMs = naive - parseGmt(d.gmtOffset);
+        }
+    });
+    // ENTER marks the start. Within ±1 min of the scheduled start it anchors the
+    // SCHEDULED start (formation lap); more than 1 min past it anchors LIGHTS-OUT.
+    // Press it at the matching moment on the broadcast; lap-increment sync then
+    // keeps it aligned.
     document.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter') return;
         const tag = (e.target && e.target.tagName) || '';
         if (tag === 'INPUT' || tag === 'TEXTAREA' || e.isComposing) return;
-        if (!isRace() || raceStartMs == null) return;
-        e.preventDefault();
-        if (typeof seekToOffset === 'function') seekToOffset(raceStartMs / 1000);
+        if (!isRace() || typeof seekToOffset !== 'function') return;
+        const b = bus();
+        if (!b || !b.clockTime || !b.startTime) return;
+        const ds = b.startTime.getTime();
+        const nearScheduled = scheduledStartMs != null &&
+            b.clockTime.getTime() <= scheduledStartMs + 60000;
+        if (nearScheduled) {
+            e.preventDefault();
+            seekToOffset((scheduledStartMs - ds) / 1000);     // → scheduled start (formation lap)
+        } else if (raceStartMs != null) {
+            e.preventDefault();
+            seekToOffset(raceStartMs / 1000);                 // → lights-out (GREEN)
+        }
     });
 
     window.toggleVideoSync = toggle;
