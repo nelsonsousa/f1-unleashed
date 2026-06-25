@@ -42,7 +42,21 @@
         document.querySelectorAll('.sf-live-only').forEach((el) => el.classList.toggle('hidden', !live));
     });
 
-    // Authoritative data health from the server (data_health_processor).
+    // Authoritative data health from the server (data_health_processor): three
+    // per-stream boxes coloured by the fraction of ON-TRACK drivers affected.
+    function setBox(el, info, label) {
+        if (!el) return;
+        const lvl = (info && info.level) || 'green';
+        el.className = 'sf-hbox h-' + lvl;
+        const drv = (info && info.drivers) || [];
+        if (drv.length) el.title = `${label}: ${drv.join(', ')}`;
+        else el.removeAttribute('title');
+    }
+    function renderHealth() {
+        setBox($('sfhTiming'), health && health.timing, 'Timing stale');
+        setBox($('sfhTel'), health && health.telemetry, 'Telemetry invalid/missing');
+        setBox($('sfhPos'), health && health.position, 'Position stale');
+    }
     messageBus.on('dataHealth', (d) => { health = d; renderHealth(); });
     messageBus.on('state:reset', () => { health = null; renderHealth(); });
 
@@ -57,23 +71,6 @@
         total++;
         windowCount++;
     });
-
-    function renderHealth() {
-        const el = $('sfOutageLight');
-        const txt = $('sfOutage');
-        if (!health) { light(el, 'grey'); txt.textContent = '—'; txt.removeAttribute('title'); return; }
-        const s = health.status;
-        light(el, s === 'critical' ? 'red' : s === 'warn' ? 'yellow' : 'green');
-        if (s === 'critical') { txt.textContent = 'TIMING'; txt.title = 'TimingData stalled under green'; return; }
-        if (s === 'ok') { txt.textContent = 'OK'; txt.removeAttribute('title'); return; }
-        const parts = [], tip = [];
-        const pos = health.positionStale || [], inv = health.carDataInvalid || [], miss = health.carDataMissing || [];
-        if (pos.length) { parts.push('pos ' + pos.length); tip.push('Position stale: ' + pos.join(', ')); }
-        if (inv.length) { parts.push('tel ' + inv.length); tip.push('Telemetry invalid: ' + inv.join(', ')); }
-        if (miss.length) { parts.push('car ' + miss.length); tip.push('CarData missing: ' + miss.join(', ')); }
-        txt.textContent = parts.join('  ') || 'warn';
-        txt.title = tip.join('\n');
-    }
 
     let lastTick = performance.now();
     setInterval(() => {

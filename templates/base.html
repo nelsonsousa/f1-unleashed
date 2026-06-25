@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="/static/css/base.css?v=2026-06-13w">
     <link rel="stylesheet" href="/static/css/components/header.css?v=2026-06-13w">
     <link rel="stylesheet" href="/static/css/components/video_sync.css?v=2026-06-23a">
-    <link rel="stylesheet" href="/static/css/components/status_footer.css?v=2026-06-25b">
+    <link rel="stylesheet" href="/static/css/components/status_footer.css?v=2026-06-25c">
     {% block styles %}{% endblock %}
     <meta name="theme-color" content="#0a0a0a">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -29,7 +29,7 @@
         <span class="sf-item"><span class="sf-label">Messages</span><span class="sf-val" id="sfMsgs">0</span></span>
         <span class="sf-item" title="Total on-disk size of this session's cache (live.jsonl + commentary audio + team radio)"><span class="sf-label">Cache</span><span class="sf-val" id="sfCache">—</span></span>
         <span class="sf-item"><span class="sf-light" id="sfAudioLight"></span><span class="sf-label">Audio</span><span class="sf-val" id="sfAudio">—</span></span>
-        <span class="sf-item" title="Data health — position-stream staleness vs the playback clock"><span class="sf-light" id="sfOutageLight"></span><span class="sf-label">Data</span><span class="sf-val" id="sfOutage">—</span></span>
+        <span class="sf-item sf-health"><span class="sf-label">Data</span><span class="sf-hbox h-green" id="sfhTiming">TIMING</span><span class="sf-hbox h-green" id="sfhTel">TELEMETRY</span><span class="sf-hbox h-green" id="sfhPos">POSITION</span></span>
         <span class="sf-item sf-live-only hidden"><span class="sf-label">&#8595; Data</span><span class="sf-val" id="sfDlDataVal">—</span></span>
         <span class="sf-item sf-live-only hidden"><span class="sf-label">&#8595; Audio</span><span class="sf-val" id="sfDlAudioVal">—</span></span>
     </footer>
@@ -47,7 +47,7 @@
     <script src="/static/js/utils/circuits.js"></script>
     <script src="/static/js/base.js?v=2026-06-24a"></script>
     <script src="/static/js/components/header.js?v=2026-06-25b"></script>
-    <script src="/static/js/components/status_footer.js?v=2026-06-25c"></script>
+    <script src="/static/js/components/status_footer.js?v=2026-06-25d"></script>
     <!-- Settings dialog lives on the home page only; here we load it solely to
          prime window.F1_SETTINGS (read once at load, e.g. team-radio auto-play). -->
     <script src="/static/js/settings.js?v=2026-06-25b"></script>
