@@ -355,6 +355,8 @@ class SessionEngine:
         # build edge, exactly like a live capture. state:full / state:restore
         # below carry whatever's built so far and playback fills in the rest.
 
+        # (helper used just below — total size of the on-disk session cache.)
+
         # Get all event/playbackEvent messages for scrubber
         events = []
         if self._db:
@@ -377,6 +379,7 @@ class SessionEngine:
                 "speed": self._clock.speed if self._clock else 1.0,
                 "offset": self._clock.offset_seconds if self._clock else 0.0,
                 "scanProgress": 100.0 if self._preprocess_done.is_set() else 0.0,
+                "cacheBytes": self._cache_bytes(),
                 "events": events,
             },
         })
@@ -1044,6 +1047,21 @@ class SessionEngine:
                 dur = 0.0
             out.append({"start_utc": start_utc, "duration": dur})
         return out
+
+    def _cache_bytes(self) -> int:
+        """Total on-disk size of the session cache (live.jsonl + audio + radio),
+        for the client status footer (card 20). Cheap stat-walk on connect."""
+        total = 0
+        try:
+            for f in self._session_path.rglob("*"):
+                if f.is_file():
+                    try:
+                        total += f.stat().st_size
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+        return total
 
     def _build_audio_info_for_client(self) -> Optional[dict[str, Any]]:
         """Return audio metadata to ship to a new client.
