@@ -15,6 +15,20 @@
     let rcMessages = [];
     let champDrivers = [];        // server-computed, fully self-contained rows
     let champConstructors = [];
+    let radioClips = [];          // team radio (card 8): {num, tla, file, utc}
+    const _radioSeen = new Set();
+
+    const RADIO_PLAY_SVG = '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+    const RADIO_ICON_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>';
+
+    // Epoch ms from an F1 Utc string (RCM ships without a 'Z'; radio with one).
+    function _epochMs(ts) {
+        if (!ts) return 0;
+        let s = String(ts);
+        if (!/[zZ]|[+-]\d\d:?\d\d$/.test(s)) s += 'Z';
+        const t = Date.parse(s);
+        return isNaN(t) ? 0 : t;
+    }
 
     function escapeHtml(s) {
         return String(s).replace(/[&<>"']/g, (c) => ({
@@ -200,33 +214,51 @@
         renderAll();
     }
 
+    function rcmRow(msg) {
+        // Colour is fully server-computed (race_control_processor); the client
+        // just maps the colour name to its CSS class.
+        let colorClass = '';
+        if (msg.color === 'yellow') colorClass = 'rc-yellow';
+        else if (msg.color === 'red') colorClass = 'rc-red';
+        else if (msg.color === 'green') colorClass = 'rc-green';
+        else if (msg.color === 'blue') colorClass = 'rc-blue';
+        else if (msg.color === 'chequered') colorClass = 'rc-chequered';
+        else if (msg.color === 'orange') colorClass = 'rc-orange';
+        return `<div class="race-control-msg ${colorClass}">` +
+            `<span class="race-control-time">${toLocalTimeStr(msg.timestamp)}</span>` +
+            `<span class="race-control-text">${msg.message}</span>` +
+            `</div>`;
+    }
+
+    function radioRow(clip) {
+        const who = escapeHtml(clip.tla || clip.num || '');
+        return `<div class="race-control-msg rc-radio">` +
+            `<span class="race-control-time">${toLocalTimeStr(clip.utc)}</span>` +
+            `<button class="rc-radio-play" data-radio="${escapeHtml(clip.file)}" title="Play team radio" aria-label="Play team radio">${RADIO_PLAY_SVG}</button>` +
+            `<span class="rc-radio-tag">${RADIO_ICON_SVG}<span class="rc-radio-tla">${who}</span></span>` +
+            `<span class="race-control-text">Team radio</span>` +
+            `</div>`;
+    }
+
     function renderAll() {
         const rcm = document.getElementById('rcPaneRcm');
+        const radio = document.getElementById('rcPaneRadio');
         const peck = document.getElementById('rcPanePecking');
         const champ = document.getElementById('rcPaneChamp');
         if (!rcm) return;
 
-        let rcHtml = '';
-        for (const msg of rcMessages) {
-            // Colour is fully server-computed (race_control_processor);
-            // the client just maps the colour name to its CSS class.
-            let colorClass = '';
-            if (msg.color === 'yellow') colorClass = 'rc-yellow';
-            else if (msg.color === 'red') colorClass = 'rc-red';
-            else if (msg.color === 'green') colorClass = 'rc-green';
-            else if (msg.color === 'blue') colorClass = 'rc-blue';
-            else if (msg.color === 'chequered') colorClass = 'rc-chequered';
-            else if (msg.color === 'orange') colorClass = 'rc-orange';
-
-            const timeStr = toLocalTimeStr(msg.timestamp);
-            rcHtml += `<div class="race-control-msg ${colorClass}">` +
-                `<span class="race-control-time">${timeStr}</span>` +
-                `<span class="race-control-text">${msg.message}</span>` +
-                `</div>`;
-        }
-
-        rcm.innerHTML = rcHtml || '<div class="rc-empty">No messages yet.</div>';
+        // RCM pane: race-control messages + team-radio clips interleaved by time.
+        const merged = [];
+        for (const msg of rcMessages) merged.push({ t: _epochMs(msg.timestamp), html: rcmRow(msg) });
+        for (const clip of radioClips) merged.push({ t: _epochMs(clip.utc), html: radioRow(clip) });
+        merged.sort((a, b) => a.t - b.t);
+        rcm.innerHTML = merged.map(m => m.html).join('') || '<div class="rc-empty">No messages yet.</div>';
         rcm.scrollTop = rcm.scrollHeight;
+
+        if (radio) {
+            radio.innerHTML = radioClips.map(radioRow).join('')
+                || '<div class="rc-empty">No team radio yet.</div>';
+        }
         if (peck) {
             peck.innerHTML = peckingHtml
                 || '<div class="rc-empty">Pecking order will appear after FP1 ends.</div>';
@@ -264,6 +296,13 @@
     }
 
     document.addEventListener('click', (e) => {
+        // Team-radio play button → delegate to the shared player (header.js).
+        const play = e.target.closest('.rc-radio-play');
+        if (play) {
+            const file = play.dataset.radio;
+            if (file && typeof window.playTeamRadio === 'function') window.playTeamRadio(file);
+            return;
+        }
         const btn = e.target.closest('#rcTabs .rc-tab');
         if (!btn) return;
         activateTab(btn.dataset.tab);
@@ -283,6 +322,18 @@
     messageBus.on('championshipConstructors', (data) => {
         if (Array.isArray(data)) { champConstructors = data; renderAll(); }
     });
+    // Team radio (card 8): accumulate clips (deduped by file). The driver TLA is
+    // the filename prefix ("LEC_16_…"). Replayed on connect/seek by the server.
+    messageBus.on('teamRadio', (data) => {
+        if (!data || !data.file || _radioSeen.has(data.file)) return;
+        _radioSeen.add(data.file);
+        radioClips.push({
+            num: data.num, file: data.file, utc: data.utc || '',
+            tla: (String(data.file).split('_')[0] || '').toUpperCase(),
+        });
+        radioClips.sort((a, b) => _epochMs(a.utc) - _epochMs(b.utc));
+        renderAll();
+    });
     // Capture the circuit GMT offset so RCM timestamps render in track time
     // (card 86), matching the header track clock; re-render once it arrives.
     messageBus.on('sessionInfo', (data) => {
@@ -295,6 +346,8 @@
         rcMessages = [];
         champDrivers = [];
         champConstructors = [];
+        radioClips = [];
+        _radioSeen.clear();
         renderAll();
     });
 

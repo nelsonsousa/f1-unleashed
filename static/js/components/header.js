@@ -1198,6 +1198,40 @@
     // itself from the playback offset after a seek, so no state:seek-complete
     // adjustment is needed here.
 
+    // ── Team radio (card 8) ──────────────────────────────────────────────
+    // Shared player: play a clip while MUTING the commentary, restoring it after.
+    // The race-control tile's play buttons call window.playTeamRadio(file); the
+    // teamRadio event auto-plays only when enabled in settings (card 27).
+    let _radioEl = null;
+    function playTeamRadio(file) {
+        if (!file) return;
+        const sess = new URLSearchParams(window.location.search).get('session');
+        if (!sess) return;
+        if (!_radioEl) { _radioEl = new Audio(); _radioEl.preload = 'auto'; }
+        const comm = state.audio.element;
+        const restore = () => { if (comm) comm.volume = state.audio.isMuted ? 0 : state.audio.volume; };
+        if (comm) comm.volume = 0;   // mute commentary while the radio plays
+        _radioEl.src = `/api/v1/livetiming/teamradio/${encodeURIComponent(sess)}/${encodeURIComponent(file)}`;
+        _radioEl.volume = state.audio.isMuted ? 0 : 1.0;
+        _radioEl.onended = restore;
+        _radioEl.onerror = restore;
+        _radioEl.play().catch(restore);
+    }
+    window.playTeamRadio = playTeamRadio;
+
+    // Auto-play on the live event — gated by settings (card 27), and suppressed
+    // during a seek-restore (those are history replays, not live airings) and at
+    // non-1x speeds. Default OFF until the settings dialog provides the toggle.
+    let _radioRestoring = false;
+    messageBus.on('state:reset', () => { _radioRestoring = true; });
+    messageBus.on('state:seek-complete', () => { _radioRestoring = false; });
+    messageBus.on('teamRadio', (data) => {
+        if (_radioRestoring || !data || !data.file) return;
+        if (!messageBus.isPlaying || (messageBus.speed && messageBus.speed !== 1)) return;
+        const autoplay = !!(window.F1_SETTINGS && window.F1_SETTINGS.teamRadioAutoplay);
+        if (autoplay) playTeamRadio(data.file);
+    });
+
     // Speed button
     document.addEventListener('DOMContentLoaded', () => {
         const speedBtn = document.getElementById('speedBtn');

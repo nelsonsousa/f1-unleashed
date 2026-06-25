@@ -39,6 +39,29 @@
     color: var(--text-secondary);
 }
 
+/* Team radio (card 8) — clickable play button + driver tag. */
+.race-control-msg.rc-radio { align-items: center; }
+.rc-radio-play {
+    background: none;
+    border: none;
+    color: #4da3ff;
+    cursor: pointer;
+    padding: 0 2px;
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+.rc-radio-play:hover { color: #fff; }
+.rc-radio-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    color: #8aa;
+    flex-shrink: 0;
+}
+.rc-radio-tla { font-size: 11px; font-weight: 700; letter-spacing: 0.3px; }
+.race-control-msg.rc-radio .race-control-text { color: var(--text-muted); }
+
 /* Flag-based colors */
 .race-control-msg.rc-yellow {
     color: var(--yellow);
