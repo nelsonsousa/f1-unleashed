@@ -45,7 +45,7 @@
             <div class="set-row">
                 <span class="set-label">Cache location</span>
                 <span class="set-cachedir">
-                    <input type="text" id="set-cacheDir-display" value="${esc(s._dataDir || s._dataHome || '')}" readonly>
+                    <input type="text" id="set-cacheDir-display" value="${esc(s._cacheDir || '')}" readonly>
                     <button class="set-folder-btn" id="pickCacheDir" title="Choose folder" aria-label="Choose folder">${FOLDER_SVG}</button>
                 </span>
             </div>

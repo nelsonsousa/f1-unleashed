@@ -28,16 +28,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Persistent cache data moved when the location changes (tmp is transient — it is
-# rebuilt on demand, so it is left behind / recreated under the new location).
-_MOVABLE_SUBDIRS = ("livetiming_cache", "analysis", "weather_radar_cache")
-
 
 @router.get("/settings")
 async def get_settings() -> dict:
     s = dict(settings_store.load())
-    s["_dataDir"] = str(config.DATA_DIR)              # effective cache location
-    s["_dataHome"] = str(settings_store.DATA_HOME)    # OS default
+    s["_cacheDir"] = str(config.CACHE_DIR)            # effective livetiming cache root
+    s["_dataHome"] = str(settings_store.DATA_HOME)    # fixed OS data home
     return s
 
 
@@ -96,23 +92,26 @@ async def set_cache_location(body: dict) -> dict:
     if not isinstance(new_path, str) or not new_path.strip():
         raise HTTPException(status_code=400, detail="path required")
     new = Path(new_path).expanduser()
-    old = config.DATA_DIR
+    old = config.CACHE_DIR   # only the livetiming cache moves (analysis/tmp/etc. stay)
     moved: list[str] = []
 
     if do_move and old.exists() and old.resolve() != new.resolve():
         try:
             new.mkdir(parents=True, exist_ok=True)
-            for sub in _MOVABLE_SUBDIRS:
-                src = old / sub
-                if not src.exists():
-                    continue
-                dst = new / sub
+            # Move the cache root's CONTENTS (the season folders 2026/, 2025/, …)
+            # directly into the chosen folder — no extra wrapper level.
+            for child in list(old.iterdir()):
+                dst = new / child.name
                 if dst.exists():
-                    shutil.copytree(src, dst, dirs_exist_ok=True)
-                    shutil.rmtree(src)
+                    if child.is_dir():
+                        shutil.copytree(child, dst, dirs_exist_ok=True)
+                        shutil.rmtree(child)
+                    else:
+                        shutil.copy2(child, dst)
+                        child.unlink()
                 else:
-                    shutil.move(str(src), str(dst))
-                moved.append(sub)
+                    shutil.move(str(child), str(dst))
+                moved.append(child.name)
         except OSError as e:
             logger.exception("cache move failed")
             raise HTTPException(status_code=500, detail=f"move failed: {e}")

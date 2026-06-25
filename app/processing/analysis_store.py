@@ -28,26 +28,32 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from app.config import CACHE_DIR, DATA_DIR
+
 logger = logging.getLogger(__name__)
 
+# Analysis output lives at the FIXED data home (card 27) — it never follows a
+# relocated cacheDir. Path: <data home>/analysis/{year}/{event}/{session}/.
+ANALYSIS_DIR = DATA_DIR / "analysis"
 
-def _livetiming_to_analysis(livetiming_path: Path) -> Path:
-    """Convert a path under data/livetiming_cache/ to its data/analysis/
-    counterpart. Raises ValueError if the path is not under livetiming_cache.
-    """
-    parts = livetiming_path.parts
+
+def _rel_parts(livetiming_session_path: Path) -> tuple:
+    """The (year, event, session, …) tail of a session path relative to the
+    cache root. Tolerates a legacy "livetiming_cache" component in the path."""
+    p = Path(livetiming_session_path)
     try:
-        idx = parts.index("livetiming_cache")
-    except ValueError as e:
-        raise ValueError(
-            f"Path {livetiming_path} is not under livetiming_cache"
-        ) from e
-    return Path(*parts[:idx], "analysis", *parts[idx + 1:])
+        return p.relative_to(CACHE_DIR).parts
+    except ValueError:
+        pass
+    parts = p.parts
+    if "livetiming_cache" in parts:
+        return parts[parts.index("livetiming_cache") + 1:]
+    raise ValueError(f"Path {p} is not under the cache root {CACHE_DIR}")
 
 
 def session_dir(livetiming_session_path: Path) -> Path:
-    """data/analysis/{year}/{event}/{session}/ for the given session."""
-    return _livetiming_to_analysis(livetiming_session_path)
+    """<data home>/analysis/{year}/{event}/{session}/ for the given session."""
+    return ANALYSIS_DIR.joinpath(*_rel_parts(livetiming_session_path))
 
 
 def save(livetiming_session_path: Path, analysis_type: str, data: Any) -> Path:
@@ -77,22 +83,20 @@ def load(livetiming_session_path: Path, analysis_type: str) -> Optional[Any]:
 
 
 def previous_event_dir(livetiming_session_path: Path) -> Optional[Path]:
-    """Return data/analysis/{year}/{prev_event}/ — the analysis directory
+    """Return <data home>/analysis/{year}/{prev_event}/ — the analysis directory
     for the event sorted immediately BEFORE the current session's event.
 
-    Walks ``data/analysis/{year}/`` (NOT livetiming_cache), so survives
-    cache deletes. Returns None if no previous event has analysis stored.
+    Walks the analysis tree (NOT livetiming_cache), so survives cache deletes.
+    Returns None if no previous event has analysis stored.
     """
-    parts = livetiming_session_path.parts
     try:
-        idx = parts.index("livetiming_cache")
+        rel = _rel_parts(livetiming_session_path)
     except ValueError:
         return None
-    if idx + 2 >= len(parts):
+    if len(rel) < 2:
         return None
-    year = parts[idx + 1]
-    cur_event = parts[idx + 2]
-    analysis_year = Path(*parts[:idx], "analysis", year)
+    year, cur_event = rel[0], rel[1]
+    analysis_year = ANALYSIS_DIR / year
     if not analysis_year.is_dir():
         return None
     prev = [

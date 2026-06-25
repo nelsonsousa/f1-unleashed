@@ -16,18 +16,22 @@ REPLAY_DEBUG = bool(_settings.get("debug", False))
 
 
 # ── Data locations (cards 25 + 27) ──────────────────────────────────────────
-# The downloaded livetiming cache, derived analysis, and transient scratch DBs
-# live under an OS-appropriate data directory. The `cacheDir` setting overrides
-# it (empty → OS default). Existing files are NOT migrated automatically.
-def _default_data_dir() -> Path:
+# DATA_DIR is the FIXED OS-appropriate data home: settings.json, known_topics.json,
+# rainbow_usage.json, the transient tmp DBs, analysis output and the weather-radar
+# cache all live here and never move. Only the livetiming cache is relocatable —
+# the `cacheDir` setting points DIRECTLY at the cache root (it contains the season
+# folders 2026/, 2025/, … with no extra "livetiming_cache" level); empty → the
+# default <data home>/livetiming_cache. Existing files are moved on change via the
+# settings cache-location endpoint, not automatically here.
+DATA_DIR = _settings.DATA_HOME
+
+
+def _cache_dir() -> Path:
     override = _settings.get("cacheDir", "")
     if override:
         return Path(override).expanduser()
-    return _settings.DATA_HOME
+    return DATA_DIR / "livetiming_cache"
 
 
-DATA_DIR = _default_data_dir()
-CACHE_DIR = DATA_DIR / "livetiming_cache"   # downloaded live.jsonl / subscribe.json per session
+CACHE_DIR = _cache_dir()                     # downloaded live.jsonl / subscribe.json per session
 TMP_DIR = DATA_DIR / "tmp"                   # transient per-session scratch DBs
-# (analysis output is derived as a sibling of the cache path by analysis_store,
-# so it follows CACHE_DIR automatically — no separate constant needed.)
