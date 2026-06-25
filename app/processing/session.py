@@ -610,6 +610,15 @@ class SessionEngine:
         except Exception:
             logger.exception("Failed to replay race control messages")
 
+        # Team-radio history — append-only list of clips (card 8); replay all up
+        # to the offset so the Team Radio / RCM list survives connect/seek. The
+        # client suppresses auto-play during restore so this doesn't blast audio.
+        try:
+            for m in self._db.get_topic_history("teamRadio", offset_ms):
+                await _send({"topic": "teamRadio", "data": m})
+        except Exception:
+            logger.exception("Failed to replay team radio history")
+
         # driverLaps history — the topic is thin (no accumulating laps map), so
         # the client builds its per-lap time map by accumulating lastLap as the
         # messages arrive. Replay the full per-driver history up to the offset so

@@ -62,4 +62,5 @@ class TeamRadioProcessor(Processor):
             self._bus.emit("teamRadio", {
                 "num": str(c.get("RacingNumber") or ""),
                 "file": os.path.basename(path),
+                "utc": c.get("Utc") or "",   # for list ordering / time display
             }, utc)
