@@ -5,12 +5,13 @@ Three independent streams are assessed, each over the drivers currently ON TRACK
 (RET / STOP / PIT / FINISHED / DSQ cars are excluded — a retired or parked car
 legitimately stops sending position/telemetry and must not count):
 
-  - TIMING    — a driver's TimingData hasn't updated within the threshold.
+  - TIMING    — ALL-OR-NOTHING: red only if the WHOLE TimingData feed has stopped
+                (any TimingData arriving = green); it underpins everything else.
   - TELEMETRY — CarData invalid (throttle/brake > 100, or speed 0 while the car
                 is being position-tracked) OR missing (no recent CarData).
   - POSITION  — a driver's Position hasn't updated within the threshold.
 
-Each stream's level is set by the FRACTION of on-track drivers affected:
+POSITION + TELEMETRY levels are set by the FRACTION of on-track drivers affected:
   >50% → red,  >25–50% → orange,  >0–25% → yellow,  none → green.
 
 Staleness is judged in DATA-clock time and only under GREEN (red/SC/VSC pause the
@@ -37,7 +38,7 @@ def _ms(dt: Optional[datetime]) -> Optional[float]:
 
 
 class DataHealthProcessor(Processor):
-    TIMING_STALE_MS = 10000     # per-driver timing — a few seconds + tolerance
+    TIMING_STALE_MS = 6000      # whole TimingData feed silent this long → stopped
     POS_STALE_MS = 8000
     CARDATA_STALE_MS = 8000
     MOVE_RECENT_MS = 3000       # position-tracked recency for the speed=0 check
@@ -48,7 +49,7 @@ class DataHealthProcessor(Processor):
         self._green = False
         self._tla: dict[str, str] = {}
         self._dstatus: dict[str, str] = {}
-        self._last_timing: dict[str, float] = {}
+        self._last_timing_any: Optional[float] = None   # last time ANY TimingData arrived
         self._last_pos: dict[str, float] = {}
         self._last_cardata: dict[str, float] = {}
         self._invalid: dict[str, float] = {}     # num -> data-ms while last sample invalid
@@ -86,8 +87,7 @@ class DataHealthProcessor(Processor):
     def _on_timing(self, data: Any, clock_time: datetime) -> None:
         t = _ms(clock_time)
         if isinstance(data, dict) and isinstance(data.get("Lines"), dict) and t is not None:
-            for num in data["Lines"]:
-                self._last_timing[str(num)] = t
+            self._last_timing_any = t   # all-or-nothing: any TimingData = feed alive
         self._evaluate(clock_time)
 
     def _on_position(self, data: Any, clock_time: datetime) -> None:
@@ -157,23 +157,30 @@ class DataHealthProcessor(Processor):
         on_track = [n for n, s in self._dstatus.items() if s in ON_TRACK]
         total = len(on_track)
 
-        # Brief grace right after green resumes so the streams can catch up
-        # (cars cycle through a fresh update within ~10 s) — avoids the restart
-        # transient after a red flag / SC. After the grace, absolute staleness.
+        # Brief grace right after green resumes so the streams can catch up —
+        # avoids the restart transient after a red flag / SC. Only assess when
+        # green, past the grace, with cars actually on track.
         in_grace = self._green_since is not None and (now - self._green_since) < self.GREEN_GRACE_MS
-        if not self._green or total == 0 or in_grace:
-            timing_bad, pos_bad, tel_bad = [], [], []
-        else:
+        assessing = self._green and total > 0 and not in_grace
+
+        # TIMING is all-or-nothing: green while ANY TimingData is arriving, red only
+        # if the whole feed has stopped (it underpins everything downstream).
+        timing_red = (assessing and self._last_timing_any is not None
+                      and (now - self._last_timing_any) > self.TIMING_STALE_MS)
+
+        # POSITION + TELEMETRY are per-driver fractions over the on-track field.
+        if assessing:
             def stale(last, thr):
                 return last is None or (now - last) > thr
 
-            timing_bad = [n for n in on_track if stale(self._last_timing.get(n), self.TIMING_STALE_MS)]
             pos_bad = [n for n in on_track if stale(self._last_pos.get(n), self.POS_STALE_MS)]
             tel_bad = [n for n in on_track
                        if n in self._invalid or stale(self._last_cardata.get(n), self.CARDATA_STALE_MS)]
+        else:
+            pos_bad, tel_bad = [], []
 
         payload = {
-            "timing": {"level": self._level(len(timing_bad), total), "drivers": self._tlas(timing_bad)},
+            "timing": {"level": "red" if timing_red else "green", "drivers": []},
             "telemetry": {"level": self._level(len(tel_bad), total), "drivers": self._tlas(tel_bad)},
             "position": {"level": self._level(len(pos_bad), total), "drivers": self._tlas(pos_bad)},
             "green": self._green,
