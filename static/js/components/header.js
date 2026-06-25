@@ -1203,21 +1203,29 @@
     // The race-control tile's play buttons call window.playTeamRadio(file); the
     // teamRadio event auto-plays only when enabled in settings (card 27).
     let _radioEl = null;
+    function _restoreCommentary() {
+        const comm = state.audio.element;
+        if (comm) comm.volume = state.audio.isMuted ? 0 : state.audio.volume;
+    }
     function playTeamRadio(file) {
         if (!file) return;
         const sess = new URLSearchParams(window.location.search).get('session');
         if (!sess) return;
         if (!_radioEl) { _radioEl = new Audio(); _radioEl.preload = 'auto'; }
         const comm = state.audio.element;
-        const restore = () => { if (comm) comm.volume = state.audio.isMuted ? 0 : state.audio.volume; };
         if (comm) comm.volume = 0;   // mute commentary while the radio plays
         _radioEl.src = `/api/v1/livetiming/teamradio/${encodeURIComponent(sess)}/${encodeURIComponent(file)}`;
         _radioEl.volume = state.audio.isMuted ? 0 : 1.0;
-        _radioEl.onended = restore;
-        _radioEl.onerror = restore;
-        _radioEl.play().catch(restore);
+        _radioEl.onended = _restoreCommentary;
+        _radioEl.onerror = _restoreCommentary;
+        _radioEl.play().catch(_restoreCommentary);
+    }
+    function stopTeamRadio() {
+        if (_radioEl) { _radioEl.pause(); try { _radioEl.currentTime = 0; } catch (e) { /* noop */ } }
+        _restoreCommentary();
     }
     window.playTeamRadio = playTeamRadio;
+    window.stopTeamRadio = stopTeamRadio;
 
     // Auto-play on the live event — gated by settings (card 27), and suppressed
     // during a seek-restore (those are history replays, not live airings) and at
