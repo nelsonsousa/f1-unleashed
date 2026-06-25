@@ -10,3 +10,4 @@ sse-starlette>=2.0.0
 requests>=2.31.0
 PyJWT>=2.8.0
 pywebview>=5.0.0
+markdown>=3.5
