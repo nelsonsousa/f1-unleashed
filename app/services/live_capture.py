@@ -81,12 +81,22 @@ class LiveCaptureService:
     The captured JSONL files can then be streamed to clients via SessionEngine.
     """
 
+    # Stale-audio-download watchdog (card 97): ffmpeg has -reconnect, but a dead
+    # or expired HLS URL can leave it hung with the output file not growing. We
+    # poll commentary.aac's size and restart ffmpeg when it stops growing.
+    _AUDIO_CHECK_S = 10         # poll cadence
+    _AUDIO_STALE_S = 30         # no file growth this long → stalled (HLS segs ~6-10s)
+    _AUDIO_WIND_DOWN_S = 600    # don't restart if non-heartbeat data idle this long (session ending)
+
     def __init__(self, cache_dir: Optional[str] = None):
         # Default to the OS-appropriate cache location (card 25).
         self.cache_dir = Path(cache_dir) if cache_dir else CACHE_DIR
         self._captures: dict[str, dict] = {}  # session_id -> capture info
         self._tasks: dict[str, asyncio.Task] = {}
         self._audio_process: Optional[subprocess.Popen] = None
+        # Last HLS commentary URL ffmpeg is recording (for the stale-download
+        # restart watchdog). Set in _start_audio, cleared in _stop_audio.
+        self._audio_url: Optional[str] = None
         # PDT side-car: polls the HLS playlist and rewrites
         # audio_info.json:start_utc with a broadcast-derived anchor.
         # Started in _start_audio, stopped in _stop_audio.
@@ -197,6 +207,10 @@ class LiveCaptureService:
             audio_watchdog = asyncio.create_task(
                 self._audio_session_end_watchdog(cache_path)
             )
+            # Restart ffmpeg if the commentary download stalls mid-session (card 97).
+            audio_stale_watchdog = asyncio.create_task(
+                self._audio_stale_watchdog(cache_path)
+            )
 
             while capture["status"] == CaptureStatus.CAPTURING:
                 try:
@@ -266,6 +280,10 @@ class LiveCaptureService:
             # finally block so it doesn't race the cleanup.
             try:
                 audio_watchdog.cancel()
+            except NameError:
+                pass
+            try:
+                audio_stale_watchdog.cancel()
             except NameError:
                 pass
             self._stop_audio(cache_path)
@@ -359,6 +377,7 @@ class LiveCaptureService:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+            self._audio_url = url   # for the stale-download restart watchdog
             logger.info(f"Started audio recording: {url} -> {output_path}")
 
             # audio_info.json holds the metadata for the *current* (latest)
@@ -523,6 +542,56 @@ class LiveCaptureService:
                 self._trim_trailing_silence(cache_path)
                 return
 
+    async def _audio_stale_watchdog(self, cache_path: Path) -> None:
+        """Restart ffmpeg when the commentary DOWNLOAD stalls (card 97).
+
+        ffmpeg's own -reconnect handles transient segment-fetch drops, but a dead
+        or expired HLS URL can leave it hung with commentary.aac not growing (no
+        process exit). We poll the file size; if it stops growing for
+        _AUDIO_STALE_S while the session is still live, re-run ffmpeg on the same
+        URL (which re-resolves the playlist to the current live edge). This is
+        distinct from the end-watchdog, which stops audio on *silence* at session
+        end (the file still GROWS during silence — ffmpeg writes silent frames)."""
+        output = cache_path / "commentary.aac"
+        # Startup grace so ffmpeg has a chance to produce its first segment.
+        try:
+            await asyncio.sleep(self._AUDIO_STALE_S)
+        except asyncio.CancelledError:
+            return
+        last_size, last_grow = -1, time.monotonic()
+        while True:
+            try:
+                await asyncio.sleep(self._AUDIO_CHECK_S)
+            except asyncio.CancelledError:
+                return
+            # Audio intentionally stopped (end-watchdog / shutdown) → reset, idle.
+            if not self._audio_url or not self._audio_process:
+                last_size, last_grow = -1, time.monotonic()
+                continue
+            try:
+                size = output.stat().st_size if output.exists() else 0
+            except OSError:
+                size = 0
+            now = time.monotonic()
+            if size > last_size:
+                last_size, last_grow = size, now
+                continue
+            if (now - last_grow) < self._AUDIO_STALE_S:
+                continue
+            # Not growing. Don't restart if the whole session is winding down
+            # (non-heartbeat data long idle) — the end-watchdog will close it.
+            if (now - getattr(self, "_last_non_heartbeat_ts", now)) > self._AUDIO_WIND_DOWN_S:
+                continue
+            url = self._audio_url
+            logger.warning(
+                f"Audio download stalled for {cache_path.name} "
+                f"({now - last_grow:.0f}s no growth) — restarting ffmpeg")
+            try:
+                self._start_audio(url, cache_path)
+            except Exception as e:
+                logger.error(f"Audio restart failed: {e}")
+            last_size, last_grow = -1, time.monotonic()
+
     def _audio_tail_is_silent(self, cache_path: Path) -> bool:
         """True iff the LAST 60 s of commentary.aac contain no
         non-silent frames (silencedetect -50 dB / 60 s threshold)."""
@@ -637,6 +706,8 @@ class LiveCaptureService:
             except Exception as e:
                 logger.warning(f"PdtTracker stop failed: {e}")
             self._pdt_tracker = None
+
+        self._audio_url = None   # intentional stop → stale watchdog must not restart
 
         if not self._audio_process:
             return
