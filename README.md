@@ -28,6 +28,7 @@ The implementation (= Python services, processors, JavaScript components, OCR/sy
 - Python 3.13 (= venv recommended).
 - `ffmpeg` + `ffprobe` (= audio HLS capture + duration probing for the PDT side-car).
 - A formula1.com subscription (= for live sessions; download of historic data may be available without a subscription).
+- No `.env` is required — all configuration lives in an in-app settings dialog backed by a JSON store with defaults for every value (see Installation, step 3).
 
 ### Audio sync
 
@@ -50,20 +51,22 @@ python3.13 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# 3. Configure
-cp .env.example .env
-# edit .env (all optional):
-#   - NOTIFICATION_WEBHOOK_URL  (= ntfy.sh/<your-topic> for push alerts)
-#   - RAINBOW_AI_API_KEY        (= weather radar)
-#   - F1U_DATA_DIR              (= override the cache/data location; defaults to
-#                                 an OS-appropriate app-data dir)
-
-# 4. Start
+# 3. Start
 ./f1unleashed.sh start
 
-# 5. Open
+# 4. Open
 open http://localhost:1950           # 1950 = the year of the first F1 World Championship
 ```
+
+Configuration is done in-app, not via `.env` (which is gone). Open the
+**settings dialog** from the gear on the home-page footer (right side) to set:
+the precipitation-radar API key (= Rainbow.ai); a push-notification webhook
+(= ntfy/Discord/Slack) and which alerts to send; per-session-type capture
+toggles (download/play commentary audio, download team radio, keep downloaded
+files); team-radio auto-play; favourite drivers/teams; and the cache location.
+Every value has a sensible default, so the app runs out of the box. The cache
+folder defaults to an OS-appropriate app-data dir; changing it offers to move
+the existing cache and requires a restart.
 
 First-time login:
 
@@ -78,11 +81,17 @@ python -m app.cli.login          # browser-based F1 login
 The application covers Practice / Qualifying / Race in usable form today. Active development is focused on these next:
 
 
+### Recently shipped (v1.2)
+
+- **In-app settings** — a settings dialog (home-page footer) backed by a JSON store, replacing `.env` entirely.
+- **Team radio replay** — F1 team-radio clips captured during live sessions and played back time-aligned, with commentary ducking.
+- **Status footer + data-health monitor** — a bottom status bar showing live/replay, throughput, message count, cache size, audio bitrate, live download speeds, and per-stream timing/telemetry/position health.
+- **Weather forecast** — a 15/30/60-minute forecast widget (captured live for replay) alongside the renamed Current Conditions tile.
+
+
 ### Coming up soon
 
-- **OCR-based video sync** (= Tesseract over a fixed top-left crop; anchors per session phase: countdown, segment timer, race lights-out, lap counter). Target: Barcelona GP weekend (2026-06-14).
 - **Session summary / highlights** (= post-session recap: fastest lap, longest stint, biggest gap closes, position changes, podium).
-- **Team radio audio replay** (= per-driver team-radio capture + playback aligned to the data clock).
 - **Lift-and-coast** detection.
 - **Tyre-saving** detection.
 - **Pit windows** (SC / VSC opportunity detection).
