@@ -43,6 +43,7 @@ from app.processing.processors.lap_delta_processor import LapDeltaProcessor
 from app.processing.processors.driver_gap_processor import DriverGapProcessor
 from app.processing.processors.race_pace_processor import RacePaceProcessor
 from app.processing.processors.team_radio_processor import TeamRadioProcessor
+from app.processing.processors.data_health_processor import DataHealthProcessor
 from app.processing.processors.sector_timing_processor import SectorTimingProcessor
 from app.processing.processors.tyre_processor import TyreProcessor
 from app.processing.processors.track_status_processor import TrackStatusProcessor
@@ -569,6 +570,7 @@ class SessionPreProcessor:
             TrackStatusProcessor(self._bus, self._session_type),
             WeatherProcessor(self._bus, self._session_type),
             TeamRadioProcessor(self._bus, self._session_type),
+            DataHealthProcessor(self._bus, self._session_type),
             # self._pace_proc,  # COMMENTED OUT — pace placeholder (see _init above)
         ]
         for p in self._processors:
