@@ -4,6 +4,8 @@ A Formula 1 live-timing and replay application with synchronised audio commentar
 
 **Release 1.0.0** — June 7, 2026, day of the 2016 Monaco Grand Prix. Celebrating Mclaren's 1000th Grand Prix and 60th anniversary of their first Grand Prix.
 
+**Current release**: 1.2.0, 2026-06-25
+
 The server listens on port **1950**, an homage to the first F1 World Championship.
 
 This document describes what the application does and how it's structured. For install instructions see [README.md](README.md).
@@ -25,7 +27,7 @@ Distribution of the processed data is therefore not allowed. Streaming of the cl
 
 F1Unleashed connects to the F1 SignalR feed (live) or replays cached session data (historic), runs pre-processing on the raw timing stream, and visualises everything in a browser. It captures broadcast audio in parallel, aligns it to the data stream, and ships a session-aware UI tuned per session type (Practice / Qualifying / Race).
 
-Race and qualifying pace analysis is performed after each FP session to estimate pecking order. Lap classification (= PUSH / COOL / LONG / OUT / IN / PIT / RACE / WET / STOP) is derived from a combination of telemetry data and lap-time deltas, with absolute-delta fallback when the telemetry feed has outages. Predictions (lap times in qualifying, pace through race stints) update as new data arrives.
+Lap classification (= PUSH / COOL / LONG / OUT / IN / PIT / RACE / WET / STOP) is derived from a combination of telemetry data and lap-time deltas, with absolute-delta fallback when the telemetry feed has outages.
 
 ---
 
@@ -41,7 +43,7 @@ The data stream is a sequence of typed messages on a server-side message bus, re
 | Standings | Position; time gaps; penalty + flag indicators (R); timing sectors; lap classifications; tyre history, etc. |
 | Track map | Circuit SVG with per-driver positions, yellow-flag sector overlays, Current Conditions weather, rain radar overlay, and a short-range weather forecast widget |
 | Telemetry | Speed / RPM / gear / throttle / brake / DRS traces with lap selection, multi-driver compare, lap history |
-| Race control | RC message stream (with team-radio clips interleaved by time); a Team Radio tab; predicted team pecking-order; provisional championship standings |
+| Race control | RC message stream (with team-radio clips interleaved by time); a Team Radio tab; provisional championship standings |
 | Status footer | A slim bar at the bottom of the player: live/replay indicator, stream throughput (msg/s), total messages, on-disk cache size, audio bitrate, live download speeds, and the data-health monitor (timing / telemetry / position) |
 
 The frontend listens via a message bus pattern:
@@ -367,20 +369,6 @@ Static asset URLs in templates are versioned automatically by file mtime via a J
 | 5 | Brake (0-100) |
 
 Telemetry data is streamed at roughly 3-4Hz. Position data is also streamed at roughly same frequency and these two samples are mapped together to assign a track position to each telemetry sample.
-
-### Post-session analysis outputs
-
-After preprocessing finishes, the analysis pipeline writes JSON files into `{data-dir}/analysis/{year}/{event}/{session}/`:
-
-| File | Source | Used by |
-|------|--------|---------|
-| `pace.json` | `app/processing/processors/pace_processor.py` | `pecking_order.py` |
-| `tyre_phases.json` | `app/analysis/tyre_phases.py` | Tyre + race analysis |
-| `pecking_order.json` | `app/analysis/pecking_order.py` | Subsequent sessions + UI race-control tile |
-| `strategy_prediction.json` (qualifying only) | `app/analysis/strategy_prediction.py` | Race tile predictions |
-| `strategy_validation.json` (race only) | `app/analysis/strategy_validation.py` | Strategy retrospective |
-
-The pecking-order chain runs within an event (FP1 → FP2 → FP3 → Q → R). Each pecking_order.json is ranked by pure pace gap to the predicted leader; no inertia from prior events' rankings, so a midfielder showing leader-pace ranks at the top immediately.
 
 ## Future developments
 
