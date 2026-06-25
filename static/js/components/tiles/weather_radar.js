@@ -32,6 +32,7 @@
         conditionDate: null,
         conditionHourly: null,
         currentIsDay: 1,
+        currentCode: null,
         // Weather-forecast widget (card 118)
         forecastFetched: false,
         forecastSnapshots: null,
@@ -276,7 +277,9 @@
         const idx = h.time.findIndex(t => t.slice(0, 13) === hourKey);
         if (idx < 0) return;
         state.currentIsDay = h.is_day[idx];
-        renderConditionIcon(h.weather_code[idx], h.is_day[idx]);
+        state.currentCode = h.weather_code[idx];
+        // The current condition is now the "Now" slot of the weather-icon row.
+        updateForecast();
     }
 
     function renderConditionIcon(code, isDay) {
@@ -325,39 +328,50 @@
         return best || snaps[0];
     }
 
+    // A weather-icon row: Now (current condition) + 15'/30'/60' forecast. If the
+    // condition is unchanged across the window it collapses to Now + 60'. No title.
     function updateForecast() {
         const el = document.getElementById('weatherForecast');
         if (!el) return;
+        const isDay = state.currentIsDay !== 0 ? 1 : 0;
+
+        // "Now" = the current condition (from the hourly /weather data).
+        if (state.currentCode == null) { el.classList.add('hidden'); return; }
+        const [nk, nl] = conditionFor(state.currentCode, isDay);
+        const now = { key: nk, label: nl, wet: false, prob: null };
+
+        // 15'/30'/60' from the captured forecast snapshots, indexed by the clock.
+        let f15 = null, f30 = null, f60 = null;
         const clock = messageBus.clockTime;
         const snaps = state.forecastSnapshots;
-        if (!clock || !snaps || !snaps.length) { el.classList.add('hidden'); return; }
-        const clockMs = clock.getTime();
-        const snap = _snapshotAt(clockMs);
-        if (!snap || !snap.time || !snap.time.length) { el.classList.add('hidden'); return; }
-        // Captured times are 15-min UTC strings without a 'Z' (timezone=UTC).
-        const times = snap.time.map(t => Date.parse(t + 'Z'));
-        let c = -1;
-        for (let i = 0; i < times.length; i++) { if (times[i] <= clockMs) c = i; else break; }
-        if (c < 0) { el.classList.add('hidden'); return; }
+        if (clock && snaps && snaps.length) {
+            const clockMs = clock.getTime();
+            const snap = _snapshotAt(clockMs);
+            if (snap && snap.time && snap.time.length) {
+                const times = snap.time.map(t => Date.parse(t + 'Z'));   // UTC, no 'Z'
+                let c = -1;
+                for (let i = 0; i < times.length; i++) { if (times[i] <= clockMs) c = i; else break; }
+                if (c >= 0) {
+                    const slotAt = (steps) => {
+                        const i = c + steps;
+                        if (i >= snap.weather_code.length) return null;
+                        const [key, label] = conditionFor(snap.weather_code[i], isDay);
+                        const wet = key === 'rain' || key === 'thunder' || key === 'snow';
+                        const prob = snap.precipitation_probability ? snap.precipitation_probability[i] : null;
+                        return { key, label, wet, prob };
+                    };
+                    f15 = slotAt(1); f30 = slotAt(2); f60 = slotAt(4);
+                }
+            }
+        }
 
-        const isDay = state.currentIsDay !== 0 ? 1 : 0;
-        const slotAt = (steps) => {
-            const i = c + steps;
-            if (i >= snap.weather_code.length) return null;
-            const [key, label] = conditionFor(snap.weather_code[i], isDay);
-            const wet = key === 'rain' || key === 'thunder' || key === 'snow';
-            const prob = snap.precipitation_probability ? snap.precipitation_probability[i] : null;
-            return { key, label, wet, prob };
-        };
-        const now = slotAt(0), f15 = slotAt(1), f30 = slotAt(2), f60 = slotAt(4);
-        if (!now) { el.classList.add('hidden'); return; }
-
-        const same = (a, b) => a && b && a.key === b.key;
-        const unchanged = same(now, f15) && same(now, f30) && same(now, f60);
-        let slots = unchanged ? [['Now', now], ["60'", f60]]
-                              : [["15'", f15], ["30'", f30], ["60'", f60]];
-        slots = slots.filter(([, s]) => s);
-        if (!slots.length) { el.classList.add('hidden'); return; }
+        let slots = [['Now', now]];
+        if (f15 && f30 && f60) {
+            const same = (a, b) => a && b && a.key === b.key;
+            const unchanged = same(now, f15) && same(now, f30) && same(now, f60);
+            if (unchanged) slots.push(["60'", f60]);
+            else slots.push(["15'", f15], ["30'", f30], ["60'", f60]);
+        }
 
         const rows = slots.map(([when, s]) =>
             `<div class="wf-slot" title="${s.label}">` +
@@ -365,7 +379,7 @@
             `<span class="wf-icon">${CONDITION_ICONS[s.key]}</span>` +
             (s.wet && s.prob != null ? `<span class="wf-rain">${s.prob}%</span>` : '') +
             `</div>`).join('');
-        el.innerHTML = `<div class="wf-title">Weather Forecast</div><div class="wf-slots">${rows}</div>`;
+        el.innerHTML = `<div class="wf-slots">${rows}</div>`;
         el.classList.remove('hidden');
     }
 
