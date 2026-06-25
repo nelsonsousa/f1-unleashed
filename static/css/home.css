@@ -703,12 +703,20 @@ header {
 
 /* Footer — small unobtrusive API-docs link. */
 .page-footer {
+    position: relative;
     margin-top: 32px;
     padding: 12px 0;
     border-top: 1px solid var(--border);
     text-align: center;
     color: var(--text-secondary);
     font-size: 0.75rem;
+}
+/* Settings button — right edge of the footer, centred text untouched. */
+.footer-settings {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
 }
 .page-footer a {
     color: var(--text-secondary);
