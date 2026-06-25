@@ -53,7 +53,13 @@
         else el.removeAttribute('title');
     }
     function renderHealth() {
-        setBox($('sfhTiming'), health && health.timing, 'Timing stale');
+        // TIMING is all-or-nothing (green/red): red = the whole feed has stopped.
+        const tEl = $('sfhTiming');
+        if (tEl) {
+            const tRed = !!(health && health.timing && health.timing.level === 'red');
+            tEl.className = 'sf-hbox h-' + (tRed ? 'red' : 'green');
+            if (tRed) tEl.title = 'TimingData feed stopped'; else tEl.removeAttribute('title');
+        }
         setBox($('sfhTel'), health && health.telemetry, 'Telemetry invalid/missing');
         setBox($('sfhPos'), health && health.position, 'Position stale');
     }
