@@ -4,6 +4,8 @@ import logging
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -415,6 +417,19 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # Jinja2 templates
 templates = Jinja2Templates(directory="templates")
 
+
+def _asset(path: str) -> str:
+    """Cache-busting static URL: /static/<path>?v=<file mtime>. Replaces the
+    hand-bumped ?v=YYYY-MM-DD tags — the version follows the file automatically."""
+    try:
+        mtime = int((Path("static") / path).stat().st_mtime)
+        return f"/static/{path}?v={mtime}"
+    except OSError:
+        return f"/static/{path}"
+
+
+templates.env.globals["asset"] = _asset
+
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(races.router, prefix="/api/v1", tags=["races"])
 app.include_router(livetiming.router, prefix="/api/v1", tags=["livetiming"])
@@ -424,8 +439,8 @@ app.include_router(settings_router.router, prefix="/api/v1", tags=["settings"])
 
 
 @app.get("/")
-def root():
-    return FileResponse("static/index.html")
+def root(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
 
 @app.get("/api/v1/version")
