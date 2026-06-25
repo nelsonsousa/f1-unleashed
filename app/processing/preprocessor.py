@@ -91,7 +91,12 @@ def _load_known_topics() -> tuple[set, bool]:
     """
     base = set(RAW_F1_TOPICS)
     try:
-        return base | set(_json.loads(KNOWN_TOPICS_FILE.read_text())), False
+        data = _json.loads(KNOWN_TOPICS_FILE.read_text())
+        if isinstance(data, dict):          # catalog format (card 120)
+            return base | set(data.keys()), False
+        if isinstance(data, list):          # legacy flat-list format
+            return base | set(data), False
+        return base, True
     except (FileNotFoundError, ValueError, OSError):
         return base, True
 
@@ -641,19 +646,77 @@ class SessionPreProcessor:
         except Exception:
             logger.exception("Topic-discovery notification failed")
 
+    def _session_rel(self) -> str:
+        """This session's 'year/event/session' tail for the catalog's lastSeen."""
+        try:
+            from app.config import CACHE_DIR
+            return str(self._session_path.relative_to(CACHE_DIR))
+        except (ValueError, OSError):
+            return self._session_path.name
+
     def _persist_known_topics(self, force: bool = False) -> None:
-        """Persist topics discovered beyond RAW_F1_TOPICS. Writing the file
-        (even empty) establishes the baseline so the next run is not a
-        first run and genuinely-new topics then alert."""
+        """Write the topic CATALOG (card 120): every known topic with how we use
+        it — status, the processors that listen, the outputs that processing
+        produces, whether it's captured to live.jsonl, and when it was last seen.
+        Listeners come from the bus handler map; outputs are derived at runtime
+        (bus._io_outputs). Notes are user-editable and preserved across runs."""
         if not (self._known_topics_dirty or force):
             return
         try:
+            prev = {}
+            if KNOWN_TOPICS_FILE.exists():
+                try:
+                    loaded = _json.loads(KNOWN_TOPICS_FILE.read_text())
+                    if isinstance(loaded, dict):
+                        prev = loaded
+                except (ValueError, OSError):
+                    pass
+
+            raw = set(RAW_F1_TOPICS)
+            sess = self._session_rel()
+
+            # Listeners per topic: processor class names with a specific handler.
+            listeners: dict[str, list] = {}
+            for topic, handlers in self._bus._handlers.items():
+                if topic == "*":
+                    continue
+                names = sorted({
+                    type(getattr(h, "__self__", None)).__name__
+                    for h in handlers if getattr(h, "__self__", None) is not None
+                })
+                if names:
+                    listeners[topic] = names
+
+            topics = raw | set(listeners) | set(self._known_topics)
+            catalog: dict[str, dict] = {}
+            for topic in sorted(topics):
+                if topic == "*":
+                    continue
+                seen = topic in self._checked_topics
+                if topic in listeners:
+                    status = "subscribed"
+                elif seen or topic in self._known_topics:
+                    status = "received"      # arrived but no processor handles it
+                else:
+                    status = "unseen"        # known baseline, absent this session
+                p = prev.get(topic, {}) if isinstance(prev.get(topic), dict) else {}
+                last_seen = max(sess, p.get("lastSeen", "")) if seen else p.get("lastSeen", "")
+                catalog[topic] = {
+                    "status": status,
+                    "listeners": listeners.get(topic, []),
+                    # Collapse per-driver outputs (driverGap:1, driverGap:10, …)
+                    # to their base name (driverGap) for a readable catalog.
+                    "outputs": sorted({o.split(":")[0] for o in self._bus._io_outputs.get(topic, [])}),
+                    "captured": topic in raw,
+                    "lastSeen": last_seen,
+                    "note": p.get("note", ""),
+                }
+
             KNOWN_TOPICS_FILE.parent.mkdir(parents=True, exist_ok=True)
-            extra = sorted(self._known_topics - set(RAW_F1_TOPICS))
-            KNOWN_TOPICS_FILE.write_text(_json.dumps(extra))
+            KNOWN_TOPICS_FILE.write_text(_json.dumps(catalog, indent=2, sort_keys=True))
             self._known_topics_dirty = False
         except OSError:
-            logger.exception("Failed to persist known topics")
+            logger.exception("Failed to persist topic catalog")
 
     def _capture_output(self, topic: str, data: Any, clock_time: datetime) -> None:
         """Wildcard handler to capture processor output for DB."""

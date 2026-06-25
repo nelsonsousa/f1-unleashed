@@ -19,6 +19,10 @@ class SessionMessageBus:
     def __init__(self):
         self._handlers: dict[str, list[Handler]] = {}
         self._persist_sink: Callable[[str, Any, datetime], None] | None = None
+        # Topic-catalog I/O tracking (card 120): which output topics each INPUT
+        # topic's processing produces, derived at runtime from re-entrant emits.
+        self._io_outputs: dict[str, set] = {}
+        self._cur_input: str | None = None
 
     def set_persist_sink(self, sink: Callable[[str, Any, datetime], None]) -> None:
         """Register the single sink that persists emits to the DB. It is
@@ -47,12 +51,21 @@ class SessionMessageBus:
         sink — for high-rate, live-only topics (e.g. liveTelemetry) that the
         client consumes live and never needs to replay/rebuild on seek.
         """
+        # A re-entrant emit (we're inside a handler) is an OUTPUT produced by the
+        # current input topic's processing — record it for the topic catalog.
+        if self._cur_input is not None and topic != self._cur_input:
+            self._io_outputs.setdefault(self._cur_input, set()).add(topic)
+
         if topic in self._handlers:
             for handler in self._handlers[topic]:
+                prev_input = self._cur_input
+                self._cur_input = topic
                 try:
                     handler(data, clock_time)
                 except Exception:
                     logger.exception(f"Error in handler for topic '{topic}'")
+                finally:
+                    self._cur_input = prev_input
 
         # Wildcard subscribers get (topic, data, clock_time)
         if '*' in self._handlers:
