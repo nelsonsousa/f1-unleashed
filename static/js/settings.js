@@ -21,6 +21,7 @@
 
     const esc = (s) => String(s == null ? '' : s).replace(/"/g, '&quot;');
     const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+    const FOLDER_SVG = '<svg viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>';
 
     function perTypeRow(key, label, vals) {
         vals = vals || {};
@@ -41,7 +42,13 @@
         return `
         <div class="set-section"><h4>General</h4>
             ${boolRow('debug', 'Debug — keep transient/ephemeral files', s.debug)}
-            ${textRow('cacheDir', 'Cache directory', s.cacheDir, 'default location — restart to apply')}
+            <div class="set-row">
+                <span class="set-label">Cache location</span>
+                <span class="set-cachedir">
+                    <input type="text" id="set-cacheDir-display" value="${esc(s._dataDir || s._dataHome || '')}" readonly>
+                    <button class="set-folder-btn" id="pickCacheDir" title="Choose folder" aria-label="Choose folder">${FOLDER_SVG}</button>
+                </span>
+            </div>
             ${textRow('rainbowAiApiKey', 'Rainbow.ai API key (weather radar)', s.rainbowAiApiKey)}
         </div>
         <div class="set-section"><h4>Audio &amp; team radio</h4>
@@ -59,8 +66,8 @@
             ${boolRow('ntfy.repeat', 'Repeat notifications', n.repeat)}
         </div>
         <div class="set-section"><h4>Alerts</h4>
-            ${textRow('alerts.favouriteDrivers', 'Favourite drivers (comma-separated TLAs)', (a.favouriteDrivers || []).join(', '))}
-            ${textRow('alerts.favouriteTeams', 'Favourite teams (comma-separated)', (a.favouriteTeams || []).join(', '))}
+            ${textRow('alerts.favouriteDrivers', 'Favourite drivers (TLAs)', (a.favouriteDrivers || []).join(', '), 'e.g. NOR, VER')}
+            ${textRow('alerts.favouriteTeams', 'Favourite teams (short names)', (a.favouriteTeams || []).join(', '), 'e.g. McLaren, Ferrari')}
         </div>
         <div class="set-section"><h4>Authentication</h4>
             ${numRow('auth.expiryWarningHours', 'Token-expiry warning (hours)', au.expiryWarningHours)}
@@ -147,10 +154,53 @@
         }
     }
 
+    async function pickCacheDir() {
+        const msg = document.getElementById('settingsMsg');
+        let path;
+        try {
+            path = (await (await fetch('/api/v1/settings/pick-folder', { method: 'POST' })).json()).path;
+        } catch (e) { path = ''; }
+        if (!path) return;
+        const move = window.confirm('Move existing cached files to the new location?');
+        msg.textContent = move ? 'Moving cache…' : 'Saving…';
+        try {
+            const r = await fetch('/api/v1/settings/cache-location', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path, move }),
+            });
+            if (!r.ok) throw new Error(r.status);
+            const d = await r.json();
+            const disp = document.getElementById('set-cacheDir-display');
+            if (disp) disp.value = d.cacheDir;
+            msg.textContent = '';
+            window.alert('Cache location updated. Please restart F1 Unleashed for the change to take effect.');
+        } catch (e) {
+            msg.textContent = 'Cache change failed.';
+        }
+    }
+
     window.openSettings = open;
     document.addEventListener('click', (e) => {
-        if (e.target.closest('.open-settings')) { e.preventDefault(); open(); }
+        if (e.target.closest('.open-settings')) { e.preventDefault(); open(); return; }
+        if (e.target.closest('#pickCacheDir')) { e.preventDefault(); pickCacheDir(); }
     });
+
+    // Case-insensitive favourite matchers for consumers (standings, alerts).
+    // Drivers match by exact TLA (case-insensitive); teams match by substring
+    // either way, so a short "McLaren" matches F1's "McLaren Mercedes".
+    function _favs(key) {
+        const a = (window.F1_SETTINGS && window.F1_SETTINGS.alerts) || {};
+        return (a[key] || []).map((s) => String(s).trim().toLowerCase()).filter(Boolean);
+    }
+    window.f1IsFavouriteDriver = (tla) =>
+        !!tla && _favs('favouriteDrivers').includes(String(tla).trim().toLowerCase());
+    window.f1IsFavouriteTeam = (name) => {
+        if (!name) return false;
+        const n = String(name).trim().toLowerCase();
+        return _favs('favouriteTeams').some((f) => n.includes(f) || f.includes(n));
+    };
+
     // Prime F1_SETTINGS for components that read it (auto-play, favourites).
     load();
 })();
