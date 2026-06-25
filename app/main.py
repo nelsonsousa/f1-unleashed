@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.templating import Jinja2Templates
+from app import settings
 from app.routers import livetiming, livetiming_stream, auth, races, weather, settings as settings_router
 from app.logging_config import setup_logging
 from app.version import get_version, check_latest_release
@@ -167,14 +168,15 @@ async def live_session_monitor():
                             live_type = live_data.get("session_type", "Unknown")
                             notification_key = f"{live_event}_{live_type}"
 
-                            # Notify once per session
+                            # Notify once per session (gated by settings, card 27)
                             if f"{notification_key}_started" not in _sent_notifications:
-                                send_notification(
-                                    "F1 Session LIVE",
-                                    f"{live_event} - {live_type} is now LIVE!",
-                                    priority="urgent",
-                                    tags="checkered_flag,formula1"
-                                )
+                                if settings.get("ntfy.sessionLive", True):
+                                    send_notification(
+                                        "F1 Session LIVE",
+                                        f"{live_event} - {live_type} is now LIVE!",
+                                        priority="urgent",
+                                        tags="checkered_flag,formula1"
+                                    )
                                 _sent_notifications.add(f"{notification_key}_started")
 
                             # Check if capture needs (re)starting
@@ -285,19 +287,20 @@ async def live_session_monitor():
                                     stop_at=radar_window_end,
                                 )
 
-                    # ── Pre-session notifications ──
-                    if cached_next_session:
+                    # ── Pre-session notifications (gated + lead from settings, card 27) ──
+                    if cached_next_session and settings.get("ntfy.preSession", True):
                         s = cached_next_session
                         hours_until = (s["session_date"] - now_utc).total_seconds() / 3600
+                        lead_min = float(settings.get("ntfy.preSessionLeadMinutes", 60) or 60)
+                        mins_until = hours_until * 60
 
-                        # Notify 1h before session starts
-                        if 0 < hours_until <= 1:
-                            notify_key = f"{s['event_name']}_{s['session_type']}_1h"
+                        # Notify `lead_min` minutes before the session starts.
+                        if 0 < mins_until <= lead_min:
+                            notify_key = f"{s['event_name']}_{s['session_type']}_presession"
                             if notify_key not in _sent_notifications:
-                                mins = int(hours_until * 60)
                                 send_notification(
                                     "F1 Session Starting Soon",
-                                    f"{s['event_name']} - {s['session_type']} starts in {mins} minutes",
+                                    f"{s['event_name']} - {s['session_type']} starts in {int(mins_until)} minutes",
                                     priority="high",
                                     tags="clock,formula1"
                                 )
@@ -310,7 +313,7 @@ async def live_session_monitor():
                     # (where T = hours until session).
                     LOGIN_MILESTONES = [24, 12, 6, 3, 2, 1]
 
-                    if cached_next_session:
+                    if cached_next_session and settings.get("ntfy.tokenExpiry", True):
                         s = cached_next_session
                         hours_until = (s["session_date"] - now_utc).total_seconds() / 3600
 
