@@ -21,11 +21,22 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
+from app import settings
 from app.config import CACHE_DIR
 from app.processing.preprocessor import SessionPreProcessor
 from app.services.signalr_client import F1SignalRClient
 
 logger = logging.getLogger(__name__)
+
+
+def _norm_session_type(name: str) -> str:
+    """Map an F1 session Name/Type to a settings session-type key (card 27)."""
+    n = (name or "").lower()
+    if "practice" in n:
+        return "practice"
+    if "qualifying" in n or "shootout" in n:   # incl. sprint qualifying
+        return "qualifying"
+    return "race"                              # race + sprint
 
 
 def kill_orphan_ffmpeg(cache_root: Optional[str] = None) -> None:
@@ -103,6 +114,9 @@ class LiveCaptureService:
         self._radio_seen: set[str] = set()
         self._radio_pending: list[dict] = []
         self._radio_tasks: set[asyncio.Task] = set()
+        # Normalised session type (practice/qualifying/race), from SessionInfo —
+        # gates the per-session-type capture toggles (card 27).
+        self._capture_session_type: Optional[str] = None
         # PDT side-car: polls the HLS playlist and rewrites
         # audio_info.json:start_utc with a broadcast-derived anchor.
         # Started in _start_audio, stopped in _stop_audio.
@@ -213,6 +227,7 @@ class LiveCaptureService:
             self._radio_static_path = None
             self._radio_seen = set()
             self._radio_pending = []
+            self._capture_session_type = None
             audio_watchdog = asyncio.create_task(
                 self._audio_session_end_watchdog(cache_path)
             )
@@ -319,12 +334,28 @@ class LiveCaptureService:
                 preprocessor.close()
                 logger.info(f"DB preprocessor finalized for capture {session_id}")
 
+            # Per-session-type "keep downloaded files" toggle (card 27): when off,
+            # drop the session cache (live.jsonl, audio, radio) now the build is
+            # finalised — the user watched live and wants no stored replay.
+            stype = self._capture_session_type
+            if stype and not settings.get(f"keepFiles.{stype}", True):
+                import shutil
+                try:
+                    shutil.rmtree(cache_path)
+                    logger.info(f"keepFiles off — removed session cache {cache_path}")
+                except OSError as e:
+                    logger.warning(f"keepFiles cleanup failed: {e}")
+
     # ── Audio Recording ──
 
     def _handle_audio_streams(self, data, cache_path: Path) -> None:
         """Extract HLS URL from AudioStreams message and start recording."""
         if self._audio_process and self._audio_process.poll() is None:
             return  # Already recording
+        # Per-session-type commentary toggle (card 27).
+        stype = self._capture_session_type
+        if stype and not settings.get(f"audio.{stype}", True):
+            return
 
         try:
             streams = data if isinstance(data, list) else (data or {}).get("Streams", [])
@@ -342,9 +373,14 @@ class LiveCaptureService:
 
     # ── Team radio (card 8) ──
     def _capture_radio_static_path(self, data, cache_path: Path) -> None:
-        """Record the session's CDN static Path from SessionInfo, then flush any
-        TeamRadio captures that arrived before it was known."""
-        if self._radio_static_path or not isinstance(data, dict) or not data.get("Path"):
+        """Record the session's CDN static Path + normalised type from SessionInfo,
+        then flush any TeamRadio captures that arrived before the Path was known."""
+        if not isinstance(data, dict):
+            return
+        if self._capture_session_type is None and (data.get("Type") or data.get("Name")):
+            self._capture_session_type = _norm_session_type(
+                data.get("Type") or data.get("Name"))
+        if self._radio_static_path or not data.get("Path"):
             return
         self._radio_static_path = data["Path"]
         if self._radio_pending:
@@ -354,6 +390,10 @@ class LiveCaptureService:
     def _handle_team_radio(self, data, cache_path: Path) -> None:
         """Download newly-listed team-radio clips. Buffers until the static Path
         (from SessionInfo) is known if TeamRadio arrives first."""
+        # Per-session-type team-radio toggle (card 27).
+        stype = self._capture_session_type
+        if stype and not settings.get(f"teamRadio.{stype}", True):
+            return
         from app.services import team_radio
         new = [c for c in team_radio.extract_captures(data)
                if c.get("Path") and c["Path"] not in self._radio_seen]
