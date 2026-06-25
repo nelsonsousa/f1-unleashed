@@ -138,6 +138,35 @@ def radar_latest(
     )
 
 
+@router.get("/weather/forecast")
+def weather_forecast(
+    session: str = Query(..., description="Session cache key, e.g. 2026_1287_Barcelona_11307_Race"),
+):
+    """Captured 15-min forecast snapshots for the session (card 118). Each snapshot:
+    {captured, time[], weather_code[], precipitation_probability[]}; the client
+    indexes them by the playback clock. 204 if nothing was captured."""
+    import json as _json
+    from app.services.livetiming_fetcher import livetiming_fetcher
+    from app.services.weather_forecast import FORECAST_FILE
+    session_dir = livetiming_fetcher.find_cached_session_path(session)
+    if session_dir is None:
+        return Response(status_code=204)
+    fp = session_dir / FORECAST_FILE
+    if not fp.exists():
+        return Response(status_code=204)
+    snaps = []
+    try:
+        for line in fp.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                snaps.append(_json.loads(line))
+    except (OSError, ValueError):
+        return Response(status_code=204)
+    if not snaps:
+        return Response(status_code=204)
+    return {"snapshots": snaps}
+
+
 @router.get("/weather/radar/status")
 def radar_status():
     """Diagnostic: is radar capture running, and for which session dir?"""
