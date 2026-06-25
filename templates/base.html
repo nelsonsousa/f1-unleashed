@@ -6,10 +6,10 @@
     <title>{% block title %}F1 Live Timing{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="manifest" href="/static/manifest.json">
-    <link rel="stylesheet" href="/static/css/base.css?v=2026-06-13w">
-    <link rel="stylesheet" href="/static/css/components/header.css?v=2026-06-13w">
-    <link rel="stylesheet" href="/static/css/components/video_sync.css?v=2026-06-23a">
-    <link rel="stylesheet" href="/static/css/components/status_footer.css?v=2026-06-25c">
+    <link rel="stylesheet" href="{{ asset('css/base.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/components/header.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/components/video_sync.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/components/status_footer.css') }}">
     {% block styles %}{% endblock %}
     <meta name="theme-color" content="#0a0a0a">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -44,17 +44,17 @@
             apiBase: '/api/v1/livetiming/stream'
         };
     </script>
-    <script src="/static/js/utils/circuits.js"></script>
-    <script src="/static/js/base.js?v=2026-06-24a"></script>
-    <script src="/static/js/components/header.js?v=2026-06-25b"></script>
-    <script src="/static/js/components/status_footer.js?v=2026-06-25d"></script>
+    <script src="{{ asset('js/utils/circuits.js') }}"></script>
+    <script src="{{ asset('js/base.js') }}"></script>
+    <script src="{{ asset('js/components/header.js') }}"></script>
+    <script src="{{ asset('js/components/status_footer.js') }}"></script>
     <!-- Settings dialog lives on the home page only; here we load it solely to
          prime window.F1_SETTINGS (read once at load, e.g. team-radio auto-play). -->
-    <script src="/static/js/settings.js?v=2026-06-25b"></script>
+    <script src="{{ asset('js/settings.js') }}"></script>
     <!-- Tesseract.js for the video-sync OCR (3-video-sync). CDN for now;
          vendor locally before release so the app stays self-contained. -->
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-    <script src="/static/js/components/video_sync.js?v=2026-06-24k"></script>
+    <script src="{{ asset('js/components/video_sync.js') }}"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>
