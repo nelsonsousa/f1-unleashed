@@ -420,6 +420,21 @@ def _build_concat_aac(session_path, segments):
     return None
 
 
+@router.get("/teamradio/{session_name}/{filename}")
+async def get_team_radio(session_name: str, filename: str):
+    """Serve a cached team-radio mp3 clip (card 8). Clips live under
+    {session}/TeamRadio/<file>.mp3 (downloaded at capture time / backfilled)."""
+    if "/" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Bad filename")
+    session_path = session_manager._find_session_path(session_name)
+    if not session_path or not session_path.exists():
+        raise HTTPException(status_code=404, detail="Session not found")
+    clip = session_path / "TeamRadio" / filename
+    if not clip.exists():
+        raise HTTPException(status_code=404, detail="Clip not found")
+    return FileResponse(str(clip), media_type="audio/mpeg", filename=filename)
+
+
 @router.get("/audio/{session_name:path}")
 async def get_audio(session_name: str, request: Request):
     """Serve commentary audio for a cached session.
