@@ -1,10 +1,10 @@
 /* Status footer (card 20) — client health monitoring at the window bottom.
  *
  * Shows: live/replay mode, stream throughput (msg/s) + light, total messages,
- * on-disk cache size, audio bitrate (health), a data-health light that flags a
- * POSITION outage (the high-cardinality location stream going stale vs the
- * playback clock — catches a position drop even while timing keeps flowing),
- * and, for live sessions, data + audio download speeds.
+ * on-disk cache size, audio bitrate (health), a data-health light driven by the
+ * server's authoritative `dataHealth` (position stale / carData invalid|missing /
+ * TimingData stale, all green-gated — see data_health_processor), and, for live
+ * sessions, data + audio download speeds.
  */
 (function () {
     const $ = (id) => document.getElementById(id);
@@ -14,13 +14,8 @@
     const INTERNAL = ['state:', 'session:', 'playback:', 'clock:', 'stream:', 'status:'];
     const isData = (t) => t && !INTERNAL.some((p) => t.startsWith(p));
 
-    // Position-staleness thresholds, in DATA-clock ms (speed-independent).
-    const POS_OK_MS = 8000;
-    const POS_LAG_MS = 20000;
-
     let total = 0, windowCount = 0;
-    let curOffsetMs = 0;          // current playback offset (data clock)
-    let lastPosOffsetMs = null;   // data-offset of the last 'position' message
+    let health = null;   // latest dataHealth payload from the server
 
     function fmtBytes(b) {
         if (!b) return '—';
@@ -47,16 +42,9 @@
         document.querySelectorAll('.sf-live-only').forEach((el) => el.classList.toggle('hidden', !live));
     });
 
-    // Position = the high-cardinality location stream (Position.z). Track its
-    // data-offset; if it lags the clock the location stream has stalled — an
-    // outage — even when timing/other topics keep arriving.
-    messageBus.on('position', (data, offset_ms) => {
-        if (typeof offset_ms === 'number') lastPosOffsetMs = offset_ms;
-    });
-    messageBus.on('clock:update', (d) => {
-        if (d && typeof d.offset === 'number') curOffsetMs = d.offset * 1000;
-    });
-    messageBus.on('state:reset', () => { lastPosOffsetMs = null; });
+    // Authoritative data health from the server (data_health_processor).
+    messageBus.on('dataHealth', (d) => { health = d; renderHealth(); });
+    messageBus.on('state:reset', () => { health = null; renderHealth(); });
 
     messageBus.on('status:rates', (d) => {
         if (!d) return;
@@ -70,6 +58,23 @@
         windowCount++;
     });
 
+    function renderHealth() {
+        const el = $('sfOutageLight');
+        const txt = $('sfOutage');
+        if (!health) { light(el, 'grey'); txt.textContent = '—'; txt.removeAttribute('title'); return; }
+        const s = health.status;
+        light(el, s === 'critical' ? 'red' : s === 'warn' ? 'yellow' : 'green');
+        if (s === 'critical') { txt.textContent = 'TIMING'; txt.title = 'TimingData stalled under green'; return; }
+        if (s === 'ok') { txt.textContent = 'OK'; txt.removeAttribute('title'); return; }
+        const parts = [], tip = [];
+        const pos = health.positionStale || [], inv = health.carDataInvalid || [], miss = health.carDataMissing || [];
+        if (pos.length) { parts.push('pos ' + pos.length); tip.push('Position stale: ' + pos.join(', ')); }
+        if (inv.length) { parts.push('tel ' + inv.length); tip.push('Telemetry invalid: ' + inv.join(', ')); }
+        if (miss.length) { parts.push('car ' + miss.length); tip.push('CarData missing: ' + miss.join(', ')); }
+        txt.textContent = parts.join('  ') || 'warn';
+        txt.title = tip.join('\n');
+    }
+
     let lastTick = performance.now();
     setInterval(() => {
         const now = performance.now();
@@ -82,22 +87,9 @@
         $('sfRate').textContent = `${rate.toFixed(rate < 10 ? 1 : 0)} msg/s`;
 
         const playing = messageBus.isPlaying;
-        // Stream light — throughput health.
         if (!playing) light($('sfStreamLight'), 'grey');
         else if (rate >= 5) light($('sfStreamLight'), 'green');
         else if (rate > 0) light($('sfStreamLight'), 'yellow');
         else light($('sfStreamLight'), 'red');
-
-        // Data light — POSITION staleness vs the data clock.
-        const outEl = $('sfOutageLight');
-        if (lastPosOffsetMs === null) {
-            light(outEl, 'grey');
-            $('sfOutage').textContent = '—';
-        } else {
-            const lag = curOffsetMs - lastPosOffsetMs;
-            if (lag <= POS_OK_MS) { light(outEl, 'green'); $('sfOutage').textContent = 'OK'; }
-            else if (lag <= POS_LAG_MS) { light(outEl, 'yellow'); $('sfOutage').textContent = 'lag'; }
-            else { light(outEl, 'red'); $('sfOutage').textContent = 'outage'; }
-        }
     }, 1000);
 })();
