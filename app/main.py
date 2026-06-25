@@ -17,6 +17,7 @@ from app.version import get_version, check_latest_release
 from app.services.auth_service import auth_service
 from app.services.live_capture import live_capture, kill_orphan_ffmpeg
 from app.services.weather_radar import radar_capture
+from app.services.weather_forecast import forecast_capture
 
 # Initialize logging
 setup_logging()
@@ -253,11 +254,12 @@ async def live_session_monitor():
                                 _active_live_capture["event_name"] = None
                                 _active_live_capture["session_type"] = None
                                 _sent_notifications.clear()
-                            # Stop radar 5 minutes after session ends.
+                            # Stop radar + forecast 5 minutes after session ends.
+                            stop_when = datetime.now(timezone.utc) + timedelta(minutes=5)
                             if radar_capture.active:
-                                radar_capture.schedule_stop(
-                                    datetime.now(timezone.utc) + timedelta(minutes=5)
-                                )
+                                radar_capture.schedule_stop(stop_when)
+                            if forecast_capture.active:
+                                forecast_capture.schedule_stop(stop_when)
                         else:
                             # 4xx (e.g. 502 from upstream) — treat as transient.
                             logger.warning(
@@ -284,6 +286,13 @@ async def live_session_monitor():
                             cache_path = live_capture.cache_path_for(live_sid)
                             if cache_path and radar_capture.active_key != str(cache_path):
                                 radar_capture.start(
+                                    session_dir=cache_path,
+                                    meeting_name=s["event_name"],
+                                    stop_at=radar_window_end,
+                                )
+                            # Forecast capture rides the same window (card 118).
+                            if cache_path and forecast_capture.active_key != str(cache_path):
+                                forecast_capture.start(
                                     session_dir=cache_path,
                                     meeting_name=s["event_name"],
                                     stop_at=radar_window_end,
