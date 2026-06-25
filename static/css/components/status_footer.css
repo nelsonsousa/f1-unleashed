@@ -1,0 +1,57 @@
+/* Status footer (card 20) — half-header-height health bar at the window bottom. */
+
+.status-footer {
+    flex: 0 0 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 12px;
+    background: #0c0e12;
+    border-top: 1px solid var(--border, #222);
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 11px;
+    color: var(--text-secondary, #9aa);
+    user-select: none;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.sf-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+.sf-label {
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    font-size: 10px;
+}
+.sf-val { color: #d2d6de; }
+.sf-mode { font-weight: 700; letter-spacing: 0.5px; color: #d2d6de; }
+
+.sf-dot,
+.sf-light {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #555;
+    flex-shrink: 0;
+}
+.sf-dot.live {
+    background: #ff3b30;
+    box-shadow: 0 0 6px #ff3b30;
+    animation: sf-pulse 1.6s ease-in-out infinite;
+}
+.sf-dot.replay { background: #4da3ff; }
+
+.sf-light.green { background: #28c93f; }
+.sf-light.yellow { background: #ffcc00; }
+.sf-light.red { background: #ff3b30; }
+.sf-light.grey { background: #555; }
+
+@keyframes sf-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}

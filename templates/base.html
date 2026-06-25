@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="/static/css/base.css?v=2026-06-13w">
     <link rel="stylesheet" href="/static/css/components/header.css?v=2026-06-13w">
     <link rel="stylesheet" href="/static/css/components/video_sync.css?v=2026-06-23a">
+    <link rel="stylesheet" href="/static/css/components/status_footer.css?v=2026-06-25a">
     {% block styles %}{% endblock %}
     <meta name="theme-color" content="#0a0a0a">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -19,6 +20,16 @@
     {% include "components/header.html" %}
 
     {% block content %}{% endblock %}
+
+    {# Status footer (card 20): live/replay, stream rate, message count, cache
+       size, data-outage health — ~half the header height at the window bottom. #}
+    <footer class="status-footer" id="statusFooter">
+        <span class="sf-item sf-mode"><span class="sf-dot" id="sfModeDot"></span><span id="sfMode">—</span></span>
+        <span class="sf-item"><span class="sf-light" id="sfStreamLight"></span><span class="sf-label">Stream</span><span class="sf-val" id="sfRate">0/s</span></span>
+        <span class="sf-item"><span class="sf-label">Messages</span><span class="sf-val" id="sfMsgs">0</span></span>
+        <span class="sf-item"><span class="sf-label">Cache</span><span class="sf-val" id="sfCache">—</span></span>
+        <span class="sf-item"><span class="sf-light" id="sfOutageLight"></span><span class="sf-label">Data</span><span class="sf-val" id="sfOutage">—</span></span>
+    </footer>
 
 
     <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script> -->
@@ -33,6 +44,7 @@
     <script src="/static/js/utils/circuits.js"></script>
     <script src="/static/js/base.js?v=2026-06-24a"></script>
     <script src="/static/js/components/header.js?v=2026-06-25b"></script>
+    <script src="/static/js/components/status_footer.js?v=2026-06-25a"></script>
     <!-- Settings dialog lives on the home page only; here we load it solely to
          prime window.F1_SETTINGS (read once at load, e.g. team-radio auto-play). -->
     <script src="/static/js/settings.js?v=2026-06-25b"></script>

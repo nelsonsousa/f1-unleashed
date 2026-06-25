@@ -186,6 +186,7 @@ const messageBus = {
                     isLive: this.isLive,
                     audioInfo: data.audioInfo || null,
                     duration: data.duration,
+                    cacheBytes: data.cacheBytes || 0,
                     events: data.events || [],
                 });
 
