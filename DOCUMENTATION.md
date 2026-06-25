@@ -39,9 +39,10 @@ The data stream is a sequence of typed messages on a server-side message bus, re
 |------|----------------|
 | Header | Local time, session clock, track status, playback controls, audio controls (= mute, volume, sync indicator) |
 | Standings | Position; time gaps; penalty + flag indicators (R); timing sectors; lap classifications; tyre history, etc. |
-| Track map | Circuit SVG with per-driver positions, yellow-flag sector overlays, integrated weather info and rain radar overlay |
+| Track map | Circuit SVG with per-driver positions, yellow-flag sector overlays, Current Conditions weather, rain radar overlay, and a short-range weather forecast widget |
 | Telemetry | Speed / RPM / gear / throttle / brake / DRS traces with lap selection, multi-driver compare, lap history |
-| Race control | RC message stream ; predicted team pecking-order; provisional championship standings  |
+| Race control | RC message stream (with team-radio clips interleaved by time); a Team Radio tab; predicted team pecking-order; provisional championship standings |
+| Status footer | A slim bar at the bottom of the player: live/replay indicator, stream throughput (msg/s), total messages, on-disk cache size, audio bitrate, live download speeds, and the data-health monitor (timing / telemetry / position) |
 
 The frontend listens via a message bus pattern:
 
@@ -66,11 +67,52 @@ Audio commentary from `rdio.formula1.com` is captured as HLS, written to disk as
 
 The audio controls in the header are: traffic light (= sync state), mute, volume. No manual offset, no output-device picker — the PDT anchor is the single source of truth.
 
+During live capture a watchdog restarts the commentary ffmpeg process if its HLS download stalls (= the output file stops growing). This is distinct from the silence-based watchdog that detects the end of a session.
+
+---
+
+## Team radio
+
+F1 `TeamRadio` messages carry `Captures` of `{Utc, RacingNumber, Path}`, where `Path` points at an mp3 on the livetiming CDN. During live capture the clips are downloaded and cached to `{session}/TeamRadio/*.mp3` (existing sessions can be backfilled from `live.jsonl`).
+
+- `TeamRadioProcessor` emits a `teamRadio` topic (`{num, file, utc}`) for each clip as it airs live, at the clip's broadcast `Utc`. The pre-session backlog carried on the initial subscribe is downloaded but not emitted for playback.
+- In the race-control tile a **Team Radio** tab (between Race control and Pecking order) lists every clip; clips are also interleaved into the Race control message stream by time. Each entry shows an audio icon, the driver TLA, "Team radio", and Play / Stop buttons.
+- Playing a clip **ducks** the commentary (mutes it for the duration of the clip, then restores it). Auto-play when a clip airs during replay is settings-gated (default off); otherwise clips play on demand via the Play button.
+- Clips are served by `GET /api/v1/livetiming/teamradio/{session}/{file}`.
+
+Transcription is not implemented (deferred).
+
+---
+
+## Status footer + data-health monitor
+
+A slim status bar (= about half the header height) sits at the bottom of the session/player window. It shows the live/replay indicator, stream throughput (msg/s) with a traffic light, total messages, on-disk cache size, the commentary audio bitrate, and — for live sessions only — the data and audio download speeds.
+
+It also hosts the **data-health monitor**: three coloured boxes — TIMING, TELEMETRY, POSITION — driven by the server-side `DataHealthProcessor` (`dataHealth` topic). Only drivers currently **on track** count (status TRACK / OUT; RET / STOP / PIT / FINISHED / DSQ are excluded, since a parked or retired car legitimately stops sending data).
+
+- **TIMING** is all-or-nothing: red only if the whole `TimingData` feed has stopped (any `TimingData` arriving = green); it underpins everything else.
+- **TELEMETRY** and **POSITION** are coloured by the fraction of on-track drivers affected: >50% red, >25–50% orange, >0–25% yellow, none green. Telemetry counts as "invalid" when throttle/brake exceed 100 or speed is 0 while the car is position-tracked, and "missing" when no recent `CarData` has arrived; position counts as stale when `Position` updates stop.
+- Assessment is **green-gated**: red / SC / VSC pause the data legitimately, and a short grace window after green resumes lets the streams catch up before any stream is flagged.
+
+---
+
+## Weather — current conditions + forecast
+
+The weather tile header is **Current Conditions**. The data is drawn from three sources:
+
+- **Sky-condition icon** — from Open-Meteo (`/api/v1/weather`, hourly `weather_code` + `is_day`), indexed by the playback clock.
+- **Live measurements** — temperature, track temperature, humidity, pressure and wind come from the F1 `WeatherData` feed.
+- **Rain radar** — the precipitation overlay only; Rainbow.ai is used solely for the radar imagery, not the condition icon.
+
+A **Weather Forecast** widget overlays the top-right of the radar/weather tile, showing the In 15' / 30' / 60' forecast condition icons (collapsing to current + 60' when the condition is unchanged across the window) and a rain probability (%) for wet slots.
+
+The forecast is **captured live**: `ForecastCapture` (`app/services/weather_forecast.py`) fetches the Open-Meteo `minutely_15` forecast (`weather_code` + `precipitation_probability`) every 10 minutes during a live session and appends snapshots to `{session}/weather_forecast.jsonl`. Because Open-Meteo does not archive past forecasts, capturing live is the only way to replay what was predicted. Replay reads the snapshots via `GET /api/v1/weather/forecast?session=…` and indexes them by the playback clock.
+
 ---
 
 ## Video sync
 
-**Postponed to v1.1.** The plan is OCR-based anchoring of the data clock to the TV broadcast (= Tesseract over a fixed top-left crop, anchors per session phase). Audio remains auto-sync'd to the data clock via PDT, so the user only ever needs to align the data clock to the TV moment they're watching.
+Sync the data clock to a live TV broadcast you are watching alongside. Screen-share the (muted) TV window; the app runs OCR (Tesseract.js) over the shared frame to read the broadcast's session clock / countdown — layout-agnostic (it crops large black borders and sub-frames the region of interest rather than assuming a fixed position) — compares it to the data clock, and nudges playback to match. `ENTER` jumps to the next relevant moment for the session type (Practice / Qualifying: next start or restart; Race: formation lap, then lights-out, then tracking by lap number); `+` skips forward and `-` pauses briefly to let the picture catch up. It does not re-sync while the observed gap is under ~0.5 s, but always accepts a manual keypress. Audio stays auto-sync'd to the data clock via PDT, so you only ever align the data clock to the TV moment.
 
 ---
 
@@ -84,19 +126,43 @@ Access to non-public F1 data (live session feeds, premium audio, telemetry) requ
 
 ---
 
+## Settings
+
+All runtime configuration lives in a single JSON store, `settings.json`, under the OS data home (`app/settings.py`). `.env` and `python-dotenv` are gone — every value has a default, so the app runs out of the box, and the store is edited via an in-app **settings dialog** reached from the gear on the **home-page footer** (right side) only — not the session window.
+
+Settings cover:
+
+- **debug** — keep transient/ephemeral artefacts instead of deleting them.
+- **cacheDir** — the livetiming-cache location (see below).
+- **rainbowAiApiKey** — the precipitation-radar overlay key.
+- **Per-session-type capture toggles** (practice / qualifying / race): download + play commentary audio; download team radio; keep downloaded files after the session.
+- **teamRadioAutoplay** — auto-play radio clips during replay (default off; on-demand otherwise).
+- **ntfy** — webhook URL plus which notifications to send (session-live / pre-session / token-expiry) and the pre-session lead time in minutes.
+- **alerts** — favourite drivers (TLAs / car numbers) and teams (short names, case-insensitive).
+- **auth** — token-expiry warning hours + check interval.
+
+The `cacheDir` setting points **directly** at the livetiming-cache root: the chosen folder holds the season directories (`2026/`, `2025/`, …) with no extra `livetiming_cache` level. Everything else — `settings.json`, `known_topics.json`, `rainbow_usage.json`, `tmp`, `analysis`, and the weather-radar cache — stays at the fixed OS data home. Changing the cache location offers to **move** the existing cache and requires a restart; a native folder-picker is provided.
+
+The settings API: `GET`/`PUT /api/v1/settings`, `POST /api/v1/settings/pick-folder` (native folder picker), `POST /api/v1/settings/cache-location` (relocate + move).
+
+---
+
 ## Caching
 
 Every captured session is stored on disk under an OS-appropriate data directory
 — Windows `%LOCALAPPDATA%\F1Unleashed`, macOS `~/Library/Application Support/
-F1Unleashed`, Linux `$XDG_DATA_HOME/f1unleashed` — overridable with the
-`F1U_DATA_DIR` environment variable:
+F1Unleashed`, Linux `$XDG_DATA_HOME/f1unleashed`. The livetiming cache can be
+redirected elsewhere with the `cacheDir` setting (see Settings); the rest of the
+data home is fixed.
 
 ```
-{data-dir}/livetiming_cache/{year}/{NN_event}/{session_type}/
-    live.jsonl           # one JSON message per line, payload-timestamp-ordered
-    subscribe.json       # initial state snapshot at SignalR connect
-    commentary.aac       # transcoded audio
-    audio_info.json      # audio-clock anchor
+{cache-dir}/{year}/{NN_event}/{session_type}/
+    live.jsonl              # one JSON message per line, payload-timestamp-ordered
+    subscribe.json          # initial state snapshot at SignalR connect
+    commentary.aac          # transcoded audio
+    audio_info.json         # audio-clock anchor
+    TeamRadio/*.mp3         # captured team-radio clips
+    weather_forecast.jsonl  # 15-min forecast snapshots captured live (for replay)
 ```
 
 Pre-processing reads `live.jsonl` once (or streams live), runs the processor chain, and builds a transient pre-processed SQLite DB under `{data-dir}/tmp/` (one per session, built on demand and removed on disconnect). Formula 1 timing messages only contain changes to previous data and as such make it hard to skip playback forwards/backwards. This pre-processing step makes every message history aware, and that allows near instant playback skip.
@@ -195,6 +261,8 @@ Each processor subscribes to raw F1 topics and emits processed messages. Per-dri
 | `LapClassificationProcessor` | driverLastLap, driverStatus, etc. | `lapClassification:{num}` (PUSH/COOL/OUT/IN/LONG/RACE/WET/PIT/STOP) |
 | `PaceProcessor` | driverLastLap, lapClassification, tyres | `pace.json` post-session (per-driver and per-team quali + race pace) |
 | `ChampionshipProcessor` | ChampionshipPrediction | `championshipPrediction` |
+| `TeamRadioProcessor` | TeamRadio | `teamRadio` (per-clip play event at its broadcast Utc) |
+| `DataHealthProcessor` | TimingData, Position.z, CarData.z, Heartbeat, driverList, trackStatus, driverStatus | `dataHealth` (per-stream timing / telemetry / position health over on-track drivers) |
 
 **Playback engine**
 
@@ -223,11 +291,13 @@ WHERE rowid IN (
 ### On-disk cache format
 
 ```
-{data-dir}/livetiming_cache/{year}/{MeetingKey}_{Location}/{SessionKey}_{SessionName}/
-    live.jsonl         # Raw F1 messages: {"Type": "...", "DateTime": "...", "Json": {...}}
-    subscribe.json     # Initial state snapshot from SignalR subscription
-    commentary.aac     # Audio recording (= live capture only)
-    audio_info.json    # Audio anchor metadata (= live capture only)
+{cache-dir}/{year}/{MeetingKey}_{Location}/{SessionKey}_{SessionName}/
+    live.jsonl              # Raw F1 messages: {"Type": "...", "DateTime": "...", "Json": {...}}
+    subscribe.json         # Initial state snapshot from SignalR subscription
+    commentary.aac         # Audio recording (= live capture only)
+    audio_info.json        # Audio anchor metadata (= live capture only)
+    TeamRadio/*.mp3        # Team-radio clips (= live capture / backfill)
+    weather_forecast.jsonl # 15-min forecast snapshots (= live capture only)
 # the pre-processed DB is transient — built on demand under {data-dir}/tmp/
 ```
 
@@ -267,6 +337,25 @@ CREATE TABLE processing_meta (
 - Per-driver topics: `driverTiming:44`, `driverGap:1`, `driverStatus:63`, `lapClassification:16`, etc.
 - Live-only (= not saved to DB): `~telemetry:44` is emitted during playback but not persisted.
 
+**Topic catalog (`known_topics.json`)**
+
+`known_topics.json` (at the fixed data home) is a per-topic catalog. For each topic it records:
+
+| Field | Meaning |
+|-------|---------|
+| `status` | `subscribed` (a processor handles it) / `received` (arrived but unhandled) / `unseen` (known baseline, absent this session) |
+| `listeners` | the processor classes that subscribe to it (from the message-bus handler map) |
+| `outputs` | the topics that processing produces from it (derived at runtime — a re-entrant emit inside a handler is recorded as an output of the current input topic) |
+| `captured` | whether it is a raw F1 topic persisted to `live.jsonl` |
+| `lastSeen` | the most-recent session it appeared in |
+| `note` | a user-editable note, preserved across runs |
+
+The existing topic-discovery alert is unchanged: when a genuinely new topic arrives that no processor handles, the app warns and sends a developer notification.
+
+**Static-asset cache-busting**
+
+Static asset URLs in templates are versioned automatically by file mtime via a Jinja `asset()` helper (`/static/<path>?v=<mtime>`) — there are no hand-bumped `?v=` tags. `index.html` is a Jinja template.
+
 **CarData.z channel mapping**
 
 | Channel | Value |
@@ -301,11 +390,16 @@ Not only is the available data very sparse, when compared to each teams own tele
 
 But, as much as possible, I'll work to enrich the analysis of the data and provide what I hope is a better viewing experience for the Formula 1 fans.
 
-### Planned features for v1.1
+### Delivered in v1.2
 
-- **OCR-based video sync** (= Tesseract over a fixed top-left crop; anchors per session phase: countdown, segment timer, race lights-out, lap counter). Target: Barcelona GP weekend (2026-06-14).
+- **In-app settings** — JSON-backed settings dialog replacing `.env` (see Settings).
+- **Team radio replay** — clip capture + time-aligned playback with commentary ducking (see Team radio).
+- **Status footer + data-health monitor** — bottom status bar with stream/data-quality indicators (see Status footer + data-health monitor).
+- **Weather forecast** — live-captured 15/30/60-minute forecast widget (see Weather — current conditions + forecast).
+
+### Planned features
+
 - **Session summary / highlights** (= post-session recap: fastest lap, longest stint, biggest gap closes, position changes, podium).
-- **Team radio audio replay** (= per-driver team-radio capture + playback aligned to the data clock).
 - **Lift-and-coast** detection.
 - **Tyre-saving** detection.
 - **Pit windows** (SC / VSC opportunity detection).
