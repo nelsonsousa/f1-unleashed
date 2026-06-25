@@ -99,6 +99,30 @@
     font-size: 13px;
 }
 
+/* Cache location: read-only path display + native folder picker. */
+.set-cachedir { display: inline-flex; align-items: center; gap: 6px; }
+.set-cachedir input[type="text"] {
+    width: 230px;
+    background: #0e1014;
+    border: 1px solid #2a2e38;
+    border-radius: 6px;
+    color: #c6cad6;
+    padding: 6px 8px;
+    font-size: 12px;
+}
+.set-folder-btn {
+    background: #20242e;
+    border: 1px solid #2a2e38;
+    border-radius: 6px;
+    color: #c6cad6;
+    cursor: pointer;
+    padding: 5px 7px;
+    display: inline-flex;
+    align-items: center;
+}
+.set-folder-btn:hover { color: #fff; border-color: #3a3f4c; }
+.set-folder-btn svg { width: 16px; height: 16px; fill: currentColor; }
+
 .set-pt-row { align-items: center; }
 .set-pt-boxes { display: inline-flex; gap: 14px; }
 .set-pt {
