@@ -97,6 +97,12 @@ class LiveCaptureService:
         # Last HLS commentary URL ffmpeg is recording (for the stale-download
         # restart watchdog). Set in _start_audio, cleared in _stop_audio.
         self._audio_url: Optional[str] = None
+        # Team-radio download (card 8): session's CDN static Path + dedup set +
+        # captures buffered until the static Path is known + in-flight tasks.
+        self._radio_static_path: Optional[str] = None
+        self._radio_seen: set[str] = set()
+        self._radio_pending: list[dict] = []
+        self._radio_tasks: set[asyncio.Task] = set()
         # PDT side-car: polls the HLS playlist and rewrites
         # audio_info.json:start_utc with a broadcast-derived anchor.
         # Started in _start_audio, stopped in _stop_audio.
@@ -204,6 +210,9 @@ class LiveCaptureService:
             #   3. fallback: 30 min since last non-heartbeat message.
             self._last_non_heartbeat_ts = time.monotonic()
             self._session_end_seen = False
+            self._radio_static_path = None
+            self._radio_seen = set()
+            self._radio_pending = []
             audio_watchdog = asyncio.create_task(
                 self._audio_session_end_watchdog(cache_path)
             )
@@ -251,6 +260,11 @@ class LiveCaptureService:
                         # Start audio when AudioStreams provides the URL
                         if topic == "AudioStreams":
                             self._handle_audio_streams(message.get("data"), cache_path)
+                        # Team radio (card 8): static Path → download new clips.
+                        elif topic == "SessionInfo":
+                            self._capture_radio_static_path(message.get("data"), cache_path)
+                        elif topic == "TeamRadio":
+                            self._handle_team_radio(message.get("data"), cache_path)
 
                 except asyncio.TimeoutError:
                     # Only end if the capture thread has truly died — a brief
@@ -325,6 +339,39 @@ class LiveCaptureService:
                     return
         except Exception as e:
             logger.error(f"Failed to parse AudioStreams: {e}")
+
+    # ── Team radio (card 8) ──
+    def _capture_radio_static_path(self, data, cache_path: Path) -> None:
+        """Record the session's CDN static Path from SessionInfo, then flush any
+        TeamRadio captures that arrived before it was known."""
+        if self._radio_static_path or not isinstance(data, dict) or not data.get("Path"):
+            return
+        self._radio_static_path = data["Path"]
+        if self._radio_pending:
+            pending, self._radio_pending = self._radio_pending, []
+            self._spawn_radio_download(cache_path, pending)
+
+    def _handle_team_radio(self, data, cache_path: Path) -> None:
+        """Download newly-listed team-radio clips. Buffers until the static Path
+        (from SessionInfo) is known if TeamRadio arrives first."""
+        from app.services import team_radio
+        new = [c for c in team_radio.extract_captures(data)
+               if c.get("Path") and c["Path"] not in self._radio_seen]
+        if not new:
+            return
+        for c in new:
+            self._radio_seen.add(c["Path"])
+        if not self._radio_static_path:
+            self._radio_pending.extend(new)
+            return
+        self._spawn_radio_download(cache_path, new)
+
+    def _spawn_radio_download(self, cache_path: Path, captures: list) -> None:
+        from app.services import team_radio
+        task = asyncio.create_task(
+            team_radio.download_captures(cache_path, self._radio_static_path, captures))
+        self._radio_tasks.add(task)
+        task.add_done_callback(self._radio_tasks.discard)
 
     def _start_audio(self, url: str, cache_path: Path, stream_utc: str = None) -> None:
         """Start ffmpeg recording of HLS commentary stream.
