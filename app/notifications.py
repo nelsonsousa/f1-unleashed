@@ -17,10 +17,10 @@ def send_notification(
     tags: str = "formula1",
 ) -> bool:
     """Send a notification via the configured webhook. Returns success."""
-    import os
     import requests
 
-    webhook_url = os.getenv("NOTIFICATION_WEBHOOK_URL")
+    from app import settings
+    webhook_url = settings.get("ntfy.webhookUrl")
     if not webhook_url:
         return False
 

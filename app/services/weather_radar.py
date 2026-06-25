@@ -36,14 +36,10 @@ from typing import Optional
 
 import httpx
 import numpy as np
-from dotenv import load_dotenv
 from PIL import Image
 
+from app import settings
 from app.config import DATA_DIR
-
-# Defensive — ensures RAINBOW_AI_API_KEY is loaded even when this module
-# is imported by standalone scripts that don't pull in auth_service.
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -266,7 +262,7 @@ def _usage_add(n: int) -> None:
 
 
 def _rainbow_key() -> Optional[str]:
-    return os.getenv(RAINBOW_KEY_ENV)
+    return settings.get("rainbowAiApiKey") or None
 
 
 def _render_blue(red: np.ndarray) -> bytes:

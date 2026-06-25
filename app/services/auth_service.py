@@ -10,10 +10,8 @@ import webbrowser
 
 import jwt
 import requests
-from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+from app import settings
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +138,7 @@ class F1AuthService:
         expiring_soon = False
 
         # Threshold for "expiring soon" warning (default 24 hours)
-        expiry_warning_hours = float(os.getenv("AUTH_EXPIRY_WARNING_HOURS", "24"))
+        expiry_warning_hours = float(settings.get("auth.expiryWarningHours", 24.0))
 
         if exp:
             exp_time = datetime.fromtimestamp(exp, tz=timezone.utc)
@@ -266,11 +264,11 @@ class F1AuthService:
         """
         Send a webhook notification about token expiry.
 
-        Requires NOTIFICATION_WEBHOOK_URL to be set in .env file.
+        Requires the ntfy webhook URL to be set in settings (card 27).
         Supports ntfy.sh, Slack, Discord, and generic webhooks.
         Returns True if notification was sent successfully.
         """
-        webhook_url = os.getenv("NOTIFICATION_WEBHOOK_URL")
+        webhook_url = settings.get("ntfy.webhookUrl")
         if not webhook_url:
             logger.debug("No webhook URL configured, skipping notification")
             return False
