@@ -31,6 +31,10 @@
         condLng: null,
         conditionDate: null,
         conditionHourly: null,
+        currentIsDay: 1,
+        // Weather-forecast widget (card 118)
+        forecastFetched: false,
+        forecastSnapshots: null,
     };
 
     const RADAR_POLL_INTERVAL_MS = 30000;
@@ -271,6 +275,7 @@
         const hourKey = clock.toISOString().slice(0, 13);
         const idx = h.time.findIndex(t => t.slice(0, 13) === hourKey);
         if (idx < 0) return;
+        state.currentIsDay = h.is_day[idx];
         renderConditionIcon(h.weather_code[idx], h.is_day[idx]);
     }
 
@@ -294,6 +299,76 @@
         el.title = label;
     }
 
+    // ── Weather forecast widget (card 118) ───────────────────────────
+    // Captured live (Open-Meteo minutely_15) and indexed by the playback clock.
+    // Shows In 15'/30'/60'; if the condition is unchanged across the window,
+    // collapses to current + 60'. Rain probability shown for wet slots.
+    async function fetchForecast() {
+        if (state.forecastFetched) return;
+        state.forecastFetched = true;
+        const sess = new URLSearchParams(window.location.search).get('session');
+        if (!sess) return;
+        try {
+            const r = await fetch(`/api/v1/weather/forecast?session=${encodeURIComponent(sess)}`);
+            if (!r.ok) return;   // 204 = nothing captured
+            state.forecastSnapshots = (await r.json()).snapshots || [];
+            updateForecast();
+        } catch (e) { /* ignore */ }
+    }
+
+    function _snapshotAt(clockMs) {
+        const snaps = state.forecastSnapshots;
+        let best = null;
+        for (const s of snaps) {
+            if (Date.parse(s.captured) <= clockMs) best = s; else break;
+        }
+        return best || snaps[0];
+    }
+
+    function updateForecast() {
+        const el = document.getElementById('weatherForecast');
+        if (!el) return;
+        const clock = messageBus.clockTime;
+        const snaps = state.forecastSnapshots;
+        if (!clock || !snaps || !snaps.length) { el.classList.add('hidden'); return; }
+        const clockMs = clock.getTime();
+        const snap = _snapshotAt(clockMs);
+        if (!snap || !snap.time || !snap.time.length) { el.classList.add('hidden'); return; }
+        // Captured times are 15-min UTC strings without a 'Z' (timezone=UTC).
+        const times = snap.time.map(t => Date.parse(t + 'Z'));
+        let c = -1;
+        for (let i = 0; i < times.length; i++) { if (times[i] <= clockMs) c = i; else break; }
+        if (c < 0) { el.classList.add('hidden'); return; }
+
+        const isDay = state.currentIsDay !== 0 ? 1 : 0;
+        const slotAt = (steps) => {
+            const i = c + steps;
+            if (i >= snap.weather_code.length) return null;
+            const [key, label] = conditionFor(snap.weather_code[i], isDay);
+            const wet = key === 'rain' || key === 'thunder' || key === 'snow';
+            const prob = snap.precipitation_probability ? snap.precipitation_probability[i] : null;
+            return { key, label, wet, prob };
+        };
+        const now = slotAt(0), f15 = slotAt(1), f30 = slotAt(2), f60 = slotAt(4);
+        if (!now) { el.classList.add('hidden'); return; }
+
+        const same = (a, b) => a && b && a.key === b.key;
+        const unchanged = same(now, f15) && same(now, f30) && same(now, f60);
+        let slots = unchanged ? [['Now', now], ["60'", f60]]
+                              : [["15'", f15], ["30'", f30], ["60'", f60]];
+        slots = slots.filter(([, s]) => s);
+        if (!slots.length) { el.classList.add('hidden'); return; }
+
+        const rows = slots.map(([when, s]) =>
+            `<div class="wf-slot" title="${s.label}">` +
+            `<span class="wf-when">${when}</span>` +
+            `<span class="wf-icon">${CONDITION_ICONS[s.key]}</span>` +
+            (s.wet && s.prob != null ? `<span class="wf-rain">${s.prob}%</span>` : '') +
+            `</div>`).join('');
+        el.innerHTML = `<div class="wf-title">Weather Forecast</div><div class="wf-slots">${rows}</div>`;
+        el.classList.remove('hidden');
+    }
+
     // The icon is driven off the playback clock (`clock:update` fires
     // every tick), so it appears as soon as the clock and condition data
     // are both ready and tracks hour boundaries on replay/seek.
@@ -301,6 +376,8 @@
         if (!data || !data.time) return;
         fetchCondition(data.time.toISOString().slice(0, 10));
         updateConditionIcon();
+        fetchForecast();
+        updateForecast();
         // Drive the radar tile off the PLAYBACK clock (not wall-clock) so it
         // keeps pace at 1×–50×. Gate on clock delta to avoid refetching every
         // tick; force-fetch bypasses the real-time dry-skip throttle, and the
