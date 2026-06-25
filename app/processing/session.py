@@ -101,6 +101,7 @@ class SessionEngine:
         self._playback_task: Optional[asyncio.Task] = None
         self._raw_stream_task: Optional[asyncio.Task] = None
         self._duration_task: Optional[asyncio.Task] = None
+        self._rates_task: Optional[asyncio.Task] = None
         self._running = False
         # True once the live-mode initial "seek to live edge" has happened.
         # Subsequent clients (reloads, additional tabs) inherit the current
@@ -202,6 +203,11 @@ class SessionEngine:
         # current even while the clock is paused or rewound.
         if self._live or not self._preprocess_done.is_set():
             self._duration_task = asyncio.create_task(self._track_duration())
+
+        # Live download-rate emitter (card 20): data + audio bytes/s from file
+        # growth, broadcast to the status footer.
+        if self._live:
+            self._rates_task = asyncio.create_task(self._live_rates_loop())
 
     async def _scan_time_bounds(self) -> None:
         """Quick scan to find first and last timestamps from JSONL.
@@ -309,6 +315,13 @@ class SessionEngine:
             self._duration_task.cancel()
             try:
                 await self._duration_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._rates_task and not self._rates_task.done():
+            self._rates_task.cancel()
+            try:
+                await self._rates_task
             except asyncio.CancelledError:
                 pass
 
@@ -1048,6 +1061,40 @@ class SessionEngine:
             out.append({"start_utc": start_utc, "duration": dur})
         return out
 
+    async def _live_rates_loop(self) -> None:
+        """For a LIVE session, broadcast data + audio DOWNLOAD rates (bytes/s)
+        from live.jsonl / commentary.aac growth, for the status footer (card 20)."""
+        import time as _time
+        live = self._session_path / "live.jsonl"
+        audio = self._session_path / "commentary.aac"
+
+        def _size(p: Path) -> int:
+            try:
+                return p.stat().st_size if p.exists() else 0
+            except OSError:
+                return 0
+
+        last_d, last_a, last_t = _size(live), _size(audio), _time.monotonic()
+        while self._running:
+            try:
+                await asyncio.sleep(2.0)
+            except asyncio.CancelledError:
+                return
+            now = _time.monotonic()
+            dt = now - last_t
+            last_t = now
+            d, a = _size(live), _size(audio)
+            d_bps = max(0, d - last_d) / dt if dt > 0 else 0.0
+            a_bps = max(0, a - last_a) / dt if dt > 0 else 0.0
+            last_d, last_a = d, a
+            try:
+                await self._broadcast({
+                    "topic": "status:rates",
+                    "data": {"dataBps": d_bps, "audioBps": a_bps},
+                })
+            except Exception:
+                pass
+
     def _cache_bytes(self) -> int:
         """Total on-disk size of the session cache (live.jsonl + audio + radio),
         for the client status footer (card 20). Cheap stat-walk on connect."""
@@ -1074,11 +1121,35 @@ class SessionEngine:
         """
         if not self._audio_info:
             return None
+        info = dict(self._audio_info)
+        br = self._audio_bitrate_kbps()
+        if br:
+            info["bitrateKbps"] = br
         if live_capture.is_capturing_path(self._session_path):
             _, effective_start = live_capture.get_live_stream_position(self._session_path)
             if effective_start:
-                return {**self._audio_info, "start_utc": effective_start}
-        return self._audio_info
+                info["start_utc"] = effective_start
+        return info
+
+    def _audio_bitrate_kbps(self) -> Optional[int]:
+        """Encoded bitrate (kbps) of the commentary audio currently served, via
+        ffprobe — for the status footer's audio health indicator (card 20)."""
+        import subprocess
+        seg = self._session_path / "commentary.aac"
+        if not seg.exists() or seg.stat().st_size == 0:
+            rotated = sorted(self._session_path.glob("commentary.[0-9][0-9][0-9].aac"))
+            if not rotated:
+                return None
+            seg = rotated[-1]
+        try:
+            p = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=bit_rate",
+                 "-of", "default=noprint_wrappers=1:nokey=1", str(seg)],
+                capture_output=True, text=True, timeout=10)
+            br = int(p.stdout.strip() or 0)
+            return round(br / 1000) if br > 0 else None
+        except (subprocess.SubprocessError, ValueError, FileNotFoundError, OSError):
+            return None
 
 
 class SessionManager:
