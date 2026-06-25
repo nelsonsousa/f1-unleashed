@@ -18,8 +18,10 @@
     let radioClips = [];          // team radio (card 8): {num, tla, file, utc}
     const _radioSeen = new Set();
 
-    const RADIO_PLAY_SVG = '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-    const RADIO_ICON_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>';
+    // SVG sizing/colour comes from CSS (no presentational attrs on the markup).
+    const RADIO_PLAY_SVG = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+    const RADIO_STOP_SVG = '<svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>';
+    const RADIO_ICON_SVG = '<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>';
 
     // Epoch ms from an F1 Utc string (RCM ships without a 'Z'; radio with one).
     function _epochMs(ts) {
@@ -232,11 +234,14 @@
 
     function radioRow(clip) {
         const who = escapeHtml(clip.tla || clip.num || '');
+        const f = escapeHtml(clip.file);
+        // Order: audio icon · driver TLA · "Team radio" · play · stop.
         return `<div class="race-control-msg rc-radio">` +
-            `<span class="race-control-time">${toLocalTimeStr(clip.utc)}</span>` +
-            `<button class="rc-radio-play" data-radio="${escapeHtml(clip.file)}" title="Play team radio" aria-label="Play team radio">${RADIO_PLAY_SVG}</button>` +
-            `<span class="rc-radio-tag">${RADIO_ICON_SVG}<span class="rc-radio-tla">${who}</span></span>` +
+            `<span class="rc-radio-icon">${RADIO_ICON_SVG}</span>` +
+            `<span class="rc-radio-tla">${who}</span>` +
             `<span class="race-control-text">Team radio</span>` +
+            `<button class="rc-radio-play" data-radio="${f}" title="Play team radio" aria-label="Play team radio">${RADIO_PLAY_SVG}</button>` +
+            `<button class="rc-radio-stop" data-radio="${f}" title="Stop team radio" aria-label="Stop team radio">${RADIO_STOP_SVG}</button>` +
             `</div>`;
     }
 
@@ -296,11 +301,15 @@
     }
 
     document.addEventListener('click', (e) => {
-        // Team-radio play button → delegate to the shared player (header.js).
+        // Team-radio play/stop buttons → delegate to the shared player (header.js).
         const play = e.target.closest('.rc-radio-play');
         if (play) {
             const file = play.dataset.radio;
             if (file && typeof window.playTeamRadio === 'function') window.playTeamRadio(file);
+            return;
+        }
+        if (e.target.closest('.rc-radio-stop')) {
+            if (typeof window.stopTeamRadio === 'function') window.stopTeamRadio();
             return;
         }
         const btn = e.target.closest('#rcTabs .rc-tab');
