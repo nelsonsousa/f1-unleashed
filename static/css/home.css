@@ -718,6 +718,19 @@ header {
     top: 50%;
     transform: translateY(-50%);
 }
+/* Help / documentation icon — left edge of the footer. */
+.footer-help {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-secondary);
+    border: none;
+}
+.footer-help:hover { color: var(--accent); }
+.footer-help svg { width: 20px; height: 20px; fill: currentColor; }
 .page-footer a {
     color: var(--text-secondary);
     text-decoration: none;

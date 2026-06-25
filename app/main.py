@@ -443,6 +443,20 @@ def root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+@app.get("/help")
+def help_page(request: Request):
+    """Render DOCUMENTATION.md as a styled HTML page (card 119)."""
+    import markdown as _md
+    try:
+        text = Path("DOCUMENTATION.md").read_text(encoding="utf-8")
+        content = _md.markdown(
+            text, extensions=["tables", "fenced_code", "toc", "sane_lists"])
+    except OSError:
+        content = "<p>Documentation not found.</p>"
+    return templates.TemplateResponse(
+        "help.html", {"request": request, "content": content})
+
+
 @app.get("/api/v1/version")
 def version_info():
     """Running app version + latest GitHub release (for the update indicator)."""
