@@ -190,6 +190,13 @@
                 return out;
             },
             /** MSE mime for the SourceBuffer. */
+            /** Re-anchor the OUTPUT timeline to `timeSec` — the next emitted
+             *  segment's baseMediaDecodeTime starts here (for windowed seeking).
+             *  The init segment is unchanged (already sent); drops any partial frame. */
+            reset: function (timeSec) {
+                baseSamples = Math.round(timeSec * (cfg ? cfg.sampleRate : 48000));
+                leftover = new Uint8Array(0);
+            },
             mime: 'audio/mp4; codecs="mp4a.40.2"',
             /** Whole frames consumed so far → seconds (for diagnostics). */
             seconds: function () { return cfg ? baseSamples / cfg.sampleRate : 0; },

@@ -63,6 +63,7 @@
             decoupled: false,        // when true, syncAudio is suppressed; user controls audio
             seekOffset: 0,           // server-side ?t= seek position (s); added to currentTime when computing displayed-time
             mse: false,              // true → audio is an MSE SourceBuffer (seekable; never ?t=-reload)
+            mseSeek: null,           // fn(targetSec): re-window the SourceBuffer around a far seek
         },
 
         // Animation
@@ -664,6 +665,7 @@
         // byte estimate). Fallback (no MSE/codec): the legacy stream URL, which
         // the server still serves chunked (live) / range (replay).
         state.audio.mse = mseAudioSupported();
+        state.audio.mseSeek = null;
         if (state.audio.mse) startMseAudio(audio, audioUrl);
         else audio.src = audioUrl;
 
@@ -685,11 +687,12 @@
         } catch (e) { return false; }
     }
 
-    // Range-fetch the commentary .aac, transmux ADTS→fMP4 in-browser, and feed an
-    // MSE SourceBuffer — so live audio is a natively-seekable growing file, just
-    // like a replay. Live: poll the endpoint for growth; replay: pull to EOF then
-    // finalise. The rest of the audio path (alignAudioToClock / syncAudio) then
-    // uses native currentTime seeking, no chunked ?t= reloads.
+    // Range-fetch the .aac, transmux ADTS→fMP4 in-browser, and feed an MSE
+    // SourceBuffer — live and replay alike (one uniform loop). The SourceBuffer
+    // is a WINDOW around the play head (Firefox caps audio at ~12 min): we evict
+    // behind, and on a seek OUTSIDE the window we re-anchor the muxer to the
+    // target time and re-fetch from the byte offset for it (state.audio.mseSeek,
+    // called by alignAudioToClock). Native currentTime handles in-window seeks.
     function startMseAudio(audio, audioUrl) {
         const url = audioUrl + (audioUrl.indexOf('?') >= 0 ? '&' : '?') + 'seekable=1';
         const ms = new MediaSource();
@@ -698,27 +701,47 @@
             ms.removeEventListener('sourceopen', onOpen);
             let sb;
             try { sb = ms.addSourceBuffer(MSE_MIME); }
-            catch (e) { adbg('MSE addSourceBuffer failed — fallback to stream URL', e); state.audio.mse = false; audio.src = audioUrl; return; }
+            catch (e) { adbg('MSE addSourceBuffer failed — fallback to stream URL', e); state.audio.mse = false; state.audio.mseSeek = null; audio.src = audioUrl; return; }
             const mux = AacFmp4.create();
             const queue = [];
-            let fetched = 0;
+            const WINDOW = 4 * 1024 * 1024;     // fetch chunk size (bytes)
+            const KEEP_BEHIND = 120;            // evict audio older than this behind the play head (s)
+            let fetched = 0;                    // file byte offset fetched up to
+            let bps = 0;                        // avg bytes/s, for time→byte on a re-window seek
+            let anchored = true;                // sequential from byte 0 (bps still calibrating)
+            let seekTo = null;                  // pending re-window target (s), serviced when sb is idle
+            let pollTimer = null;
 
-            function pump() {
-                if (sb.updating || !queue.length) return;
-                try {
-                    sb.appendBuffer(queue[0]);
-                    queue.shift();                                  // append started OK
-                } catch (e) {
-                    if (e && e.name === 'QuotaExceededError') {     // evict ~10 min behind the play head, then retry
-                        const bl = sb.buffered.length;
-                        adbg('MSE QuotaExceeded — buffered', bl ? sb.buffered.start(0).toFixed(1) + '-' + sb.buffered.end(bl - 1).toFixed(1) : 'none', 'playhead', audio.currentTime.toFixed(1));
-                        const keepFrom = Math.max(0, audio.currentTime - 600);
-                        try { if (sb.buffered.length && sb.buffered.start(0) < keepFrom) sb.remove(sb.buffered.start(0), keepFrom); } catch (_) {}
-                    } else { adbg('appendBuffer error', e); queue.shift(); }
+            function kickPoll() { if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; } poll(); }
+
+            // Append the next segment, or service a pending re-window, when sb is idle.
+            function onIdle() {
+                if (!sb || sb.updating) return;
+                if (seekTo != null) {
+                    if (sb.buffered.length) {                       // clear the old window first (async)
+                        try { sb.remove(sb.buffered.start(0), sb.buffered.end(sb.buffered.length - 1) + 1); } catch (_) {}
+                        return;                                     // updateend → onIdle again
+                    }
+                    const t = seekTo; seekTo = null;                // cleared → re-anchor muxer + re-fetch at target
+                    mux.reset(t);
+                    fetched = bps > 0 ? Math.max(0, Math.round(t * bps)) : 0;
+                    queue.length = 0;
+                    adbg('MSE re-window → t', t.toFixed(1), 'byte', fetched);
+                    kickPoll();
+                    return;
+                }
+                if (queue.length) {
+                    try { sb.appendBuffer(queue[0]); queue.shift(); }
+                    catch (e) {
+                        if (e && e.name === 'QuotaExceededError') { // evict behind the play head, retry on updateend
+                            const keep = Math.max(0, audio.currentTime - KEEP_BEHIND);
+                            try { if (sb.buffered.length && sb.buffered.start(0) < keep) sb.remove(sb.buffered.start(0), keep); } catch (_) {}
+                        } else { adbg('MSE append error', e); queue.shift(); }
+                    }
                 }
             }
-            sb.addEventListener('updateend', pump);
-            sb.addEventListener('error', () => adbg('MSE SourceBuffer "error" event — a segment was rejected'));
+            sb.addEventListener('updateend', onIdle);
+            sb.addEventListener('error', () => adbg('MSE SourceBuffer "error" event'));
             audio.addEventListener('error', () => adbg('MSE audio element error, code', audio.error && audio.error.code));
             adbg('MSE SourceBuffer created for', MSE_MIME);
 
@@ -728,14 +751,13 @@
                     const segs = mux.append(bytes.subarray(o, Math.min(o + CH, bytes.length)));
                     for (let i = 0; i < segs.length; i++) queue.push(segs[i]);
                 }
-                pump();
+                if (anchored && mux.seconds() > 5) bps = fetched / mux.seconds();   // calibrate time→byte
+                onIdle();
             }
 
             // One uniform loop for live AND replay: pull bytes in bounded windows
-            // from the current EOF (incremental → playback can start before the
-            // whole file is fetched), catch up fast, then idle-poll for growth. A
-            // live file keeps growing; a replay simply stops — same code, no branch.
-            const WINDOW = 4 * 1024 * 1024;
+            // from the current fetch offset; catch up fast, then idle-poll for
+            // growth (a live file grows; a replay just returns 416 — same code).
             async function poll() {
                 let again = 3000;
                 try {
@@ -743,12 +765,21 @@
                     if (resp.status === 206 || resp.status === 200) {
                         const buf = new Uint8Array(await resp.arrayBuffer());
                         if (buf.length) { feed(buf); fetched += buf.length; }
-                        if (buf.length >= WINDOW) again = 0;        // full window → more to pull, catch up now
+                        if (buf.length >= WINDOW) again = 0;        // full window → keep pulling
                     }
-                    // 416 = nothing past EOF yet → idle-poll for growth.
                 } catch (e) { adbg('MSE fetch error', e); }
-                setTimeout(poll, again);
+                pollTimer = setTimeout(poll, again);
             }
+
+            // alignAudioToClock calls this on a seek whose target isn't buffered:
+            // re-window the SourceBuffer around the target time.
+            state.audio.mseSeek = function (targetSec) {
+                if (bps <= 0) return;                               // not calibrated yet → stay in the initial window
+                anchored = false;
+                seekTo = targetSec;
+                onIdle();
+            };
+
             poll();
         });
     }
@@ -817,11 +848,14 @@
             // exactly, NO deadband (small skips must not be lost). Continuous-drift
             // thrash protection lives in syncAudio, not here. Native seek is cheap.
             if (Math.abs(audio.currentTime - targetSec) > 0.1) {
-                const bl = audio.buffered.length;
-                adbg('align: SEEK', audio.currentTime.toFixed(2), '→', targetSec.toFixed(2),
-                     '| buffered', bl ? audio.buffered.start(0).toFixed(1) + '-' + audio.buffered.end(bl - 1).toFixed(1) : 'none',
-                     '| dur', audio.duration, '| targetBuffered', targetWithinBuffered(audio, targetSec));
+                adbg('align: SEEK', audio.currentTime.toFixed(2), '→', targetSec.toFixed(2));
                 audio.currentTime = targetSec;
+            }
+            // MSE window: if the target isn't buffered, re-window around it (the
+            // SourceBuffer only holds ~12 min; far seeks fall outside it).
+            if (state.audio.mse && state.audio.mseSeek && !targetWithinBuffered(audio, targetSec)) {
+                adbg('align: target unbuffered → MSE re-window', targetSec.toFixed(1));
+                state.audio.mseSeek(targetSec);
             }
             return;
         }
