@@ -619,7 +619,7 @@
         // Single endpoint — server decides whether to tail-follow (capture
         // in progress) or serve the static file with range support.
         const audioUrl = `/api/v1/livetiming/audio/${encodeURIComponent(sessionName)}`;
-        const audio = new Audio(audioUrl);
+        const audio = new Audio();
         audio.preload = 'auto';
         audio.loop = false;
         state.audio.element = audio;
@@ -657,15 +657,90 @@
         const slider = document.getElementById('volumeSlider');
         if (slider) slider.value = String(Math.round(state.audio.volume * 100));
 
-        // Once we have an initial clock position, align the audio with
-        // the data clock so they start together. Required for non-
-        // seekable chunked streams (multi-segment replays) where the
-        // browser can't seek natively — we ask the server to start the
-        // stream from the right byte via ?t=.
+        // Source. Preferred: MSE — range-fetch the .aac, transmux ADTS→fMP4
+        // in-browser, feed a SourceBuffer (Route A). This makes LIVE audio
+        // natively seekable EXACTLY like replay (no chunked stream, no ?t=
+        // byte estimate). Fallback (no MSE/codec): the legacy stream URL, which
+        // the server still serves chunked (live) / range (replay).
+        if (mseAudioSupported()) startMseAudio(audio, audioUrl);
+        else audio.src = audioUrl;
+
+        // Once we have an initial clock position, align the audio with the data
+        // clock so they start together (native seek on the seekable buffer).
         audio.addEventListener('loadedmetadata', alignAudioToClock, { once: true });
         // Also try once we have a confirmed clock; loadedmetadata may
         // not fire reliably on chunked transfer.
         setTimeout(alignAudioToClock, 500);
+    }
+
+    // ── MSE audio (Route A: client transmux) ─────────────────────────────
+    const MSE_MIME = 'audio/mp4; codecs="mp4a.40.2"';
+    function mseAudioSupported() {
+        try {
+            return typeof MediaSource !== 'undefined'
+                && MediaSource.isTypeSupported(MSE_MIME)
+                && typeof AacFmp4 !== 'undefined' && !!AacFmp4;
+        } catch (e) { return false; }
+    }
+
+    // Range-fetch the commentary .aac, transmux ADTS→fMP4 in-browser, and feed an
+    // MSE SourceBuffer — so live audio is a natively-seekable growing file, just
+    // like a replay. Live: poll the endpoint for growth; replay: pull to EOF then
+    // finalise. The rest of the audio path (alignAudioToClock / syncAudio) then
+    // uses native currentTime seeking, no chunked ?t= reloads.
+    function startMseAudio(audio, audioUrl) {
+        const url = audioUrl + (audioUrl.indexOf('?') >= 0 ? '&' : '?') + 'seekable=1';
+        const ms = new MediaSource();
+        audio.src = URL.createObjectURL(ms);
+        ms.addEventListener('sourceopen', function onOpen() {
+            ms.removeEventListener('sourceopen', onOpen);
+            let sb;
+            try { sb = ms.addSourceBuffer(MSE_MIME); }
+            catch (e) { adbg('MSE addSourceBuffer failed — fallback to stream URL', e); audio.src = audioUrl; return; }
+            const mux = AacFmp4.create();
+            const queue = [];
+            let fetched = 0;
+
+            function pump() {
+                if (sb.updating || !queue.length) return;
+                try {
+                    sb.appendBuffer(queue[0]);
+                    queue.shift();                                  // append started OK
+                } catch (e) {
+                    if (e && e.name === 'QuotaExceededError') {     // evict ~10 min behind the play head, then retry
+                        const keepFrom = Math.max(0, audio.currentTime - 600);
+                        try { if (sb.buffered.length && sb.buffered.start(0) < keepFrom) sb.remove(sb.buffered.start(0), keepFrom); } catch (_) {}
+                    } else { adbg('appendBuffer error', e); queue.shift(); }
+                }
+            }
+            sb.addEventListener('updateend', pump);
+
+            function feed(bytes) {
+                const CH = 256 * 1024;                              // bound each fMP4 segment's size
+                for (let o = 0; o < bytes.length; o += CH) {
+                    const segs = mux.append(bytes.subarray(o, Math.min(o + CH, bytes.length)));
+                    for (let i = 0; i < segs.length; i++) queue.push(segs[i]);
+                }
+                pump();
+            }
+
+            // One uniform loop for live AND replay: pull new bytes from the
+            // current EOF, catch up fast, then idle-poll for growth. A live file
+            // keeps growing; a replay simply stops — same code, no live branch.
+            async function poll() {
+                let gotData = false;
+                try {
+                    const resp = await fetch(url, { headers: { Range: 'bytes=' + fetched + '-' } });
+                    if (resp.status === 206 || resp.status === 200) {
+                        const buf = new Uint8Array(await resp.arrayBuffer());
+                        if (buf.length) { feed(buf); fetched += buf.length; gotData = true; }
+                    }
+                    // 416 = nothing past EOF yet → idle-poll.
+                } catch (e) { adbg('MSE fetch error', e); }
+                setTimeout(poll, gotData ? 250 : 3000);
+            }
+            poll();
+        });
     }
 
     // Debug: enable with  localStorage.setItem('audioSyncDebug','1')  then reload.
