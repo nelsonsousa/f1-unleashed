@@ -710,6 +710,8 @@
                     queue.shift();                                  // append started OK
                 } catch (e) {
                     if (e && e.name === 'QuotaExceededError') {     // evict ~10 min behind the play head, then retry
+                        const bl = sb.buffered.length;
+                        adbg('MSE QuotaExceeded — buffered', bl ? sb.buffered.start(0).toFixed(1) + '-' + sb.buffered.end(bl - 1).toFixed(1) : 'none', 'playhead', audio.currentTime.toFixed(1));
                         const keepFrom = Math.max(0, audio.currentTime - 600);
                         try { if (sb.buffered.length && sb.buffered.start(0) < keepFrom) sb.remove(sb.buffered.start(0), keepFrom); } catch (_) {}
                     } else { adbg('appendBuffer error', e); queue.shift(); }
@@ -784,6 +786,14 @@
     // started LATER than the data feed — common on long pre-shows),
     // pause the audio entirely so it doesn't race ahead. We'll re-fire
     // alignAudioToClock when the data clock catches up.
+    // Diagnostic: is time `t` inside any buffered range of the element?
+    function targetWithinBuffered(audio, t) {
+        for (let i = 0; i < audio.buffered.length; i++) {
+            if (t >= audio.buffered.start(i) - 0.1 && t <= audio.buffered.end(i) + 0.1) return true;
+        }
+        return false;
+    }
+
     function alignAudioToClock() {
         const audio = state.audio.element;
         if (!audio || !state.audio.startUtc || !messageBus.clockTime) {
@@ -807,7 +817,10 @@
             // exactly, NO deadband (small skips must not be lost). Continuous-drift
             // thrash protection lives in syncAudio, not here. Native seek is cheap.
             if (Math.abs(audio.currentTime - targetSec) > 0.1) {
-                adbg('align: SEEK', audio.currentTime.toFixed(2), '→', targetSec.toFixed(2));
+                const bl = audio.buffered.length;
+                adbg('align: SEEK', audio.currentTime.toFixed(2), '→', targetSec.toFixed(2),
+                     '| buffered', bl ? audio.buffered.start(0).toFixed(1) + '-' + audio.buffered.end(bl - 1).toFixed(1) : 'none',
+                     '| dur', audio.duration, '| targetBuffered', targetWithinBuffered(audio, targetSec));
                 audio.currentTime = targetSec;
             }
             return;
