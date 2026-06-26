@@ -137,16 +137,16 @@ class PdtTracker(threading.Thread):
 
     # ─── Observation + persistence ────────────────────────────────
 
-    # Last audio_seconds we wrote the anchor for. Used to avoid
-    # rewriting audio_info.json:start_utc between ffmpeg bursts:
-    # edge_pdt advances at 1× wall-clock but the file's duration is
-    # only refreshed when ffmpeg appends a new HLS burst (every
-    # 15-30 s). Recomputing `anchor = edge_pdt − audio_seconds`
-    # between bursts gives a forward-drifting anchor — server's
-    # `?t=N` then maps to a too-late byte, audio plays ahead of data.
-    # By updating only when audio_seconds CHANGES, the anchor sits
-    # at the "fresh duration" reading right after each burst.
-    _last_recorded_audio_seconds: float = -1.0
+    # The byte-0 broadcast-UTC anchor is CONSTANT for this ffmpeg run, but
+    # `anchor = edge_pdt − audio_seconds` jitters ±15-30 s: edge_pdt advances
+    # every poll while ffprobe's audio_seconds only steps when ffmpeg appends a
+    # new HLS burst (~30 s), so the implied anchor sawtooths. Writing the value
+    # right after each burst (the previous behaviour) caught the sawtooth TROUGH
+    # — ~20-30 s too early → audio lagged the data by that much (validated live).
+    # The sawtooth PEAK is the true anchor (peak → ~1-2 s residual), so lock onto
+    # the running MAX and never regress to a trough. Resets naturally on ffmpeg
+    # restart (a fresh PdtTracker instance).
+    _anchor_max: "Optional[datetime]" = None
 
     def _record_observation(self, edge_pdt: datetime, audio_seconds: float) -> None:
         """Append to pdt_map.jsonl and rewrite audio_info.json start_utc."""
@@ -171,14 +171,12 @@ class PdtTracker(threading.Thread):
             logger.warning(f"PdtTracker: pdt_map.jsonl write failed: {e}")
             return
 
-        # Skip rewriting audio_info.json when ffmpeg hasn't written
-        # new bytes since the last anchor. Between bursts, audio_seconds
-        # is stale but edge_pdt has advanced — recomputing the anchor
-        # would drift it forward by the inter-burst gap, and the server's
-        # `?t=N` byterate calculation would then map to a too-late byte.
-        if audio_seconds <= self._last_recorded_audio_seconds:
+        # Only write a NEW PEAK anchor — the running max stabilises on the true
+        # byte-0 broadcast time and ignores the sawtooth troughs (which are
+        # ~20-30 s too early and made audio lag). See the _anchor_max note above.
+        if self._anchor_max is not None and anchor <= self._anchor_max:
             return
-        self._last_recorded_audio_seconds = audio_seconds
+        self._anchor_max = anchor
 
         # Rewrite audio_info.json's start_utc so a page refresh picks up
         # the freshest anchor. Preserve other fields (url, file).
