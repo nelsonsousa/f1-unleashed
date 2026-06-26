@@ -62,6 +62,7 @@
             offsetSeconds: 0,        // user-tunable shift (positive → audio plays later)
             decoupled: false,        // when true, syncAudio is suppressed; user controls audio
             seekOffset: 0,           // server-side ?t= seek position (s); added to currentTime when computing displayed-time
+            mse: false,              // true → audio is an MSE SourceBuffer (seekable; never ?t=-reload)
         },
 
         // Animation
@@ -662,7 +663,8 @@
         // natively seekable EXACTLY like replay (no chunked stream, no ?t=
         // byte estimate). Fallback (no MSE/codec): the legacy stream URL, which
         // the server still serves chunked (live) / range (replay).
-        if (mseAudioSupported()) startMseAudio(audio, audioUrl);
+        state.audio.mse = mseAudioSupported();
+        if (state.audio.mse) startMseAudio(audio, audioUrl);
         else audio.src = audioUrl;
 
         // Once we have an initial clock position, align the audio with the data
@@ -696,7 +698,7 @@
             ms.removeEventListener('sourceopen', onOpen);
             let sb;
             try { sb = ms.addSourceBuffer(MSE_MIME); }
-            catch (e) { adbg('MSE addSourceBuffer failed — fallback to stream URL', e); audio.src = audioUrl; return; }
+            catch (e) { adbg('MSE addSourceBuffer failed — fallback to stream URL', e); state.audio.mse = false; audio.src = audioUrl; return; }
             const mux = AacFmp4.create();
             const queue = [];
             let fetched = 0;
@@ -852,6 +854,11 @@
     function reloadAudioAtOffset(targetSec) {
         const audio = state.audio.element;
         if (!audio) return;
+        // MSE audio IS its own seekable source — replacing audio.src with a ?t=
+        // reload would detach the MediaSource and make the SourceBuffer unusable
+        // (NotSupportedError). Native currentTime seeking handles MSE; if it's
+        // not seekable yet, just wait for the buffer.
+        if (state.audio.mse) { adbg('reload skipped — MSE source'); return; }
         const intTarget = Math.floor(targetSec);
         // Two debounces:
         //   (a) Skip if same offset (= < 2 s drift since last reload).
