@@ -111,7 +111,11 @@
         var minf = box('minf', smhd, dinf, stblBox(cfg));
         var mdia = box('mdia', mdhd, hdlr, minf);
         var trak = box('trak', tkhd, mdia);
-        var trex = box('trex', u32(0), u32(1), u32(1), u32(0), u32(0), u32(0));
+        // default_sample_flags 0x02000000 = sample_depends_on=2 (independent) →
+        // every audio sample is a sync/random-access point. MSE needs a sync
+        // sample to begin decoding; without this Firefox rejects with
+        // NotSupportedError (ffmpeg decodes it anyway, hence the divergence).
+        var trex = box('trex', u32(0), u32(1), u32(1), u32(0), u32(0), u32(0x02000000));
         var mvex = box('mvex', trex);
         var moov = box('moov', mvhd, trak, mvex);
         return new Uint8Array(ftyp.concat(moov));
