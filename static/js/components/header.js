@@ -687,12 +687,13 @@
         } catch (e) { return false; }
     }
 
-    // Range-fetch the .aac, transmux ADTS→fMP4 in-browser, and feed an MSE
-    // SourceBuffer — live and replay alike (one uniform loop). The SourceBuffer
-    // is a WINDOW around the play head (Firefox caps audio at ~12 min): we evict
-    // behind, and on a seek OUTSIDE the window we re-anchor the muxer to the
-    // target time and re-fetch from the byte offset for it (state.audio.mseSeek,
-    // called by alignAudioToClock). Native currentTime handles in-window seeks.
+    // Range-fetch the .aac, transmux ADTS→fMP4 in-browser, feed an MSE
+    // SourceBuffer — live and replay alike (one uniform loop). The muxer keeps an
+    // EXACT frame index (AAC-LC = fixed 1024 samples/frame), so any seek lands on
+    // the exact frame. The SourceBuffer is a WINDOW around the play head (Firefox
+    // caps audio at ~12 min); a reconciling state machine clears/evicts/extends it
+    // toward [wantFrom, wantTo). The fetch only builds the index (raw + offsets);
+    // segments are cut from the in-memory bytes on demand — no re-fetch on seek.
     function startMseAudio(audio, audioUrl) {
         const url = audioUrl + (audioUrl.indexOf('?') >= 0 ? '&' : '?') + 'seekable=1';
         const ms = new MediaSource();
@@ -703,82 +704,78 @@
             try { sb = ms.addSourceBuffer(MSE_MIME); }
             catch (e) { adbg('MSE addSourceBuffer failed — fallback to stream URL', e); state.audio.mse = false; state.audio.mseSeek = null; audio.src = audioUrl; return; }
             const mux = AacFmp4.create();
-            const queue = [];
-            const WINDOW = 4 * 1024 * 1024;     // fetch chunk size (bytes)
-            const KEEP_BEHIND = 120;            // evict audio older than this behind the play head (s)
-            let fetched = 0;                    // file byte offset fetched up to
-            let bps = 0;                        // avg bytes/s, for time→byte on a re-window seek
-            let anchored = true;                // sequential from byte 0 (bps still calibrating)
-            let seekTo = null;                  // pending re-window target (s), serviced when sb is idle
-            let pollTimer = null;
+            const FETCH = 4 * 1024 * 1024;      // fetch chunk size (bytes)
+            const AHEAD_S = 300, BEHIND_S = 45; // SourceBuffer window around the play head (s); < Firefox ~12-min cap
+            const SEG_FRAMES = 1024;            // frames per appended segment (~22 s)
+            let fetched = 0, pollTimer = null, initDone = false;
+            let haveFrom = 0, haveTo = 0;       // appended frame range [haveFrom, haveTo) (empty when equal)
+            let wantFrom = 0, wantTo = 0, rebuildAt = 0, clearing = false;
 
-            function kickPoll() { if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; } poll(); }
+            function framesPer(sec) { return Math.round(sec * mux.sampleRate() / 1024); }
 
-            // Append the next segment, or service a pending re-window, when sb is idle.
-            function onIdle() {
-                if (!sb || sb.updating) return;
-                if (seekTo != null) {
-                    if (sb.buffered.length) {                       // clear the old window first (async)
-                        try { sb.remove(sb.buffered.start(0), sb.buffered.end(sb.buffered.length - 1) + 1); } catch (_) {}
-                        return;                                     // updateend → onIdle again
-                    }
-                    const t = seekTo; seekTo = null;                // cleared → re-anchor muxer + re-fetch at target
-                    mux.reset(t);
-                    fetched = bps > 0 ? Math.max(0, Math.round(t * bps)) : 0;
-                    queue.length = 0;
-                    adbg('MSE re-window → t', t.toFixed(1), 'byte', fetched);
-                    kickPoll();
+            // Reconcile the SourceBuffer toward [wantFrom, wantTo): ONE async op per
+            // call (clear → init → evict-behind → extend-forward), repeated on each
+            // updateend until settled.
+            function reconcile() {
+                if (!sb || sb.updating || !mux.ready()) return;
+                if (clearing) {
+                    if (sb.buffered.length) { try { sb.remove(sb.buffered.start(0), sb.buffered.end(sb.buffered.length - 1) + 1); } catch (_) {} return; }
+                    clearing = false; haveFrom = haveTo = rebuildAt;          // cleared → window starts at the target frame
+                }
+                if (!initDone) { try { sb.appendBuffer(mux.init()); initDone = true; } catch (e) { adbg('MSE init append err', e); } return; }
+                if (wantFrom > haveFrom && sb.buffered.length) {              // evict behind
+                    try { sb.remove(0, mux.frameTime(wantFrom)); haveFrom = wantFrom; } catch (_) {}
                     return;
                 }
-                if (queue.length) {
-                    try { sb.appendBuffer(queue[0]); queue.shift(); }
-                    catch (e) {
-                        if (e && e.name === 'QuotaExceededError') { // evict behind the play head, retry on updateend
-                            const keep = Math.max(0, audio.currentTime - KEEP_BEHIND);
-                            try { if (sb.buffered.length && sb.buffered.start(0) < keep) sb.remove(sb.buffered.start(0), keep); } catch (_) {}
-                        } else { adbg('MSE append error', e); queue.shift(); }
-                    }
+                const target = Math.min(wantTo, mux.frameCount());           // only append fetched frames
+                if (target > haveTo) {                                       // extend forward (one segment, exact time)
+                    const i1 = Math.min(haveTo + SEG_FRAMES, target);
+                    try { sb.appendBuffer(mux.segment(haveTo, i1)); haveTo = i1; }
+                    catch (e) { if (!(e && e.name === 'QuotaExceededError')) adbg('MSE seg append err', e); }
                 }
             }
-            sb.addEventListener('updateend', onIdle);
+            sb.addEventListener('updateend', reconcile);
             sb.addEventListener('error', () => adbg('MSE SourceBuffer "error" event'));
             audio.addEventListener('error', () => adbg('MSE audio element error, code', audio.error && audio.error.code));
             adbg('MSE SourceBuffer created for', MSE_MIME);
 
-            function feed(bytes) {
-                const CH = 256 * 1024;                              // bound each fMP4 segment's size
-                for (let o = 0; o < bytes.length; o += CH) {
-                    const segs = mux.append(bytes.subarray(o, Math.min(o + CH, bytes.length)));
-                    for (let i = 0; i < segs.length; i++) queue.push(segs[i]);
+            // Aim the window at `centerSec`. Play head outside the buffered range →
+            // clear + rebuild starting at the EXACT target frame; else evict behind
+            // + extend forward. Idempotent — safe to call often (fetch / timeupdate / seek).
+            function setWindow(centerSec) {
+                if (!mux.ready()) return;
+                const i = mux.frameAt(centerSec);
+                const lo = Math.max(0, i - framesPer(BEHIND_S)), hi = i + framesPer(AHEAD_S);
+                const empty = (haveFrom === haveTo);
+                if (!empty && (i < haveFrom || i > haveTo)) {                // disjoint → rebuild at the target frame
+                    clearing = true; rebuildAt = i;
+                } else if (empty) {
+                    haveFrom = haveTo = i;
                 }
-                if (anchored && mux.seconds() > 5) bps = fetched / mux.seconds();   // calibrate time→byte
-                onIdle();
+                wantFrom = lo; wantTo = hi;
+                reconcile();
             }
 
-            // One uniform loop for live AND replay: pull bytes in bounded windows
-            // from the current fetch offset; catch up fast, then idle-poll for
-            // growth (a live file grows; a replay just returns 416 — same code).
+            // One uniform loop for live AND replay: pull bytes from the fetch
+            // offset, index them (mux.feed), catch up fast, then idle-poll for
+            // growth (a live file grows; a replay returns 416 — same code).
             async function poll() {
                 let again = 3000;
                 try {
-                    const resp = await fetch(url, { headers: { Range: 'bytes=' + fetched + '-' + (fetched + WINDOW - 1) } });
+                    const resp = await fetch(url, { headers: { Range: 'bytes=' + fetched + '-' + (fetched + FETCH - 1) } });
                     if (resp.status === 206 || resp.status === 200) {
                         const buf = new Uint8Array(await resp.arrayBuffer());
-                        if (buf.length) { feed(buf); fetched += buf.length; }
-                        if (buf.length >= WINDOW) again = 0;        // full window → keep pulling
+                        if (buf.length) { mux.feed(buf); fetched += buf.length; }
+                        if (buf.length >= FETCH) again = 0;
+                        setWindow(audio.currentTime);                        // extend with newly-indexed frames
                     }
                 } catch (e) { adbg('MSE fetch error', e); }
                 pollTimer = setTimeout(poll, again);
             }
 
-            // alignAudioToClock calls this on a seek whose target isn't buffered:
-            // re-window the SourceBuffer around the target time.
-            state.audio.mseSeek = function (targetSec) {
-                if (bps <= 0) return;                               // not calibrated yet → stay in the initial window
-                anchored = false;
-                seekTo = targetSec;
-                onIdle();
-            };
+            // Re-window on a seek (lands on the exact frame); also extend during playback.
+            state.audio.mseSeek = function (targetSec) { setWindow(targetSec); };
+            audio.addEventListener('timeupdate', () => setWindow(audio.currentTime));
 
             poll();
         });
