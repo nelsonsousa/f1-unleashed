@@ -58,65 +58,55 @@
     const LUMA_THRESHOLD = 140;                     // light text → dark on white
     const WHITE_THR = 165;                          // near-white caption isolation (wide sweep)
 
-    // Sampling strategy: on start we OCR back-to-back ("acquire") to catch the
-    // exact frame the TV clock ticks; once found we lock to 1 Hz, sampling just
-    // after each expected tick (LOCK_OFFSET_MS later) and assuming the TV keeps
-    // ticking in step. An unexpected read or a coarse jump drops back to acquire.
-    const LOCK_OFFSET_MS = 150;
-    // Re-verify the tick phase about once a minute with a short burst (in case it
-    // has drifted). The element returning after a dropout also forces a re-check.
-    const RECHECK_INTERVAL_MS = 60000;
+    // P/Q sync cadence + tick-phase pinning. On (re)locate we burst back-to-back on
+    // a TIGHT crop of the clock (cached bbox → cheap OCR) to pin the exact tick
+    // instant (~0.1 s), then sample once per second just AFTER each predicted tick.
+    // Once in sync we relax to every 5 s. On desync we drop back to 1 s.
+    const ACTIVE_INTERVAL_MS = 1000;    // 1 s cadence while searching / correcting
+    const SYNCED_INTERVAL_MS = 5000;    // relaxed cadence once in sync
+    const PIN_BURST_MS = 1200;          // burst this long to catch a 1 s tick edge
+    const PIN_OFFSET_MS = 120;          // sample this far after the predicted tick
+    const RELOCATE_AFTER = 4;           // tight-crop misses in a row → wide re-locate
 
-    // Within INSYNC_S we treat it as synced and DON'T re-sync; beyond that we seek
-    // the data+audio straight to the TV's position — backward or forward.
-    const INSYNC_S = 0.5;
+    // Within INSYNC_S we treat it as synced and do NOTHING; beyond it we correct,
+    // but only TO within CORRECT_TARGET_S (tighter) so we don't pause/seek-thrash
+    // around the 1 s boundary (detect loose, correct tight).
+    const INSYNC_S = 1.0;
+    const CORRECT_TARGET_S = 0.3;
     // The server takes a moment to fetch the exact instant, so seeks land a touch
-    // short. Bias ENTER / "+" jumps this far AHEAD of the requested instant
-    // (manual "−" pause/play and the scrubber are unaffected).
+    // short. Bias ENTER / "+" jumps this far AHEAD (manual "−" / scrubber unaffected).
     const LAG_COMP_S = 0.5;
 
-    // Robustness: the synced element (session clock / lap counter) isn't always
-    // on screen — commercials, replays — and OCR can misread. We reject reads
-    // that don't track our locked countdown and ASSUME WE STAY IN SYNC until the
-    // real element returns (never seek on its absence). We only re-acquire when
-    // the off-reads form their OWN steady countdown for REACQUIRE_AFTER samples
-    // (a genuine new clock, e.g. a session-phase change). After a seek, let the
-    // data clock settle before measuring again so we don't thrash.
-    const PLAUSIBLE_TOL_MS = 3000;
-    const REACQUIRE_AFTER = 4;
-    const SEEK_COOLDOWN_MS = 800;
-    // De-sync is gradual, so sample sparsely to keep a laggy browser responsive (the
-    // wide OCR crop is the heavy part). Prefer pausing over seeking; when a forward
-    // seek IS needed, overshoot so we land ahead and then pause-sync back, rather
-    // than chasing the TV with repeated seeks.
-    const OCR_INTERVAL_MS = 5000;   // P/Q clock sample cadence
-    const FWD_OVERSHOOT_S = 5;      // a forward seek lands this far AHEAD of the TV
-    const MAX_PAUSE_S = 20;         // cap a single pause-to-resync hold
+    const SEEK_COOLDOWN_MS = 800;       // suppress corrections until a pause/seek settles
+    const FWD_OVERSHOOT_S = 2;          // base forward-seek overshoot (TV + this); adaptive on top
+    const MAX_PAUSE_S = 20;             // cap a single pause-to-resync hold
 
     const state = {
         active: false,
         stream: null,
         video: null,                                // hidden <video> of the stream
         content: { x0: 0, y0: 0, x1: 1, y1: 1 },     // 16:9 video rect within the frame (letterbox-aware)
-        worker: null,
-        sparseWorker: null,                         // psm-11 worker for the wide countdown sweep
-        textWorker: null,                           // psm-6 alphanumeric worker for the P/Q header line
-        cdAnchors: [],                              // [{val,at}] countdown candidates being verified
+        worker: null,                               // psm-7 tight single-line (clock / lap)
+        sparseWorker: null,                         // psm-11 wide countdown sweep (race)
+        textWorker: null,                           // psm-6 alphanumeric header sweep (P/Q locate)
+        cdAnchors: [],                              // [{val,at}] race countdown candidates
         ocrTimer: null,
-        jumpFrom: null,                             // data offset at last forward-seek (live-edge check)
-        lastTvMs: null,                             // last ACCEPTED TV read (plausibility filter)
-        lastTvAt: 0,
-        candMs: null, candAt: 0, candCount: 0,      // candidate new clock during off-reads
-        cooldownUntil: 0,                           // suppress seeks until this perf-clock time
+        // ── P/Q clock sync ──
+        phase: 'search',                            // 'search' | 'pin' | 'monitor'
+        clockBox: null,                             // cached [x0,y0,x1,y1] of the time text (content fractions)
+        clockWide: false,                           // true = no tight bbox; fall back to wide badge-line OCR
+        tightMiss: 0,                               // consecutive tight-crop misses → re-locate
+        pinStart: 0, pinPrevSec: null,              // tick-pinning burst state
+        tvTickAt: null, tvTickSec: null,            // pinned tick: perf time + whole-second value
+        synced: false,                              // in-sync (drives the relaxed cadence)
+        seekLagS: 0,                                // measured forward-seek shortfall (adaptive overshoot)
+        measuringSeek: null,                        // {at} pending post-seek residual measure
+        lastTvMs: null, lastTvAt: 0,                // last accepted TV read
+        jumpFrom: null,                             // data offset at last forward-seek (live-edge probe)
+        cooldownUntil: 0,                           // suppress corrections until this perf time
         pausedBySync: false,                        // we paused playback to let the TV catch up
         resumeTimer: null,                          // pending resume after a sync-pause
         maxOffset: null,                            // live edge / total available offset (s)
-        mode: 'acquire',                            // 'acquire' (fast) | 'locked' (1 Hz, phase-locked)
-        prevSec: null,                              // last whole-second TV value (tick detection)
-        tvTickAt: null,                             // perf time of the last detected TV tick
-        tvTickVal: null,                            // whole-second value at that tick
-        lastReacqAt: 0,                             // perf time the tick was last freshly pinned
-        nullStreak: 0,                              // consecutive reads with no element on screen
         // ── race lap-sync ──
         dataLap: null, dataLapAt: 0, lapIntervalMs: 90000, dataTotalLaps: null,
         tvLap: null, tvCross: null, dataCross: null, alignedLap: null, offLapStreak: 0,
@@ -161,6 +151,26 @@
     function setLight(cls) {
         const l = $('videoSyncLight');
         if (l) l.className = 'video-sync-light' + (cls ? ' ' + cls : '');
+    }
+
+    // Footer message (status bar): a red instruction shown only when the TV is
+    // ahead of our live edge and we CAN'T catch up — tells the user how long to
+    // pause their TV. Cleared the moment we're back in sync.
+    function setFooterMsg(text) {
+        let el = $('videoSyncMsg');
+        if (!el) {
+            const foot = $('statusFooter');
+            if (!foot) return;
+            el = document.createElement('span');
+            el.id = 'videoSyncMsg';
+            el.style.cssText = 'color:#ff4d4d;font-weight:600;margin-left:12px';
+            foot.appendChild(el);
+        }
+        if (el.textContent !== text) el.textContent = text;
+    }
+    function clearFooterMsg() {
+        const el = $('videoSyncMsg');
+        if (el && el.textContent) el.textContent = '';
     }
 
     // Debug: enable with  localStorage.setItem('videoSyncDebug','1')  then reload.
@@ -432,40 +442,121 @@
         return _c;
     }
 
-    // Plausibility filter: a real clock counts down ~1 s per real second, so a
-    // good read tracks the last one. Reject OCR misreads (which would seek the
-    // data wildly); re-acquire if it stays off (a genuine jump). Returns the
-    // accepted TV ms, or null when this read can't be trusted.
-    function acceptTv(tvMs, now) {
-        if (tvMs == null) return null;                  // nothing on screen → caller assumes sync
-        if (state.lastTvMs != null) {
-            const expected = state.lastTvMs - (now - state.lastTvAt);
-            if (Math.abs(tvMs - expected) > PLAUSIBLE_TOL_MS) {
-                // Off our locked countdown (commercial overlay / replay clock / misread).
-                // Adopt a NEW reference only if these off-reads form their own steady
-                // countdown for a while; otherwise assume we're still in sync.
-                const candExp = state.candMs != null ? state.candMs - (now - state.candAt) : null;
-                state.candCount = (candExp != null && Math.abs(tvMs - candExp) <= PLAUSIBLE_TOL_MS)
-                    ? state.candCount + 1 : 1;
-                state.candMs = tvMs; state.candAt = now;
-                if (state.candCount >= REACQUIRE_AFTER) {   // a genuine new clock → re-acquire
-                    state.lastTvMs = tvMs; state.lastTvAt = now;
-                    state.candMs = null; state.candCount = 0;
-                    return tvMs;
-                }
-                return null;                                 // treat as no-read for now
-            }
-        }
-        state.candMs = null; state.candCount = 0;
-        state.lastTvMs = tvMs; state.lastTvAt = now;
-        return tvMs;
+    // Flatten Tesseract word boxes (output shape varies by version: words / blocks /
+    // lines). Each entry is {text, bbox:{x0,y0,x1,y1}} in the recognised image's px.
+    function collectWords(data) {
+        const out = [];
+        const push = (w) => { if (w && w.text && w.bbox) out.push({ text: String(w.text).trim(), bbox: w.bbox }); };
+        if (Array.isArray(data.words)) data.words.forEach(push);
+        if (Array.isArray(data.blocks)) data.blocks.forEach(b =>
+            (b.paragraphs || []).forEach(p => (p.lines || []).forEach(l => (l.words || []).forEach(push))));
+        if (Array.isArray(data.lines)) data.lines.forEach(l => (l.words || []).forEach(push));
+        return out;
+    }
+    // Map a word bbox (px in the sweep canvas) back to content-rect fractions, padded
+    // (the clock changes width as digits change, e.g. "1:00:00" vs "9:59").
+    function boxToContentRect(bbox, region, cw, ch) {
+        const [rx0, ry0, rx1, ry1] = region;
+        const fx0 = rx0 + (bbox.x0 / cw) * (rx1 - rx0);
+        const fy0 = ry0 + (bbox.y0 / ch) * (ry1 - ry0);
+        const fx1 = rx0 + (bbox.x1 / cw) * (rx1 - rx0);
+        const fy1 = ry0 + (bbox.y1 / ch) * (ry1 - ry0);
+        const pw = (fx1 - fx0) * 0.8 + 0.005, ph = (fy1 - fy0) * 0.5 + 0.006;
+        return [Math.max(0, fx0 - pw), Math.max(0, fy0 - ph),
+                Math.min(1, fx1 + pw), Math.min(1, fy1 + ph)];
     }
 
-    // Enter the fast capture phase to (re-)pin the tick instant. Keeps tvTickAt
-    // as a fallback — the TV's tick is unaffected by our data seeks.
-    function toAcquire() {
-        state.mode = 'acquire'; state.prevSec = null;
-        state.candMs = null; state.candCount = 0;
+    // SEARCH / RE-LOCATE: wide header OCR, anchored on the session badge line, finds
+    // the time and (when possible) CACHES its bounding box for fast tight reads.
+    // Returns {ms, box, wide} or null when no clock is on screen.
+    async function locateClock() {
+        const sweep = cropToCanvas(PQ_CLOCK_SWEEP, { upscale: 2 });
+        const tw = await ensureTextWorker();
+        if (!sweep || !tw) return null;
+        showDebugCrop(sweep, 'locate sweep');
+        let data;
+        try { ({ data } = await tw.recognize(sweep, {}, { blocks: true })); }
+        catch (e) { return null; }
+        const lines = (data.text || '').split('\n').map(s => s.trim()).filter(Boolean);
+        const badgeRe = pqBadgeRx();
+        const badgeLine = lines.find(ln => badgeRe.test(ln) && timeCandidates(ln).length);
+        const dRef = dataClockMs();
+        let textMs = null;
+        if (badgeLine) {
+            textMs = timeCandidates(badgeLine)[0];
+        } else {                                          // no badge → nearest-data across all times
+            const all = timeCandidates(data.text || '');
+            if (all.length && dRef != null) {
+                let b = null, bd = Infinity;
+                for (const c of all) { const dd = Math.abs(c - dRef); if (dd < bd) { bd = dd; b = c; } }
+                if (bd <= PQ_MATCH_TOL_MS) textMs = b;
+            }
+        }
+        if (textMs == null) return null;                  // clock not visible
+        // Try to pin a TIGHT bbox for that time (fast subsequent reads); else fall
+        // back to wide badge-line reads (functional, just slower — no tick pinning).
+        const timeRe = /(?:\d{1,2}:)?\d{1,2}:\d{2}/;
+        let bestW = null, bestD = Infinity;
+        for (const w of collectWords(data)) {
+            const ms = timeRe.test(w.text) ? parseClock(w.text) : null;
+            if (ms == null) continue;
+            const dd = Math.abs(ms - textMs);
+            if (dd < bestD) { bestD = dd; bestW = w; }
+        }
+        if (bestW && bestD <= 1500) {
+            const box = boxToContentRect(bestW.bbox, PQ_CLOCK_SWEEP, sweep.width, sweep.height);
+            dbg('locate TIGHT', (textMs / 1000).toFixed(1), 's box', box.map(n => n.toFixed(3)));
+            return { ms: textMs, box, wide: false };
+        }
+        dbg('locate WIDE (no bbox)', (textMs / 1000).toFixed(1), 's');
+        return { ms: textMs, box: PQ_CLOCK_SWEEP, wide: true };
+    }
+
+    // Fast read of the cached clock box. Tight = single-line digit OCR on the small
+    // crop; wide = the badge-line fallback. Returns ms or null (clock not readable).
+    async function readTight() {
+        if (!state.clockBox) return null;
+        if (state.clockWide) {
+            const sweep = cropToCanvas(PQ_CLOCK_SWEEP, { upscale: 2 });
+            const tw = await ensureTextWorker();
+            if (!sweep || !tw) return null;
+            showDebugCrop(sweep, 'clock wide');
+            try {
+                const { data } = await tw.recognize(sweep);
+                const badgeRe = pqBadgeRx();
+                for (const ln of (data.text || '').split('\n')) {
+                    if (badgeRe.test(ln)) { const c = timeCandidates(ln); if (c.length) return c[0]; }
+                }
+                const all = timeCandidates(data.text || ''), dRef = dataClockMs();
+                if (all.length && dRef != null) {
+                    let b = null, bd = Infinity;
+                    for (const c of all) { const dd = Math.abs(c - dRef); if (dd < bd) { bd = dd; b = c; } }
+                    return bd <= PQ_MATCH_TOL_MS ? b : null;
+                }
+                return null;
+            } catch (e) { return null; }
+        }
+        const crop = cropToCanvas(state.clockBox, { upscale: 3 });
+        const w = await ensureWorker();
+        if (!crop || !w) return null;
+        showDebugCrop(crop, 'clock tight');
+        try {
+            const { data } = await w.recognize(crop);
+            const ms = parseClock(data.text);
+            dbg('tight', JSON.stringify((data.text || '').trim()), '→', ms != null ? (ms / 1000).toFixed(1) : null);
+            return ms;
+        } catch (e) { return null; }
+    }
+
+    // Schedule the next P/Q sample, phase-aligned just AFTER the predicted TV tick.
+    function schedulePQ(minDelayMs) {
+        let delay = minDelayMs;
+        if (state.tvTickAt != null) {
+            const target = performance.now() + minDelayMs;
+            const k = Math.ceil((target - state.tvTickAt - PIN_OFFSET_MS) / 1000);
+            delay = Math.max(20, state.tvTickAt + k * 1000 + PIN_OFFSET_MS - performance.now());
+        }
+        state.ocrTimer = setTimeout(runPQ, delay);
     }
 
     async function beginOcr() {
@@ -477,122 +568,136 @@
         dbg('content rect', JSON.stringify(state.content), 'video',
             state.video && (state.video.videoWidth + 'x' + state.video.videoHeight));
         if (isRace()) { resetRace(); runRaceLoop(); }   // lap-increment sync
-        else { toAcquire(); runLoop(); }                // P/Q clock tick sync
+        else { state.phase = 'search'; state.clockBox = null; runPQ(); }   // P/Q clock sync
     }
 
-    async function runLoop() {
+    // P/Q state machine: SEARCH (locate + cache the clock box) → PIN (burst to pin
+    // the tick instant) → MONITOR (1 s, assess + correct; relax to 5 s once synced).
+    async function runPQ() {
         if (!state.active) return;
-        // Hidden tab/window → timers throttle and the capture freezes, so reads
-        // are stale. Idle until visible, then re-acquire the tick phase cleanly.
-        if (document.hidden) { toAcquire(); state.ocrTimer = setTimeout(runLoop, 1000); return; }
+        if (document.hidden) {              // hidden tab throttles timers → reads stale; idle + re-pin
+            state.phase = state.clockBox ? 'pin' : 'search'; state.tvTickAt = null;
+            state.ocrTimer = setTimeout(runPQ, 1000); return;
+        }
         showDebugFrame();
-
         const now = performance.now();
-        // Read the standings-tile HEADER line — the session badge + time remaining /
-        // countdown, which sit just below the FIA logo and ABOVE the standings rows.
-        // OCR the wide upper-left block as text, split into lines, and take the time
-        // from the line carrying the session badge. The standings rows (TLA + lap time
-        // + gap) carry their own MM:SS-looking values, so we anchor on the badge line,
-        // not "any time on screen". Fallback: nearest-data if the badge is unreadable.
-        let raw = null;
-        const sweep = cropToCanvas(PQ_CLOCK_SWEEP, { upscale: 2 });
-        const tw = await ensureTextWorker();
-        if (sweep && tw) {
-            showDebugCrop(sweep, 'header sweep');
-            try {
-                const { data } = await tw.recognize(sweep);
-                const lines = (data.text || '').split('\n').map(s => s.trim()).filter(Boolean);
-                const badgeRe = pqBadgeRx();
-                let badge = null;
-                for (const ln of lines) {                       // header line = badge + its time
-                    if (!badgeRe.test(ln)) continue;
-                    const c = timeCandidates(ln);
-                    if (c.length) { raw = c[0]; badge = ln; break; }
-                }
-                if (raw == null) {                              // badge line unreadable → nearest-data fallback
-                    const all = timeCandidates(data.text || ''), dRef = dataClockMs();
-                    if (all.length && dRef != null) {
-                        let best = null, bd = Infinity;
-                        for (const c of all) { const dd = Math.abs(c - dRef); if (dd < bd) { bd = dd; best = c; } }
-                        raw = bd <= PQ_MATCH_TOL_MS ? best : null;
-                    }
-                }
-                dbg('header lines', JSON.stringify(lines), 'badge', JSON.stringify(badge),
-                    '→ raw', raw != null ? (raw / 1000).toFixed(1) + 's' : null);
-            } catch (e) { /* transient OCR error */ }
+
+        // ── SEARCH / RE-LOCATE ──
+        if (state.phase === 'search' || !state.clockBox) {
+            const loc = await locateClock();
+            if (!state.active) return;
+            if (!loc) {                     // clock not on screen → assume in sync, keep looking
+                setLight(state.lastTvMs != null ? 'ok' : 'adjust');
+                state.ocrTimer = setTimeout(runPQ, ACTIVE_INTERVAL_MS); return;
+            }
+            state.clockBox = loc.box; state.clockWide = !!loc.wide; state.tightMiss = 0;
+            if (state.clockWide) { state.phase = 'monitor'; state.tvTickAt = null; }
+            else { state.phase = 'pin'; state.pinStart = now; state.pinPrevSec = null; state.tvTickAt = null; }
+            state.ocrTimer = setTimeout(runPQ, state.clockWide ? ACTIVE_INTERVAL_MS : 0); return;
         }
+
+        // Read the (cached) clock.
+        const tv = await readTight();
         if (!state.active) return;
+        if (tv == null) {                   // clock briefly gone (replay/ad/misread) → hold, re-locate if persistent
+            if (++state.tightMiss >= RELOCATE_AFTER) { state.phase = 'search'; state.clockBox = null; }
+            setLight(state.lastTvMs != null ? 'ok' : 'adjust');
+            schedulePQ(state.synced ? SYNCED_INTERVAL_MS : ACTIVE_INTERVAL_MS); return;
+        }
+        state.tightMiss = 0;
+        const sec = Math.round(tv / 1000);
 
-        const tvMs = acceptTv(raw, now);
-        if (tvMs == null) state.nullStreak++; else state.nullStreak = 0;
+        // ── PIN: burst back-to-back until we catch a 1 s tick edge AND ~1.2 s passed ──
+        if (state.phase === 'pin') {
+            if (state.pinPrevSec != null && sec === state.pinPrevSec - 1) { state.tvTickAt = now; state.tvTickSec = sec; }
+            state.pinPrevSec = sec;
+            state.lastTvMs = tv; state.lastTvAt = now;
+            if (state.tvTickAt == null || (now - state.pinStart) < PIN_BURST_MS) { state.ocrTimer = setTimeout(runPQ, 0); return; }
+            state.phase = 'monitor';
+            dbg('pinned tick @', state.tvTickSec, 's');
+        }
+
+        // ── MONITOR: assess desync + correct ──
+        state.lastTvMs = tv; state.lastTvAt = now;
         const dMs = dataClockMs();
-        const inSync = (tvMs != null && dMs != null) && Math.abs(tvMs - dMs) <= INSYNC_S * 1000;
+        if (dMs == null) { setLight('error'); schedulePQ(ACTIVE_INTERVAL_MS); return; }
 
-        correct(tvMs, dMs, now, inSync);
+        // Adaptive overshoot: once a prior forward seek has SETTLED (past cooldown),
+        // if it left us still (modestly) behind we undershot — overshoot a touch more
+        // next time (bounded). Large residuals (live edge) are ignored.
+        if (state.measuringSeek && now >= state.cooldownUntil) {
+            const stillBehind = (dMs - tv) / 1000;      // + ⇒ data still behind the TV
+            if (stillBehind > CORRECT_TARGET_S && stillBehind < 3) state.seekLagS = Math.min(3, state.seekLagS + stillBehind * 0.5);
+            else if (stillBehind < -1) state.seekLagS = Math.max(0, state.seekLagS - 0.5);
+            state.measuringSeek = null;
+        }
 
-        // De-sync drifts slowly and the wide OCR crop is heavy, so sample sparsely
-        // (~5 s). Search a little faster until we have a first reference read.
-        const interval = state.lastTvMs == null ? 2000 : OCR_INTERVAL_MS;
-        state.ocrTimer = setTimeout(runLoop, interval);
+        const desyncS = Math.abs(tv - dMs) / 1000;
+        if (desyncS <= INSYNC_S) {                       // step 4-ok / step 6 (<1 s → do nothing)
+            resumeData(); clearFooterMsg(); state.jumpFrom = null; state.measuringSeek = null; state.synced = true; setLight('ok');
+            schedulePQ(SYNCED_INTERVAL_MS); return;       // step 5: relax to 5 s
+        }
+        state.synced = false;
+        correctPQ(tv, dMs, now);                          // step 4: pause / overshoot / live-edge
+        schedulePQ(ACTIVE_INTERVAL_MS);
     }
 
-    // Bring the data+audio to the TV's clock position. Both clocks count DOWN (time
-    // remaining), so dMs < tvMs ⇒ data is AHEAD of the TV, dMs > tvMs ⇒ behind.
-    // Strategy (cheap pauses over laggy seeks):
-    //   • data AHEAD  → PAUSE and let the TV catch up; never seek backward.
-    //   • data BEHIND → seek forward to TV + 5 s (overshoot) so we land ahead and the
-    //                   pause-branch fine-syncs back. If TV + 5 s is past the live
-    //                   edge → go to live; if already at live and still behind → hold.
-    //   green = in sync   yellow = correcting / can't catch up   red = no read
-    function correct(tvMs, dMs, now, inSync) {
-        if (tvMs == null || dMs == null) {
-            setLight(state.lastTvMs != null ? 'ok' : 'adjust');
-            return;
-        }
-        if (inSync) { resumeData(); state.jumpFrom = null; setLight('ok'); return; }
+    // Step 4 correction. Both clocks count DOWN: tv>d ⇒ data AHEAD of TV; tv<d ⇒ behind.
+    //   4.1 data AHEAD  → pause, resume when the TV catches up (never seek backward).
+    //   4.2 data BEHIND → if reachable, jump to TV + overshoot (the pause branch then
+    //       fine-trims); if the TV is beyond our live edge, hold yellow + tell the
+    //       user how long to pause their TV.
+    function correctPQ(tvMs, dMs, now) {
         if (now < state.cooldownUntil) { setLight('adjust'); return; }   // let a pause / seek settle
-
         const cur = currentOffset();
         if (cur == null) { setLight('error'); return; }
+        const aheadS = (tvMs - dMs) / 1000;          // + ⇒ data ahead of the TV
 
-        const aheadS = (tvMs - dMs) / 1000;         // + ⇒ data ahead of the TV
-        if (aheadS > 0) {
-            // DATA AHEAD → pause and resume once the TV catches up (~aheadS seconds at
-            // 1× real time). No backward seek.
-            const waitS = Math.min(aheadS, MAX_PAUSE_S);
+        if (aheadS > 0) {                            // 4.1 data ahead → pause + wait
+            clearFooterMsg(); state.jumpFrom = null;
+            const waitS = Math.min(Math.max(0, aheadS - CORRECT_TARGET_S), MAX_PAUSE_S);
+            if (waitS < 0.1) { setLight('ok'); return; }
             pauseData();
             if (state.resumeTimer) clearTimeout(state.resumeTimer);
             state.resumeTimer = setTimeout(resumeData, waitS * 1000);
             state.cooldownUntil = now + waitS * 1000 + SEEK_COOLDOWN_MS;
-            state.jumpFrom = null;
-            setLight('adjust');
-            return;
+            setLight('adjust'); return;
         }
 
-        // DATA BEHIND → move forward. If a prior forward seek didn't advance, we're
-        // pinned at the live edge with the TV ahead → nothing to do, hold yellow.
-        if (state.jumpFrom != null && (cur - state.jumpFrom) < 0.5) { setLight('adjust'); return; }
-        const target = cur + (-aheadS) + FWD_OVERSHOOT_S;   // TV position + 5 s overshoot
-        state.jumpFrom = cur;
-        if (state.maxOffset != null && target >= state.maxOffset) {
-            seekLiveCmd();                          // can't reach TV + 5 s → jump to live edge
-        } else {
-            seekTo(target);                         // skip to TV + 5 s
+        // 4.2 data behind → forward.
+        const behindS = -aheadS;
+        // 4.2.2 a prior forward seek didn't advance ⇒ pinned at the live edge, TV is
+        // ahead of the stream → can't catch up; instruct the user to pause their TV.
+        if (state.jumpFrom != null && (cur - state.jumpFrom) < 0.5) {
+            setFooterMsg(`TV ahead. Pause video ${Math.max(1, Math.round(behindS))} seconds`);
+            setLight('adjust'); return;
         }
+        // 4.2.1 reachable → jump to TV + overshoot (adaptive), clamped to the live edge.
+        clearFooterMsg();
+        const overshoot = FWD_OVERSHOOT_S + Math.max(0, state.seekLagS);
+        let target = cur + behindS + overshoot;
+        if (state.maxOffset != null) target = Math.min(target, state.maxOffset);
+        state.jumpFrom = cur; state.measuringSeek = { at: now };
+        seekTo(target);
         state.cooldownUntil = now + SEEK_COOLDOWN_MS;
         setLight('adjust');
     }
 
-    // Becoming visible again: re-acquire the tick phase from scratch.
+    // Becoming visible again: re-pin the tick phase from scratch (P/Q only).
     document.addEventListener('visibilitychange', () => {
-        if (state.active && !document.hidden) toAcquire();
+        if (state.active && !document.hidden && !isRace()) {
+            state.phase = state.clockBox ? 'pin' : 'search';
+            state.pinStart = performance.now(); state.pinPrevSec = null; state.tvTickAt = null;
+        }
     });
 
     // ── Race lap-sync ────────────────────────────────────────────────────
-    // The data leader lap arrives on the `raceLaps` topic; the TV lap badge is
-    // OCR'd. At 1 Hz we confirm the same lap; near the lap end (derived ≥95% of
-    // the running lap time) we burst to catch the TV's exact lap-increment frame
-    // and align it to the data's lap-cross. Losing sync mid-lap is acceptable.
+    // Pre-race relies on the countdown graphic (only present ~20 min out) + the
+    // user's ENTER (formation-lap start, then lights-out). Once racing we already
+    // start ~synced, so the only re-sync opportunity is each LAP increment: a
+    // steady 1 s cycle OCRs the leader lap and aligns the data lap-cross to the TV's.
+    // No bursting for sub-second lap-cross accuracy — 1 s is enough and chasing it
+    // tends to backfire. Losing sync mid-lap is acceptable; the next lap re-aligns.
 
     function resetRace() {
         state.tvLap = null; state.tvCross = null; state.alignedLap = null;
@@ -761,13 +866,8 @@
             setLight('adjust');
         }
 
-        // Burst near the expected lap-cross (≥95% of the lap), else 1 Hz.
-        let burst = false;
-        if (state.dataLapAt && state.dataLap === state.tvLap) {
-            const frac = (now - state.dataLapAt) / state.lapIntervalMs;
-            burst = frac >= 0.95 && frac < 1.3;
-        }
-        state.ocrTimer = setTimeout(runRaceLoop, burst ? 120 : 1000);
+        // Steady 1 s cycle — re-sync happens on each lap increment (tryAlign).
+        state.ocrTimer = setTimeout(runRaceLoop, 1000);
     }
 
     // Data leader lap (+ derive the running lap time from cross intervals). This
