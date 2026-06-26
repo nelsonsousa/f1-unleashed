@@ -720,11 +720,12 @@
         const canSeek = audio.seekable && audio.seekable.length > 0
             && audio.seekable.end(audio.seekable.length - 1) > 0;
         if (canSeek) {
-            if (Math.abs(audio.currentTime - targetSec) > 1) {
+            // Runs on an EXPLICIT seek (state:seek-complete) + init — follow it
+            // exactly, NO deadband (small skips must not be lost). Continuous-drift
+            // thrash protection lives in syncAudio, not here. Native seek is cheap.
+            if (Math.abs(audio.currentTime - targetSec) > 0.1) {
                 adbg('align: SEEK', audio.currentTime.toFixed(2), '→', targetSec.toFixed(2));
                 audio.currentTime = targetSec;
-            } else {
-                adbg('align: no-seek (Δ', (audio.currentTime - targetSec).toFixed(2), '≤ 1s)');
             }
             return;
         }
@@ -743,13 +744,12 @@
         const fileOffset = state.audio.seekOffset || 0;
         const expectedCurrentTime = targetSec - fileOffset;
         const drift = audio.currentTime - expectedCurrentTime;
-        // Only reload when drift is significant (≥ 5 s). Each reload
-        // tears down + re-fetches the chunked stream and re-buffers,
-        // so frequent reloads = the "1-2 s of audio then silent" loop
-        // observed during Monaco 2026 live. Real-time clock + audio
-        // both advance at 1× and stay in sync without intervention;
-        // we only need to correct after a buffer underrun.
-        if (Math.abs(drift) > 5) {
+        // This is the EXPLICIT-seek handler (state:seek-complete) + init, NOT a
+        // loop — so reload to follow even small jumps (>0.3 s). The "1-2 s then
+        // silent" reload-thrash came from CONTINUOUS correction (syncAudio), which
+        // keeps its own larger deadband; explicit seeks are infrequent (video sync
+        // is on-demand), so a reload-per-seek is fine and must not lose sync.
+        if (Math.abs(drift) > 0.3) {
             adbg('align: reload ?t=', targetSec.toFixed(2), '(non-seekable, drift', drift.toFixed(2), ')');
             reloadAudioAtOffset(targetSec);
         }
