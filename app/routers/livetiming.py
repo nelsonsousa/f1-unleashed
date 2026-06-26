@@ -10,12 +10,13 @@ Provides endpoints to:
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import aiohttp
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
@@ -435,6 +436,42 @@ async def get_team_radio(session_name: str, filename: str):
     return FileResponse(str(clip), media_type="audio/mpeg", filename=filename)
 
 
+def _serve_audio_range(path, request: Request) -> Response:
+    """Byte-range serve a (possibly growing) AAC file for the MSE client.
+
+    Reads the CURRENT size on every request, so a LIVE file's growth is picked
+    up by the client's incremental Range fetches — this is what lets live audio
+    behave EXACTLY like a replay (natively seekable, no chunked `?t=` estimate).
+    The client (Route A) transmuxes the ADTS bytes → fMP4 in-browser and feeds
+    MSE. Returns 416 when the requested start is past EOF (no new bytes yet →
+    the client waits and retries)."""
+    file_size = path.stat().st_size
+    range_header = request.headers.get("range")
+    if not range_header:
+        data = path.read_bytes()
+        return Response(content=data, media_type="audio/aac",
+                        headers={"Accept-Ranges": "bytes",
+                                 "Content-Length": str(len(data))})
+    m = re.match(r"bytes=(\d+)-(\d*)", range_header.strip())
+    if not m:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{file_size}"})
+    start = int(m.group(1))
+    end = int(m.group(2)) if m.group(2) else file_size - 1
+    if start >= file_size:
+        # No new bytes yet (live edge) — tell the client to wait and retry.
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{file_size}"})
+    end = min(end, file_size - 1)
+    with open(path, "rb") as f:
+        f.seek(start)
+        data = f.read(end - start + 1)
+    return Response(content=data, status_code=206, media_type="audio/aac",
+                    headers={
+                        "Content-Range": f"bytes {start}-{end}/{file_size}",
+                        "Accept-Ranges": "bytes",
+                        "Content-Length": str(len(data)),
+                    })
+
+
 @router.get("/audio/{session_name:path}")
 async def get_audio(session_name: str, request: Request):
     """Serve commentary audio for a cached session.
@@ -473,6 +510,17 @@ async def get_audio(session_name: str, request: Request):
     # so they can concatenate cleanly.
     if is_live:
         segments = segments[-1:]
+
+    # MSE client (Route A) requests ?seekable=1 + HTTP Range. Serve byte ranges
+    # against ONE file — the current segment (live) or the concatenated replay —
+    # so live and replay share an identical, natively-seekable fetch path. The
+    # legacy chunked/FileResponse paths below stay for non-MSE fallback clients.
+    if request.query_params.get("seekable"):
+        if len(segments) == 1:
+            audio_path = segments[0]
+        else:
+            audio_path = _build_concat_aac(session_path, segments) or segments[-1]
+        return _serve_audio_range(audio_path, request)
 
     # Client may request a starting offset (?t=SECONDS) — used by the
     # live skip path since chunked streaming doesn't support byte ranges.
