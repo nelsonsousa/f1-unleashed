@@ -152,9 +152,19 @@
 
     // ── ADTS parsing + public API ─────────────────────────────────────
     function create() {
-        var cfg = null, init = null, baseSamples = 0, seq = 0;
-        var leftover = new Uint8Array(0);
+        var cfg = null, init = null, seq = 0;
+        var raw = new Uint8Array(1 << 20), rawLen = 0;       // growing byte accumulator
+        var payOff = [], payLen = [];                        // per-frame payload offset + length in raw
+        var parsePos = 0;                                    // bytes parsed so far
 
+        function appendRaw(b) {
+            if (rawLen + b.length > raw.length) {
+                var cap = raw.length;
+                while (cap < rawLen + b.length) cap *= 2;     // doubling → amortised O(n)
+                var n = new Uint8Array(cap); n.set(raw.subarray(0, rawLen)); raw = n;
+            }
+            raw.set(b, rawLen); rawLen += b.length;
+        }
         function parseConfig(b, o) {
             var profile = (b[o + 2] >> 6) & 0x03;                 // 0=Main,1=LC,...
             var freqIndex = (b[o + 2] >> 2) & 0x0f;
@@ -164,42 +174,42 @@
         }
 
         return {
-            /** Feed raw ADTS bytes; returns an array of fMP4 segments (Uint8Array)
-             *  ready to appendBuffer — the init segment leads the first batch. */
-            append: function (chunk) {
-                var b = concat([leftover, chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk)]);
-                var frames = [], o = 0;
-                while (o + 7 <= b.length) {
-                    if (b[o] !== 0xff || (b[o + 1] & 0xf0) !== 0xf0) { o++; continue; }   // resync
-                    var protectionAbsent = b[o + 1] & 0x01;
-                    var headerLen = protectionAbsent ? 7 : 9;
-                    var frameLen = ((b[o + 3] & 0x03) << 11) | (b[o + 4] << 3) | ((b[o + 5] >> 5) & 0x07);
-                    if (frameLen < headerLen) { o++; continue; }                          // bogus → resync
-                    if (o + frameLen > b.length) break;                                   // partial frame → keep for next feed
-                    if (!cfg) { cfg = parseConfig(b, o); init = buildInit(cfg); }
-                    frames.push(b.subarray(o + headerLen, o + frameLen));
+            /** Feed raw ADTS bytes: accumulate them and index every COMPLETE frame
+             *  (exact byte offset + length). No output — segments are built on
+             *  demand by segment(), so an exact frame index ⇄ time map is kept. */
+            feed: function (chunk) {
+                appendRaw(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk));
+                var o = parsePos;
+                while (o + 7 <= rawLen) {
+                    if (raw[o] !== 0xff || (raw[o + 1] & 0xf0) !== 0xf0) { o++; continue; }
+                    var headerLen = (raw[o + 1] & 0x01) ? 7 : 9;
+                    var frameLen = ((raw[o + 3] & 0x03) << 11) | (raw[o + 4] << 3) | ((raw[o + 5] >> 5) & 0x07);
+                    if (frameLen < headerLen) { o++; continue; }
+                    if (o + frameLen > rawLen) break;                 // partial → wait for more bytes
+                    if (!cfg) { cfg = parseConfig(raw, o); init = buildInit(cfg); }
+                    payOff.push(o + headerLen); payLen.push(frameLen - headerLen);
                     o += frameLen;
                 }
-                leftover = b.subarray(o);
-                var out = [];
-                if (init) { out.push(init); init = null; }
-                if (frames.length) {
-                    out.push(buildSegment(cfg, seq++, baseSamples, frames));
-                    baseSamples += frames.length * SAMPLES_PER_FRAME;
-                }
-                return out;
+                parsePos = o;
             },
-            /** MSE mime for the SourceBuffer. */
-            /** Re-anchor the OUTPUT timeline to `timeSec` — the next emitted
-             *  segment's baseMediaDecodeTime starts here (for windowed seeking).
-             *  The init segment is unchanged (already sent); drops any partial frame. */
-            reset: function (timeSec) {
-                baseSamples = Math.round(timeSec * (cfg ? cfg.sampleRate : 48000));
-                leftover = new Uint8Array(0);
+            /** Build ONE media segment for frames [i0, i1), with an EXACT
+             *  baseMediaDecodeTime of i0 × 1024 samples. AAC-LC frames are a fixed
+             *  1024 samples, so frame index ⇄ time is exact arithmetic. */
+            segment: function (i0, i1) {
+                var frames = [];
+                for (var k = i0; k < i1; k++) frames.push(raw.subarray(payOff[k], payOff[k] + payLen[k]));
+                return buildSegment(cfg, seq++, i0 * SAMPLES_PER_FRAME, frames);
             },
+            ready: function () { return !!init; },
+            init: function () { return init; },
             mime: 'audio/mp4; codecs="mp4a.40.2"',
-            /** Whole frames consumed so far → seconds (for diagnostics). */
-            seconds: function () { return cfg ? baseSamples / cfg.sampleRate : 0; },
+            sampleRate: function () { return cfg ? cfg.sampleRate : 0; },
+            frameCount: function () { return payOff.length; },
+            duration: function () { return cfg ? payOff.length * SAMPLES_PER_FRAME / cfg.sampleRate : 0; },
+            /** Exact frame index for time `t` (floor; NOT clamped to the fetched
+             *  count — a not-yet-fetched target resolves once the fetch reaches it). */
+            frameAt: function (t) { if (!cfg) return 0; var i = Math.floor(t * cfg.sampleRate / SAMPLES_PER_FRAME); return i < 0 ? 0 : i; },
+            frameTime: function (i) { return cfg ? i * SAMPLES_PER_FRAME / cfg.sampleRate : 0; },
             config: function () { return cfg; },
         };
     }
