@@ -714,6 +714,9 @@
                 }
             }
             sb.addEventListener('updateend', pump);
+            sb.addEventListener('error', () => adbg('MSE SourceBuffer "error" event — a segment was rejected'));
+            audio.addEventListener('error', () => adbg('MSE audio element error, code', audio.error && audio.error.code));
+            adbg('MSE SourceBuffer created for', MSE_MIME);
 
             function feed(bytes) {
                 const CH = 256 * 1024;                              // bound each fMP4 segment's size
@@ -724,20 +727,23 @@
                 pump();
             }
 
-            // One uniform loop for live AND replay: pull new bytes from the
-            // current EOF, catch up fast, then idle-poll for growth. A live file
-            // keeps growing; a replay simply stops — same code, no live branch.
+            // One uniform loop for live AND replay: pull bytes in bounded windows
+            // from the current EOF (incremental → playback can start before the
+            // whole file is fetched), catch up fast, then idle-poll for growth. A
+            // live file keeps growing; a replay simply stops — same code, no branch.
+            const WINDOW = 4 * 1024 * 1024;
             async function poll() {
-                let gotData = false;
+                let again = 3000;
                 try {
-                    const resp = await fetch(url, { headers: { Range: 'bytes=' + fetched + '-' } });
+                    const resp = await fetch(url, { headers: { Range: 'bytes=' + fetched + '-' + (fetched + WINDOW - 1) } });
                     if (resp.status === 206 || resp.status === 200) {
                         const buf = new Uint8Array(await resp.arrayBuffer());
-                        if (buf.length) { feed(buf); fetched += buf.length; gotData = true; }
+                        if (buf.length) { feed(buf); fetched += buf.length; }
+                        if (buf.length >= WINDOW) again = 0;        // full window → more to pull, catch up now
                     }
-                    // 416 = nothing past EOF yet → idle-poll.
+                    // 416 = nothing past EOF yet → idle-poll for growth.
                 } catch (e) { adbg('MSE fetch error', e); }
-                setTimeout(poll, gotData ? 250 : 3000);
+                setTimeout(poll, again);
             }
             poll();
         });
