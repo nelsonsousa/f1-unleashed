@@ -45,6 +45,15 @@
     const CD_MATCH_TOL_MS = 1200;       // |observed − (anchor − elapsed)| to be "the same countdown"
     const CD_CONFIRM_MS = 2500;         // must track this long (drop ~2.5s) before we trust it
 
+    // P/Q session clock — same robustness as the race countdown. The timer's exact
+    // position varies by broadcast/layout, and a tight box lands on the wrong row
+    // (a leaderboard line, not the clock). So we OCR a WIDE upper-left sweep over the
+    // whole timing graphic, regex every H:MM:SS / MM:SS, and pick the candidate
+    // nearest the data session clock (leaderboard gaps / driver numbers aren't times;
+    // lap times fall outside the nearness window). "OCR more and hit, than less and miss."
+    const PQ_CLOCK_SWEEP = [0.0, 0.0, 0.35, 0.45];  // wide upper-left block (fractions of the 16:9 content rect)
+    const PQ_MATCH_TOL_MS = 90000;                  // accept the MM:SS candidate within 90s of the data clock
+
     const OCR_UPSCALE = 3;                          // enlarge crop for legibility
     const LUMA_THRESHOLD = 140;                     // light text → dark on white
     const WHITE_THR = 165;                          // near-white caption isolation (wide sweep)
@@ -76,6 +85,13 @@
     const PLAUSIBLE_TOL_MS = 3000;
     const REACQUIRE_AFTER = 4;
     const SEEK_COOLDOWN_MS = 800;
+    // De-sync is gradual, so sample sparsely to keep a laggy browser responsive (the
+    // wide OCR crop is the heavy part). Prefer pausing over seeking; when a forward
+    // seek IS needed, overshoot so we land ahead and then pause-sync back, rather
+    // than chasing the TV with repeated seeks.
+    const OCR_INTERVAL_MS = 5000;   // P/Q clock sample cadence
+    const FWD_OVERSHOOT_S = 5;      // a forward seek lands this far AHEAD of the TV
+    const MAX_PAUSE_S = 20;         // cap a single pause-to-resync hold
 
     const state = {
         active: false,
@@ -84,6 +100,7 @@
         content: { x0: 0, y0: 0, x1: 1, y1: 1 },     // 16:9 video rect within the frame (letterbox-aware)
         worker: null,
         sparseWorker: null,                         // psm-11 worker for the wide countdown sweep
+        textWorker: null,                           // psm-6 alphanumeric worker for the P/Q header line
         cdAnchors: [],                              // [{val,at}] countdown candidates being verified
         ocrTimer: null,
         jumpFrom: null,                             // data offset at last forward-seek (live-edge check)
@@ -91,6 +108,9 @@
         lastTvAt: 0,
         candMs: null, candAt: 0, candCount: 0,      // candidate new clock during off-reads
         cooldownUntil: 0,                           // suppress seeks until this perf-clock time
+        pausedBySync: false,                        // we paused playback to let the TV catch up
+        resumeTimer: null,                          // pending resume after a sync-pause
+        maxOffset: null,                            // live edge / total available offset (s)
         mode: 'acquire',                            // 'acquire' (fast) | 'locked' (1 Hz, phase-locked)
         prevSec: null,                              // last whole-second TV value (tick detection)
         tvTickAt: null,                             // perf time of the last detected TV tick
@@ -115,6 +135,23 @@
         const b = bus();
         return (b && typeof b.getCurrentOffset === 'function') ? b.getCurrentOffset() : null;
     }
+    // Pause playback so the TV can catch up; resume picks up where it froze (no seek).
+    function pauseData() {
+        const b = bus();
+        if (b && b.isPlaying && typeof b.send === 'function') { b.send({ cmd: 'pause' }); state.pausedBySync = true; }
+    }
+    function resumeData() {
+        if (state.resumeTimer) { clearTimeout(state.resumeTimer); state.resumeTimer = null; }
+        const b = bus();
+        if (state.pausedBySync && b && typeof b.send === 'function') b.send({ cmd: 'play' });
+        state.pausedBySync = false;
+    }
+    function seekLiveCmd() {
+        const b = bus();
+        if (b && typeof b.send === 'function') b.send({ cmd: 'seek_live' });
+    }
+    // The live edge / total available offset (seconds) — the furthest we can seek to.
+    messageBus.on('state:clock', (d) => { if (d && typeof d.duration === 'number') state.maxOffset = d.duration; });
 
     // ── Element + status helpers ─────────────────────────────────────────
     const $ = (id) => document.getElementById(id);
@@ -166,7 +203,7 @@
         ctx.strokeStyle = '#0ff'; ctx.lineWidth = 1;
         ctx.strokeRect(cr.x0 * w, cr.y0 * h, cw * w, ch * h);          // content rect
         if (isRace()) { rect(RACE_COUNTDOWN_REGION, 'yellow'); rect(sessionRegions()[0], 'lime'); }
-        else sessionRegions().forEach(r => rect(r, 'lime'));
+        else rect(PQ_CLOCK_SWEEP, 'lime');
         box.innerHTML = '<div>frame · cyan=content yellow=countdown green=clock/lap</div>';
         box.appendChild(c);
     }
@@ -218,6 +255,12 @@
 
     function stop() {
         if (state.ocrTimer) { clearTimeout(state.ocrTimer); state.ocrTimer = null; }
+        if (state.resumeTimer) { clearTimeout(state.resumeTimer); state.resumeTimer = null; }
+        if (state.pausedBySync) {                   // don't leave playback frozen by a sync-pause
+            const b = bus();
+            if (b && typeof b.send === 'function') b.send({ cmd: 'play' });
+            state.pausedBySync = false;
+        }
         if (state.stream) { state.stream.getTracks().forEach(t => t.stop()); state.stream = null; }
         state.video = null;
         state.active = false;
@@ -255,6 +298,31 @@
         return worker;
     }
 
+    // Third worker: reads the P/Q standings-tile HEADER line (session badge + time),
+    // so it needs LETTERS as well as digits. psm 6 = a uniform multi-line block, so
+    // data.text keeps the header and the standings rows on separate lines.
+    async function ensureTextWorker() {
+        if (state.textWorker) return state.textWorker;
+        if (typeof Tesseract === 'undefined') return null;
+        const worker = await Tesseract.createWorker('eng');
+        await worker.setParameters({
+            tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:./ ',
+            tessedit_pageseg_mode: '6',             // uniform block of text (multi-line)
+            debug_file: '/dev/null',
+        });
+        state.textWorker = worker;
+        return worker;
+    }
+
+    // The session badge that sits on the header line, by session type. Anchoring the
+    // time read to this line keeps us off the standings rows (which carry lap times).
+    function pqBadgeRx() {
+        const t = ((window.SESSION_CONFIG || {}).sessionType || '').toLowerCase();
+        return t === 'qualifying'
+            ? /QUAL|SHOOT|\bS?Q\s?[123]\b/i         // QUALIFYING / SPRINT SHOOTOUT / Q1-3 / SQ1-3
+            : /PRACT|\bFP\s?[123]\b/i;              // PRACTICE 1-3 / FP1-3
+    }
+
     // Every MM:SS in the OCR text that could be a countdown (≤ CD_MAX), in ms.
     function cdCandidates(text) {
         const out = [], re = /(\d{1,2}):(\d{2})/g;
@@ -264,6 +332,19 @@
             if (sec > 59) continue;
             const ms = (min * 60 + sec) * 1000;
             if (ms > 0 && ms <= CD_MAX_MS) out.push(ms);
+        }
+        return out;
+    }
+
+    // Every H:MM:SS / MM:SS in the OCR text, in ms (session clocks run up to ~2h).
+    // Used to find the P/Q session timer inside the wide upper-left sweep.
+    function timeCandidates(text) {
+        const out = [], re = /(?:(\d{1,2}):)?([0-5]?\d):([0-5]\d)(?:\.(\d))?/g;
+        let m;
+        while ((m = re.exec(String(text))) !== null) {
+            const h = m[1] ? +m[1] : 0, mn = +m[2], s = +m[3], t = m[4] ? +m[4] : 0;
+            const ms = (((h * 60 + mn) * 60 + s) * 10 + t) * 100;
+            if (ms > 0 && ms <= 120 * 60 * 1000) out.push(ms);
         }
         return out;
     }
@@ -407,20 +488,38 @@
         showDebugFrame();
 
         const now = performance.now();
-        // OCR the session's candidate regions in priority order; first that yields
-        // a plausible time wins (e.g. ongoing clock, else the pre-session countdown).
+        // Read the standings-tile HEADER line — the session badge + time remaining /
+        // countdown, which sit just below the FIA logo and ABOVE the standings rows.
+        // OCR the wide upper-left block as text, split into lines, and take the time
+        // from the line carrying the session badge. The standings rows (TLA + lap time
+        // + gap) carry their own MM:SS-looking values, so we anchor on the badge line,
+        // not "any time on screen". Fallback: nearest-data if the badge is unreadable.
         let raw = null;
-        for (const region of sessionRegions()) {
-            const canvas = cropToCanvas(region);
-            if (!canvas) continue;
-            showDebugCrop(canvas, 'clock region');
+        const sweep = cropToCanvas(PQ_CLOCK_SWEEP, { upscale: 2 });
+        const tw = await ensureTextWorker();
+        if (sweep && tw) {
+            showDebugCrop(sweep, 'header sweep');
             try {
-                const { data } = await state.worker.recognize(canvas);
-                const t = parseClock(data.text);
-                dbg('clock OCR:', JSON.stringify((data.text || '').trim()), '→ ms', t);
-                if (t != null) { raw = t; break; }
+                const { data } = await tw.recognize(sweep);
+                const lines = (data.text || '').split('\n').map(s => s.trim()).filter(Boolean);
+                const badgeRe = pqBadgeRx();
+                let badge = null;
+                for (const ln of lines) {                       // header line = badge + its time
+                    if (!badgeRe.test(ln)) continue;
+                    const c = timeCandidates(ln);
+                    if (c.length) { raw = c[0]; badge = ln; break; }
+                }
+                if (raw == null) {                              // badge line unreadable → nearest-data fallback
+                    const all = timeCandidates(data.text || ''), dRef = dataClockMs();
+                    if (all.length && dRef != null) {
+                        let best = null, bd = Infinity;
+                        for (const c of all) { const dd = Math.abs(c - dRef); if (dd < bd) { bd = dd; best = c; } }
+                        raw = bd <= PQ_MATCH_TOL_MS ? best : null;
+                    }
+                }
+                dbg('header lines', JSON.stringify(lines), 'badge', JSON.stringify(badge),
+                    '→ raw', raw != null ? (raw / 1000).toFixed(1) + 's' : null);
             } catch (e) { /* transient OCR error */ }
-            if (!state.active) return;
         }
         if (!state.active) return;
 
@@ -431,69 +530,56 @@
 
         correct(tvMs, dMs, now, inSync);
 
-        // Tick detection: a clean 1-second decrement is a real tick. Use it to
-        // lock the phase (once coarse-aligned). An unexpected value — including
-        // the element returning after a dropout (it won't be prevSec−1) — drops
-        // back to acquire so we re-check the tick instant.
-        if (tvMs != null) {
-            const sec = Math.round(tvMs / 1000);
-            if (state.prevSec != null && sec === state.prevSec - 1) {
-                state.tvTickAt = now; state.tvTickVal = sec;
-                if (state.mode === 'acquire' && inSync) { state.mode = 'locked'; state.lastReacqAt = now; }
-            } else if (state.mode === 'locked' && state.prevSec != null && sec !== state.prevSec) {
-                toAcquire();
-            }
-            state.prevSec = sec;
-        }
-
-        // Schedule the next sample.
-        let delay;
-        if (state.mode === 'locked' && state.tvTickAt != null) {
-            if (now - state.lastReacqAt > RECHECK_INTERVAL_MS) {
-                toAcquire();                         // periodic short burst to re-pin the tick
-                delay = 0;
-            } else {
-                const k = Math.floor((performance.now() - state.tvTickAt) / 1000);
-                delay = Math.max(20, state.tvTickAt + (k + 1) * 1000 + LOCK_OFFSET_MS - performance.now());
-            }
-        } else {
-            // acquire: back-to-back while the element is on screen (catch the tick
-            // frame); throttle to 1 Hz if it's gone (commercial/replay) so we don't
-            // spin — we still assume sync (green) meanwhile.
-            delay = state.nullStreak >= 3 ? 1000 : 0;
-        }
-        state.ocrTimer = setTimeout(runLoop, delay);
+        // De-sync drifts slowly and the wide OCR crop is heavy, so sample sparsely
+        // (~5 s). Search a little faster until we have a first reference read.
+        const interval = state.lastTvMs == null ? 2000 : OCR_INTERVAL_MS;
+        state.ocrTimer = setTimeout(runLoop, interval);
     }
 
-    // Seek the data+audio straight to the TV's clock position — either direction,
-    // no waiting. Both clocks count down, so TV behind ⇒ tvMs > dMs ⇒ data ahead
-    // ⇒ seek back; TV ahead ⇒ seek forward. After any jump, re-acquire the phase.
-    //   green = in sync   yellow = correcting / can't skip forward yet   red = no read
+    // Bring the data+audio to the TV's clock position. Both clocks count DOWN (time
+    // remaining), so dMs < tvMs ⇒ data is AHEAD of the TV, dMs > tvMs ⇒ behind.
+    // Strategy (cheap pauses over laggy seeks):
+    //   • data AHEAD  → PAUSE and let the TV catch up; never seek backward.
+    //   • data BEHIND → seek forward to TV + 5 s (overshoot) so we land ahead and the
+    //                   pause-branch fine-syncs back. If TV + 5 s is past the live
+    //                   edge → go to live; if already at live and still behind → hold.
+    //   green = in sync   yellow = correcting / can't catch up   red = no read
     function correct(tvMs, dMs, now, inSync) {
         if (tvMs == null || dMs == null) {
-            // Synced element not on screen (commercial / replay) or unreadable —
-            // assume we're still in sync and wait; only show "searching" (yellow)
-            // before we've ever locked on.
             setLight(state.lastTvMs != null ? 'ok' : 'adjust');
             return;
         }
-        if (inSync) { state.jumpFrom = null; setLight('ok'); return; }
-        if (now < state.cooldownUntil) { setLight('adjust'); return; }   // let a prior seek settle
+        if (inSync) { resumeData(); state.jumpFrom = null; setLight('ok'); return; }
+        if (now < state.cooldownUntil) { setLight('adjust'); return; }   // let a pause / seek settle
 
         const cur = currentOffset();
         if (cur == null) { setLight('error'); return; }
-        const deltaS = (tvMs - dMs) / 1000;
-        if (deltaS < 0) {
-            // TV ahead → seek forward. If the last attempt didn't advance, there's
-            // no data ahead yet (live edge) → stay yellow and wait, don't spam.
-            if (state.jumpFrom != null && (cur - state.jumpFrom) < 0.5) { setLight('adjust'); return; }
-            state.jumpFrom = cur;
-        } else {
-            state.jumpFrom = null;                 // backward is always reachable
+
+        const aheadS = (tvMs - dMs) / 1000;         // + ⇒ data ahead of the TV
+        if (aheadS > 0) {
+            // DATA AHEAD → pause and resume once the TV catches up (~aheadS seconds at
+            // 1× real time). No backward seek.
+            const waitS = Math.min(aheadS, MAX_PAUSE_S);
+            pauseData();
+            if (state.resumeTimer) clearTimeout(state.resumeTimer);
+            state.resumeTimer = setTimeout(resumeData, waitS * 1000);
+            state.cooldownUntil = now + waitS * 1000 + SEEK_COOLDOWN_MS;
+            state.jumpFrom = null;
+            setLight('adjust');
+            return;
         }
-        seekTo(cur + (dMs - tvMs) / 1000);
+
+        // DATA BEHIND → move forward. If a prior forward seek didn't advance, we're
+        // pinned at the live edge with the TV ahead → nothing to do, hold yellow.
+        if (state.jumpFrom != null && (cur - state.jumpFrom) < 0.5) { setLight('adjust'); return; }
+        const target = cur + (-aheadS) + FWD_OVERSHOOT_S;   // TV position + 5 s overshoot
+        state.jumpFrom = cur;
+        if (state.maxOffset != null && target >= state.maxOffset) {
+            seekLiveCmd();                          // can't reach TV + 5 s → jump to live edge
+        } else {
+            seekTo(target);                         // skip to TV + 5 s
+        }
         state.cooldownUntil = now + SEEK_COOLDOWN_MS;
-        toAcquire();                               // data jumped → re-lock the phase
         setLight('adjust');
     }
 
