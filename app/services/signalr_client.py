@@ -115,6 +115,7 @@ class F1SignalRClient:
         self._connection: Optional[Any] = None
         self._is_connected = False
         self._is_running = False
+        self._force_reconnect = False   # set by force_reconnect() → serve loop drops + reconnects
         self._thread: Optional[threading.Thread] = None
 
         self._output_file = None
@@ -387,8 +388,16 @@ class F1SignalRClient:
         self._t_last_message = time.time()
 
         # Monitor connection
+        self._force_reconnect = False
         while self._is_running and self._is_connected:
             time.sleep(1)
+            if self._force_reconnect:
+                # A data-stall watchdog asked us to reconnect (connection alive but
+                # silent — no messages, not even Heartbeats). Drop so the reconnect
+                # loop re-negotiates + re-subscribes (NOT 'idle', which would end).
+                self._force_reconnect = False
+                logger.warning("SignalR force-reconnect requested (data stall) — dropping")
+                return "dropped"
             if self._timeout > 0 and time.time() - self._t_last_message > self._timeout:
                 logger.warning(f"No data for {self._timeout}s, disconnecting...")
                 return "idle"
@@ -487,6 +496,24 @@ class F1SignalRClient:
         whether the capture has truly ended.
         """
         return bool(self._thread and self._thread.is_alive())
+
+    @property
+    def last_message_age(self) -> float:
+        """Seconds since the last message of ANY kind (incl. Heartbeat) arrived.
+
+        Heartbeats are server-pushed regardless of on-track activity, so a large
+        age means the connection is silently dead, not just a quiet session.
+        """
+        return time.time() - self._t_last_message
+
+    def force_reconnect(self) -> None:
+        """Thread-safe: ask the serve loop to drop and reconnect (data stall).
+
+        Only meaningful while connected; the serve loop checks the flag each
+        second and returns 'dropped', so _run_connection re-establishes the
+        connection with backoff instead of ending the capture.
+        """
+        self._force_reconnect = True
 
     @property
     def message_count(self) -> int:
