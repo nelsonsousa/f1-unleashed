@@ -706,13 +706,14 @@ window.downloadSession = async function(year, eventName, sessionName, btn) {
     btn.disabled = true;
     btn.textContent = 'Downloading…';
     try {
-        const sessionType = sessionTypeFromName(sessionName);
+        // Specific session name (e.g. "Practice 1") — the backend matches on name
+        // and can't disambiguate FP1/FP2/FP3 from the generic "practice".
         const resp = await fetch(`${API_BASE}/livetiming/fetch`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 year, meeting_name: eventName,
-                session_type: sessionType,
+                session_type: sessionName,
             }),
         });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -733,13 +734,15 @@ window.redownloadSession = async function(year, eventName, sessionName, btn) {
     const prev = btn.innerHTML;
     btn.innerHTML = '…';
     try {
-        const sessionType = sessionTypeFromName(sessionName);
+        // Send the SPECIFIC session name (e.g. "Practice 1"), not the generic
+        // practice/qualifying/race type — the backend matches on session name and
+        // can't disambiguate FP1/FP2/FP3 from "practice".
         const resp = await fetch(`${API_BASE}/livetiming/fetch`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 year, meeting_name: eventName,
-                session_type: sessionType, force: true,
+                session_type: sessionName, force: true,
             }),
         });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -763,13 +766,12 @@ window.downloadAllSessions = async function(year, eventName, btn) {
     for (const s of (ev.sessions || [])) {
         if (sessionIsCached(ev, s.name)) continue;
         try {
-            const sessionType = sessionTypeFromName(s.name);
             await fetch(`${API_BASE}/livetiming/fetch`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     year, meeting_name: eventName,
-                    session_type: sessionType,
+                    session_type: s.name,   // specific session name (not the generic type)
                 }),
             });
         } catch (e) { console.error(e); }
