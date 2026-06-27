@@ -36,6 +36,8 @@ The implementation (= Python services, processors, JavaScript components, OCR/sy
 
 No external setup required. F1Unleashed captures the commentary HLS feed alongside the data feed and anchors it via the HLS `PROGRAM-DATE-TIME` tag (= continuous re-anchor by a background side-car). The audio displayed in the player is the broadcast UTC of each sample, kept aligned with the data clock without virtual loopbacks or cross-correlation.
 
+**Known issue — anchor offset.** The broadcast `PROGRAM-DATE-TIME` anchor is not always accurate: the commentary can end up offset from the data by a variable amount (a few seconds up to ~30 s), and the offset differs from session to session. When this happens, use the **Delay** box next to the volume control (seconds, `ss.SSS`) to manually align the audio — positive plays the commentary later, negative earlier. Reducing the anchor's variance is on the roadmap.
+
 ### Weather radar
 
 Uses [Rainbow.ai](https://rainbow.ai/) for precipitation-radar imagery (rendered through a blue intensity palette). A free API key (30,000 calls/month, no hourly cap) is sufficient for normal use.
