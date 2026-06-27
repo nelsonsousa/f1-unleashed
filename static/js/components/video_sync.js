@@ -1,32 +1,31 @@
 /**
- * Video sync (Trello: 3-video-sync) — Phase 1: capture + OCR readout.
+ * Video sync (Trello: 3-video-sync) — ON-DEMAND one-shot.
  *
  * The TV broadcast is watched on mute alongside the (already-synced) data +
- * commentary. This component screen-shares the TV picture, OCRs its session
- * clock, and compares it to the data clock so the two can be aligned.
+ * commentary. Click the "Video sync" button to align playback to the TV
+ * picture: we briefly screen-share, OCR the on-screen clock (P/Q) or lap
+ * counter (race), seek the data ONCE to match, then RELEASE the capture — so
+ * there is ZERO ongoing cost between syncs. Both clocks advance at 1×, so once
+ * aligned they stay aligned (within ~1 s) with no continuous correction.
  *
- *   1. "Video sync" button → getDisplayMedia picks the TV window/tab/screen.
- *   2. The user drags a box over the on-screen session clock (P/Q countdown).
- *      The crop is stored (as fractions of the frame) so it persists.
- *   3. Each second we crop that region, OCR it with Tesseract.js, and show
- *      TV clock vs data clock + the delta.
+ *   P/Q:  one frame → OCR the session clock → seek by the difference (<1 s).
+ *   Race: click near a lap change → capture the lap counter 1×/s for ~10 s →
+ *         batch-OCR → find the lap-increment frame → align it to the data's
+ *         lap-cross. Pre-race start/restart anchoring is on ENTER.
  *
- * Phase 2 will use the delta to hold the data clock until the TV catches up
- * (TV behind), or warn the user to pause the TV (TV ahead). This phase only
- * READS and reports — it never touches playback.
+ * Manual helpers (keyboard, once video sync has been used): ENTER jumps to the
+ * next session start/restart; "+"/"=" nudge data forward ~0.5 s; "−" pauses
+ * ~0.1 s so the TV catches up.
  */
 
 (function () {
-    // Auto-detected timing regions per session type, [x0,y0,x1,y1] as fractions
-    // of the 16:9 VIDEO CONTENT rect (not the captured frame) — the video is
-    // always 16:9, but on a 16:10 screen it's letterboxed with top/bottom bars.
-    // We detect the content rect at runtime (detectContentRect) and map these
-    // fractions into it, so it works whether shared from a TV (no bars) or a
-    // MacBook (bars). OCR tries the regions in order; first plausible time wins.
+    // OCR regions, [x0,y0,x1,y1] as fractions of the 16:9 VIDEO CONTENT rect
+    // (letterbox-aware via detectContentRect). Race uses a lap-counter box; P/Q
+    // uses a wide upper-left sweep (the clock's exact spot varies by broadcast).
     const REGIONS = {
-        practice:   [[0.05, 0.122, 0.20, 0.178], [0.04, 0.194, 0.19, 0.250]],  // session clock, then pre-session countdown
-        qualifying: [[0.05, 0.122, 0.20, 0.178], [0.04, 0.194, 0.19, 0.250]],
-        race:       [[0.05, 0.139, 0.20, 0.172]],                              // lap counter
+        practice:   [[0.05, 0.122, 0.20, 0.178]],
+        qualifying: [[0.05, 0.122, 0.20, 0.178]],
+        race:       [[0.05, 0.139, 0.20, 0.172]],   // lap counter
     };
     function sessionRegions() {
         const t = ((window.SESSION_CONFIG || {}).sessionType || '').toLowerCase();
@@ -35,78 +34,49 @@
     function isRace() {
         return ((window.SESSION_CONFIG || {}).sessionType || '').toLowerCase() === 'race';
     }
-    // Pre-race countdown — LAYOUT-AGNOSTIC. The countdown graphic's size/position
-    // varies by broadcaster and even by graphic (a small persistent badge vs a
-    // large "STARTS IN" overlay), so we can't hardcode a tight box. We OCR a WIDE
-    // upper-left sweep, regex out every MM:SS, and accept the one that actually
-    // ticks DOWN at wall-clock rate (the real countdown; static numbers don't).
-    const RACE_COUNTDOWN_REGION = [0.0, 0.04, 0.22, 0.30];  // wide upper-left sweep
-    const CD_MAX_MS = 45 * 60 * 1000;   // sane countdown ceiling
-    const CD_MATCH_TOL_MS = 1200;       // |observed − (anchor − elapsed)| to be "the same countdown"
-    const CD_CONFIRM_MS = 2500;         // must track this long (drop ~2.5s) before we trust it
+
+    // P/Q session clock: OCR a WIDE upper-left sweep over the timing graphic and
+    // regex out the clock anchored on the session badge (a tight box lands on a
+    // leaderboard row). One read is enough for <1 s sync.
+    const PQ_CLOCK_SWEEP = [0.0, 0.0, 0.35, 0.45];  // wide upper-left block (content-rect fractions)
+    const PQ_MATCH_TOL_MS = 90000;                  // accept the MM:SS candidate within 90 s of the data clock
 
     const OCR_UPSCALE = 3;                          // enlarge crop for legibility
     const LUMA_THRESHOLD = 140;                     // light text → dark on white
     const WHITE_THR = 165;                          // near-white caption isolation (wide sweep)
 
-    // Sampling strategy: on start we OCR back-to-back ("acquire") to catch the
-    // exact frame the TV clock ticks; once found we lock to 1 Hz, sampling just
-    // after each expected tick (LOCK_OFFSET_MS later) and assuming the TV keeps
-    // ticking in step. An unexpected read or a coarse jump drops back to acquire.
-    const LOCK_OFFSET_MS = 150;
-    // Re-verify the tick phase about once a minute with a short burst (in case it
-    // has drifted). The element returning after a dropout also forces a re-check.
-    const RECHECK_INTERVAL_MS = 60000;
+    const LAG_COMP_S = 0.5;                         // ENTER / "+" bias the target ahead (server fetch lag)
 
-    // Within INSYNC_S we treat it as synced and DON'T re-sync; beyond that we seek
-    // the data+audio straight to the TV's position — backward or forward.
-    const INSYNC_S = 0.5;
-    // The server takes a moment to fetch the exact instant, so seeks land a touch
-    // short. Bias ENTER / "+" jumps this far AHEAD of the requested instant
-    // (manual "−" pause/play and the scrubber are unaffected).
-    const LAG_COMP_S = 0.5;
+    // Race on-demand sync: capture the lap-counter crop once a second for this
+    // many frames, then batch-OCR and find when the counter ticked up.
+    const RACE_BURST_FRAMES = 10;
+    const RACE_BURST_INTERVAL_MS = 1000;
+    const PQ_CLOCK_TRIES = 4;                       // OCR attempts for a good clock read
 
-    // Robustness: the synced element (session clock / lap counter) isn't always
-    // on screen — commercials, replays — and OCR can misread. We reject reads
-    // that don't track our locked countdown and ASSUME WE STAY IN SYNC until the
-    // real element returns (never seek on its absence). We only re-acquire when
-    // the off-reads form their OWN steady countdown for REACQUIRE_AFTER samples
-    // (a genuine new clock, e.g. a session-phase change). After a seek, let the
-    // data clock settle before measuring again so we don't thrash.
-    const PLAUSIBLE_TOL_MS = 3000;
-    const REACQUIRE_AFTER = 4;
-    const SEEK_COOLDOWN_MS = 800;
-
-    const state = {
-        active: false,
-        stream: null,
-        video: null,                                // hidden <video> of the stream
-        content: { x0: 0, y0: 0, x1: 1, y1: 1 },     // 16:9 video rect within the frame (letterbox-aware)
-        worker: null,
-        sparseWorker: null,                         // psm-11 worker for the wide countdown sweep
-        cdAnchors: [],                              // [{val,at}] countdown candidates being verified
-        ocrTimer: null,
-        jumpFrom: null,                             // data offset at last forward-seek (live-edge check)
-        lastTvMs: null,                             // last ACCEPTED TV read (plausibility filter)
-        lastTvAt: 0,
-        candMs: null, candAt: 0, candCount: 0,      // candidate new clock during off-reads
-        cooldownUntil: 0,                           // suppress seeks until this perf-clock time
-        mode: 'acquire',                            // 'acquire' (fast) | 'locked' (1 Hz, phase-locked)
-        prevSec: null,                              // last whole-second TV value (tick detection)
-        tvTickAt: null,                             // perf time of the last detected TV tick
-        tvTickVal: null,                            // whole-second value at that tick
-        lastReacqAt: 0,                             // perf time the tick was last freshly pinned
-        nullStreak: 0,                              // consecutive reads with no element on screen
-        // ── race lap-sync ──
-        dataLap: null, dataLapAt: 0, lapIntervalMs: 90000, dataTotalLaps: null,
-        tvLap: null, tvCross: null, dataCross: null, alignedLap: null, offLapStreak: 0,
+    // Screen-capture constraints: low fps + 1080p keep the (brief) decode light;
+    // we only need one good frame (P/Q) or 1 frame/s (race).
+    const CAPTURE = {
+        video: { displaySurface: 'monitor', frameRate: { ideal: 5, max: 8 },
+                 width: { max: 1920 }, height: { max: 1080 } },
+        audio: false,
     };
 
-    // base.js declares `messageBus` as a top-level const — a global binding but
-    // NOT a property of window — so reference it bare, not via window.
-    function bus() {
-        return (typeof messageBus !== 'undefined') ? messageBus : null;
-    }
+    const state = {
+        enabled: false,    // user has used video sync this session (gates +/− nudges)
+        busy: false,       // a one-shot sync is in progress
+        stream: null,
+        video: null,
+        content: { x0: 0, y0: 0, x1: 1, y1: 1 },   // 16:9 video rect within the frame (letterbox-aware)
+        worker: null,                               // psm-7 tight single-line (clock / lap)
+        textWorker: null,                           // psm-6 alphanumeric header sweep (P/Q locate)
+        // race lap data, maintained by the raceLaps sub (for race-cross alignment)
+        dataLap: null, dataLapAt: 0, lapIntervalMs: 90000, dataTotalLaps: null, dataCross: null,
+    };
+
+    // ── Bus helpers ──────────────────────────────────────────────────────
+    // base.js declares `messageBus` as a top-level const (a global binding, NOT
+    // a window property), so reference it bare.
+    function bus() { return (typeof messageBus !== 'undefined') ? messageBus : null; }
     function seekTo(offsetS) {
         const b = bus();
         if (b && typeof b.send === 'function') b.send({ cmd: 'seek', offset: Math.max(0, offsetS) });
@@ -115,20 +85,17 @@
         const b = bus();
         return (b && typeof b.getCurrentOffset === 'function') ? b.getCurrentOffset() : null;
     }
+    const delay = (ms) => new Promise(r => setTimeout(r, ms));
 
-    // ── Element + status helpers ─────────────────────────────────────────
+    // ── Status light ─────────────────────────────────────────────────────
+    // green = synced, yellow = working, red = couldn't read, grey = idle.
     const $ = (id) => document.getElementById(id);
-
-    // The traffic light is the only indicator: green = in sync, yellow =
-    // correcting / can't skip forward yet, red = clock unreadable.
     function setLight(cls) {
         const l = $('videoSyncLight');
         if (l) l.className = 'video-sync-light' + (cls ? ' ' + cls : '');
     }
 
-    // Debug: enable with  localStorage.setItem('videoSyncDebug','1')  then reload.
-    // Logs to the console and shows the OCR crop (top-right) so you can check the
-    // region lands on the element and see what's being read.
+    // ── Debug (localStorage videoSyncDebug=1) ────────────────────────────
     function debugOn() { try { return localStorage.getItem('videoSyncDebug') === '1'; } catch (e) { return false; } }
     function dbg(...a) { if (debugOn()) console.log('[video-sync]', ...a); }
     function showDebugCrop(canvas, label) {
@@ -140,11 +107,8 @@
                 + 'border:1px solid #0f0;padding:4px;font:11px monospace;color:#0f0;text-align:center';
             document.body.appendChild(box);
         }
-        const img = canvas.toDataURL();
-        box.innerHTML = `<div>${label || ''}</div><img src="${img}" style="max-width:280px;display:block">`;
+        box.innerHTML = `<div>${label || ''}</div><img src="${canvas.toDataURL()}" style="max-width:280px;display:block">`;
     }
-    // Debug: the whole captured frame with the content rect (cyan) and the OCR
-    // regions drawn, so you can see whether the boxes land on the elements.
     function showDebugFrame() {
         if (!debugOn() || !state.video) return;
         let box = $('vsDebug2');
@@ -165,112 +129,80 @@
         };
         ctx.strokeStyle = '#0ff'; ctx.lineWidth = 1;
         ctx.strokeRect(cr.x0 * w, cr.y0 * h, cw * w, ch * h);          // content rect
-        if (isRace()) { rect(RACE_COUNTDOWN_REGION, 'yellow'); rect(sessionRegions()[0], 'lime'); }
-        else sessionRegions().forEach(r => rect(r, 'lime'));
-        box.innerHTML = '<div>frame · cyan=content yellow=countdown green=clock/lap</div>';
+        rect(isRace() ? sessionRegions()[0] : PQ_CLOCK_SWEEP, 'lime');  // OCR region
+        box.innerHTML = '<div>frame · cyan=content green=clock/lap</div>';
         box.appendChild(c);
     }
 
     // ── Clock parsing ────────────────────────────────────────────────────
-    // Accepts "H:MM:SS", "MM:SS", "M:SS.s" → milliseconds. Returns null if no
-    // sane time is present (OCR noise, blank, etc.).
     function parseClock(str) {
         if (!str) return null;
         const m = String(str).match(/(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.(\d))?/);
         if (!m) return null;
         const h = m[1] ? parseInt(m[1], 10) : 0;
-        const min = parseInt(m[2], 10);
-        const sec = parseInt(m[3], 10);
+        const min = parseInt(m[2], 10), sec = parseInt(m[3], 10);
         const tenths = m[4] ? parseInt(m[4], 10) : 0;
         if (min > 59 || sec > 59) return null;
         return (((h * 60 + min) * 60 + sec) * 10 + tenths) * 100;
     }
-
-    // The data-side session clock the TV also shows: the header's "Session
-    // Time" remaining (#sessionClock), kept live by header.js.
+    // The data-side session clock the TV also shows (#sessionClock, kept live by header.js).
     function dataClockMs() {
         const el = $('sessionClock');
         return el ? parseClock(el.textContent) : null;
     }
 
-    // ── Toggle / lifecycle ───────────────────────────────────────────────
-    async function toggle() {
-        if (state.active || state.stream) { stop(); return; }
-        try {
-            state.stream = await navigator.mediaDevices.getDisplayMedia({
-                // Prefer a full monitor (so the fullscreen video fills the frame);
-                // ≥10 fps to time the tick edge. The black-area crop (detectContentRect)
-                // then trims letterbox bars / surrounding desktop down to the video.
-                video: { displaySurface: 'monitor', frameRate: { ideal: 30 } }, audio: false,
-            });
-        } catch (e) {
-            setLight('');                           // share cancelled / denied
-            return;
-        }
-        state.stream.getVideoTracks()[0].addEventListener('ended', stop);
-        state.video = document.createElement('video');
-        state.video.muted = true;
-        state.video.srcObject = state.stream;
-        await state.video.play().catch(() => {});
-        setLight('arming');
-        beginOcr();                                 // auto-region detection by session type
-    }
-
-    function stop() {
-        if (state.ocrTimer) { clearTimeout(state.ocrTimer); state.ocrTimer = null; }
-        if (state.stream) { state.stream.getTracks().forEach(t => t.stop()); state.stream = null; }
-        state.video = null;
-        state.active = false;
-        state.jumpFrom = null;
-        state.lastTvMs = null;
-        setLight('');
-    }
-
-    // ── OCR loop ─────────────────────────────────────────────────────────
+    // ── OCR workers ──────────────────────────────────────────────────────
     async function ensureWorker() {
         if (state.worker) return state.worker;
         if (typeof Tesseract === 'undefined') { setLight('error'); return null; }
         const worker = await Tesseract.createWorker('eng');
         await worker.setParameters({
             tessedit_char_whitelist: '0123456789:./',  // clock MM:SS and lap n/total
-            tessedit_pageseg_mode: '7',             // single text line
-            debug_file: '/dev/null',                // quiet Tesseract's core stats spam
+            tessedit_pageseg_mode: '7',                 // single text line
+            debug_file: '/dev/null',
         });
         state.worker = worker;
         return worker;
     }
-
-    // Second worker for the wide pre-race countdown sweep: sparse-text mode reads
-    // digits scattered anywhere in the crop (the single-line worker can't).
-    async function ensureSparseWorker() {
-        if (state.sparseWorker) return state.sparseWorker;
+    async function ensureTextWorker() {
+        if (state.textWorker) return state.textWorker;
         if (typeof Tesseract === 'undefined') return null;
         const worker = await Tesseract.createWorker('eng');
         await worker.setParameters({
-            tessedit_char_whitelist: '0123456789:',
-            tessedit_pageseg_mode: '11',            // sparse text: find scattered digits
+            tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:./ ',
+            tessedit_pageseg_mode: '6',                 // uniform block of text (multi-line)
             debug_file: '/dev/null',
         });
-        state.sparseWorker = worker;
+        state.textWorker = worker;
         return worker;
     }
 
-    // Every MM:SS in the OCR text that could be a countdown (≤ CD_MAX), in ms.
-    function cdCandidates(text) {
-        const out = [], re = /(\d{1,2}):(\d{2})/g;
+    function pqBadgeRx() {
+        const t = ((window.SESSION_CONFIG || {}).sessionType || '').toLowerCase();
+        return t === 'qualifying'
+            ? /QUAL|SHOOT|\bS?Q\s?[123]\b/i
+            : /PRACT|\bFP\s?[123]\b/i;
+    }
+    // Every H:MM:SS / MM:SS in the OCR text, in ms (session clocks run up to ~2h).
+    function timeCandidates(text) {
+        const out = [], re = /(?:(\d{1,2}):)?([0-5]?\d):([0-5]\d)(?:\.(\d))?/g;
         let m;
         while ((m = re.exec(String(text))) !== null) {
-            const min = +m[1], sec = +m[2];
-            if (sec > 59) continue;
-            const ms = (min * 60 + sec) * 1000;
-            if (ms > 0 && ms <= CD_MAX_MS) out.push(ms);
+            const h = m[1] ? +m[1] : 0, mn = +m[2], s = +m[3], t = m[4] ? +m[4] : 0;
+            const ms = (((h * 60 + mn) * 60 + s) * 10 + t) * 100;
+            if (ms > 0 && ms <= 120 * 60 * 1000) out.push(ms);
         }
         return out;
     }
+    function parseLap(str) {
+        if (!str) return null;
+        let m = String(str).match(/(\d{1,2})\s*\/\s*(\d{1,3})/);   // "6/66" → leader 6
+        if (m) return parseInt(m[1], 10);
+        m = String(str).match(/\b(\d{1,2})\b/);                    // fallback: first 1–2 digits
+        return m ? parseInt(m[1], 10) : null;
+    }
 
-    // Detect the 16:9 video rect inside the captured frame by trimming near-black
-    // letterbox/pillarbox bars, so region fractions map to the video, not the
-    // bars. Falls back to the full frame if detection looks degenerate.
+    // ── Frame capture + crop ─────────────────────────────────────────────
     const _dc = document.createElement('canvas');
     function detectContentRect() {
         const v = state.video;
@@ -281,9 +213,6 @@
         ctx.drawImage(v, 0, 0, w, h);
         const d = ctx.getImageData(0, 0, w, h).data;
         const bright = (x, y) => { const i = (y * w + x) * 4; return (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) > 32; };
-        // A row/col is "video" only if a fraction of it is non-black — robust to a
-        // video that doesn't fill the captured frame (shared whole/extended
-        // desktop) and to stray bright pixels, unlike per-pixel edge trimming.
         const FR = 0.06;
         const rowOn = [], colOn = [];
         for (let y = 0; y < h; y++) { let c = 0; for (let x = 0; x < w; x++) if (bright(x, y)) c++; rowOn[y] = c / w >= FR; }
@@ -299,10 +228,10 @@
     const _c = document.createElement('canvas');
     function cropToCanvas(region, opts) {
         const v = state.video;
-        if (!region || !v) return null;
+        if (!region || !v || !v.videoWidth) return null;
         const up = (opts && opts.upscale) || OCR_UPSCALE;
         const mode = (opts && opts.mode) || 'otsu';
-        const c = state.content;                    // content-relative → frame fractions
+        const c = state.content;
         const cw = c.x1 - c.x0, ch = c.y1 - c.y0;
         const fx0 = c.x0 + region[0] * cw, fy0 = c.y0 + region[1] * ch;
         const fx1 = c.x0 + region[2] * cw, fy1 = c.y0 + region[3] * ch;
@@ -317,17 +246,12 @@
         const img = ctx.getImageData(0, 0, _c.width, _c.height);
         const d = img.data, n = d.length / 4;
         if (mode === 'white') {
-            // Keep only near-white pixels (broadcast captions are white) → black on
-            // white. For a WIDE crop over a mixed bright/dark scene, global Otsu
-            // fails (bright track merges with white text); white-isolation doesn't.
             for (let i = 0; i < d.length; i += 4) {
                 const mn = Math.min(d[i], d[i + 1], d[i + 2]);
                 const px = mn > WHITE_THR ? 0 : 255;
                 d[i] = d[i + 1] = d[i + 2] = px; d[i + 3] = 255;
             }
         } else {
-            // Otsu auto-threshold over this crop's luma histogram (tight single-
-            // element regions), then binarise light text → dark on white.
             const hist = new Array(256).fill(0), lum = new Uint8Array(n);
             for (let i = 0, j = 0; i < d.length; i += 4, j++) {
                 const l = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) | 0;
@@ -350,342 +274,152 @@
         ctx.putImageData(img, 0, 0);
         return _c;
     }
+    // cropToCanvas reuses one backing canvas — clone when we must keep a frame.
+    function cloneCanvas(src) {
+        const c = document.createElement('canvas');
+        c.width = src.width; c.height = src.height;
+        c.getContext('2d').drawImage(src, 0, 0);
+        return c;
+    }
 
-    // Plausibility filter: a real clock counts down ~1 s per real second, so a
-    // good read tracks the last one. Reject OCR misreads (which would seek the
-    // data wildly); re-acquire if it stays off (a genuine jump). Returns the
-    // accepted TV ms, or null when this read can't be trusted.
-    function acceptTv(tvMs, now) {
-        if (tvMs == null) return null;                  // nothing on screen → caller assumes sync
-        if (state.lastTvMs != null) {
-            const expected = state.lastTvMs - (now - state.lastTvAt);
-            if (Math.abs(tvMs - expected) > PLAUSIBLE_TOL_MS) {
-                // Off our locked countdown (commercial overlay / replay clock / misread).
-                // Adopt a NEW reference only if these off-reads form their own steady
-                // countdown for a while; otherwise assume we're still in sync.
-                const candExp = state.candMs != null ? state.candMs - (now - state.candAt) : null;
-                state.candCount = (candExp != null && Math.abs(tvMs - candExp) <= PLAUSIBLE_TOL_MS)
-                    ? state.candCount + 1 : 1;
-                state.candMs = tvMs; state.candAt = now;
-                if (state.candCount >= REACQUIRE_AFTER) {   // a genuine new clock → re-acquire
-                    state.lastTvMs = tvMs; state.lastTvAt = now;
-                    state.candMs = null; state.candCount = 0;
-                    return tvMs;
-                }
-                return null;                                 // treat as no-read for now
-            }
+    function collectWords(data) {
+        const out = [];
+        const push = (w) => { if (w && w.text && w.bbox) out.push({ text: String(w.text).trim(), bbox: w.bbox }); };
+        if (Array.isArray(data.words)) data.words.forEach(push);
+        if (Array.isArray(data.blocks)) data.blocks.forEach(b =>
+            (b.paragraphs || []).forEach(p => (p.lines || []).forEach(l => (l.words || []).forEach(push))));
+        if (Array.isArray(data.lines)) data.lines.forEach(l => (l.words || []).forEach(push));
+        return out;
+    }
+
+    // OCR the wide P/Q sweep, anchored on the session badge, → { ms, at } (or null).
+    // `at` is the frame-capture instant (performance.now), so the caller can add
+    // back the OCR elapsed time — the TV clock keeps counting down while OCR runs,
+    // and without this the seek lands `ocr_duration` behind the live picture.
+    async function readSessionClock() {
+        const at = performance.now();
+        const sweep = cropToCanvas(PQ_CLOCK_SWEEP, { upscale: 2 });
+        const tw = await ensureTextWorker();
+        if (!sweep || !tw) return null;
+        showDebugCrop(sweep, 'clock sweep');
+        let data;
+        try { ({ data } = await tw.recognize(sweep)); } catch (e) { return null; }
+        const badgeRe = pqBadgeRx();
+        const badgeLine = (data.text || '').split('\n').map(s => s.trim())
+            .find(ln => badgeRe.test(ln) && timeCandidates(ln).length);
+        if (badgeLine) return { ms: timeCandidates(badgeLine)[0], at };
+        // No badge → nearest-data across all time-like reads (filters lap times/gaps).
+        const all = timeCandidates(data.text || ''), dRef = dataClockMs();
+        if (all.length && dRef != null) {
+            let b = null, bd = Infinity;
+            for (const c of all) { const dd = Math.abs(c - dRef); if (dd < bd) { bd = dd; b = c; } }
+            return bd <= PQ_MATCH_TOL_MS ? { ms: b, at } : null;
         }
-        state.candMs = null; state.candCount = 0;
-        state.lastTvMs = tvMs; state.lastTvAt = now;
-        return tvMs;
+        return null;
     }
 
-    // Enter the fast capture phase to (re-)pin the tick instant. Keeps tvTickAt
-    // as a fallback — the TV's tick is unaffected by our data seeks.
-    function toAcquire() {
-        state.mode = 'acquire'; state.prevSec = null;
-        state.candMs = null; state.candCount = 0;
+    // ── On-demand sync ───────────────────────────────────────────────────
+    function releaseStream() {
+        if (state.stream) { try { state.stream.getTracks().forEach(t => t.stop()); } catch (e) {} state.stream = null; }
+        state.video = null;
+    }
+    async function waitForFrame(video, timeoutMs) {
+        const t0 = performance.now();
+        while (!video.videoWidth && performance.now() - t0 < timeoutMs) await delay(50);
     }
 
-    async function beginOcr() {
-        state.active = true;
-        setLight('adjust');
-        const worker = await ensureWorker();
-        if (!worker) { stop(); return; }
-        state.content = detectContentRect();            // strip letterbox bars (16:9 video rect)
-        dbg('content rect', JSON.stringify(state.content), 'video',
-            state.video && (state.video.videoWidth + 'x' + state.video.videoHeight));
-        if (isRace()) { resetRace(); runRaceLoop(); }   // lap-increment sync
-        else { toAcquire(); runLoop(); }                // P/Q clock tick sync
+    // Button handler: run one sync, then release the capture (no ongoing cost).
+    async function runSync() {
+        if (state.busy) return;
+        releaseStream();
+        state.busy = true; state.enabled = true;
+        setLight('arming');
+        try {
+            state.stream = await navigator.mediaDevices.getDisplayMedia(CAPTURE);
+        } catch (e) {
+            setLight('');                      // share cancelled / denied
+            state.busy = false; return;
+        }
+        try {
+            state.video = document.createElement('video');
+            state.video.muted = true;
+            state.video.srcObject = state.stream;
+            await state.video.play().catch(() => {});
+            await waitForFrame(state.video, 3000);
+            state.content = detectContentRect();
+            showDebugFrame();
+            const ok = isRace() ? await syncRaceOnce() : await syncClockOnce();
+            setLight(ok ? 'ok' : 'error');
+        } catch (e) {
+            dbg('sync error', e);
+            setLight('error');
+        } finally {
+            releaseStream();                   // tear down the capture — zero idle cost
+            state.busy = false;
+        }
     }
 
-    async function runLoop() {
-        if (!state.active) return;
-        // Hidden tab/window → timers throttle and the capture freezes, so reads
-        // are stale. Idle until visible, then re-acquire the tick phase cleanly.
-        if (document.hidden) { toAcquire(); state.ocrTimer = setTimeout(runLoop, 1000); return; }
-        showDebugFrame();
-
+    // P/Q: read the clock once, seek the data so it matches. Both count DOWN, so
+    // to show tvMs remaining we move by (dMs − tvMs): + → back, − → forward.
+    async function syncClockOnce() {
+        let read = null;
+        for (let i = 0; i < PQ_CLOCK_TRIES && read == null; i++) {
+            read = await readSessionClock();
+            if (read == null) await delay(300);
+        }
         const now = performance.now();
-        // OCR the session's candidate regions in priority order; first that yields
-        // a plausible time wins (e.g. ongoing clock, else the pre-session countdown).
-        let raw = null;
-        for (const region of sessionRegions()) {
-            const canvas = cropToCanvas(region);
-            if (!canvas) continue;
-            showDebugCrop(canvas, 'clock region');
-            try {
-                const { data } = await state.worker.recognize(canvas);
-                const t = parseClock(data.text);
-                dbg('clock OCR:', JSON.stringify((data.text || '').trim()), '→ ms', t);
-                if (t != null) { raw = t; break; }
-            } catch (e) { /* transient OCR error */ }
-            if (!state.active) return;
+        const dMs = dataClockMs(), cur = currentOffset();
+        if (read == null || dMs == null || cur == null) {
+            dbg('clock sync: incomplete read', read, dMs, cur);
+            return false;
         }
-        if (!state.active) return;
-
-        const tvMs = acceptTv(raw, now);
-        if (tvMs == null) state.nullStreak++; else state.nullStreak = 0;
-        const dMs = dataClockMs();
-        const inSync = (tvMs != null && dMs != null) && Math.abs(tvMs - dMs) <= INSYNC_S * 1000;
-
-        correct(tvMs, dMs, now, inSync);
-
-        // Tick detection: a clean 1-second decrement is a real tick. Use it to
-        // lock the phase (once coarse-aligned). An unexpected value — including
-        // the element returning after a dropout (it won't be prevSec−1) — drops
-        // back to acquire so we re-check the tick instant.
-        if (tvMs != null) {
-            const sec = Math.round(tvMs / 1000);
-            if (state.prevSec != null && sec === state.prevSec - 1) {
-                state.tvTickAt = now; state.tvTickVal = sec;
-                if (state.mode === 'acquire' && inSync) { state.mode = 'locked'; state.lastReacqAt = now; }
-            } else if (state.mode === 'locked' && state.prevSec != null && sec !== state.prevSec) {
-                toAcquire();
-            }
-            state.prevSec = sec;
-        }
-
-        // Schedule the next sample.
-        let delay;
-        if (state.mode === 'locked' && state.tvTickAt != null) {
-            if (now - state.lastReacqAt > RECHECK_INTERVAL_MS) {
-                toAcquire();                         // periodic short burst to re-pin the tick
-                delay = 0;
-            } else {
-                const k = Math.floor((performance.now() - state.tvTickAt) / 1000);
-                delay = Math.max(20, state.tvTickAt + (k + 1) * 1000 + LOCK_OFFSET_MS - performance.now());
-            }
-        } else {
-            // acquire: back-to-back while the element is on screen (catch the tick
-            // frame); throttle to 1 Hz if it's gone (commercial/replay) so we don't
-            // spin — we still assume sync (green) meanwhile.
-            delay = state.nullStreak >= 3 ? 1000 : 0;
-        }
-        state.ocrTimer = setTimeout(runLoop, delay);
-    }
-
-    // Seek the data+audio straight to the TV's clock position — either direction,
-    // no waiting. Both clocks count down, so TV behind ⇒ tvMs > dMs ⇒ data ahead
-    // ⇒ seek back; TV ahead ⇒ seek forward. After any jump, re-acquire the phase.
-    //   green = in sync   yellow = correcting / can't skip forward yet   red = no read
-    function correct(tvMs, dMs, now, inSync) {
-        if (tvMs == null || dMs == null) {
-            // Synced element not on screen (commercial / replay) or unreadable —
-            // assume we're still in sync and wait; only show "searching" (yellow)
-            // before we've ever locked on.
-            setLight(state.lastTvMs != null ? 'ok' : 'adjust');
-            return;
-        }
-        if (inSync) { state.jumpFrom = null; setLight('ok'); return; }
-        if (now < state.cooldownUntil) { setLight('adjust'); return; }   // let a prior seek settle
-
-        const cur = currentOffset();
-        if (cur == null) { setLight('error'); return; }
-        const deltaS = (tvMs - dMs) / 1000;
-        if (deltaS < 0) {
-            // TV ahead → seek forward. If the last attempt didn't advance, there's
-            // no data ahead yet (live edge) → stay yellow and wait, don't spam.
-            if (state.jumpFrom != null && (cur - state.jumpFrom) < 0.5) { setLight('adjust'); return; }
-            state.jumpFrom = cur;
-        } else {
-            state.jumpFrom = null;                 // backward is always reachable
-        }
-        seekTo(cur + (dMs - tvMs) / 1000);
-        state.cooldownUntil = now + SEEK_COOLDOWN_MS;
-        toAcquire();                               // data jumped → re-lock the phase
-        setLight('adjust');
-    }
-
-    // Becoming visible again: re-acquire the tick phase from scratch.
-    document.addEventListener('visibilitychange', () => {
-        if (state.active && !document.hidden) toAcquire();
-    });
-
-    // ── Race lap-sync ────────────────────────────────────────────────────
-    // The data leader lap arrives on the `raceLaps` topic; the TV lap badge is
-    // OCR'd. At 1 Hz we confirm the same lap; near the lap end (derived ≥95% of
-    // the running lap time) we burst to catch the TV's exact lap-increment frame
-    // and align it to the data's lap-cross. Losing sync mid-lap is acceptable.
-
-    function resetRace() {
-        state.tvLap = null; state.tvCross = null; state.alignedLap = null;
-        state.offLapStreak = 0; state.cooldownUntil = 0; state.cdAnchors = [];
-        // dataLap / dataLapAt / lapIntervalMs are maintained by the raceLaps sub.
-    }
-
-    function parseLap(str) {
-        if (!str) return null;
-        let m = String(str).match(/(\d{1,2})\s*\/\s*(\d{1,3})/);   // "6/66" → leader 6
-        if (m) return parseInt(m[1], 10);
-        m = String(str).match(/\b(\d{1,2})\b/);                    // fallback: first 1–2 digits
-        return m ? parseInt(m[1], 10) : null;
-    }
-
-    // Accept a TV lap read only if it tracks the count-up (== last or last+1), or
-    // matches the data lap (re-acquire). Filters OCR misreads / merged digits.
-    function acceptLap(lap) {
-        if (lap == null) return null;
-        if (state.tvLap != null && lap !== state.tvLap && lap !== state.tvLap + 1) {
-            return lap === state.dataLap ? lap : null;
-        }
-        return lap;
-    }
-
-    // Pair the data and TV lap-cross for the same lap and seek so they coincide.
-    function tryAlign(now) {
-        const d = state.dataCross, t = state.tvCross;
-        if (!d || !t || d.lap !== t.lap || state.alignedLap === d.lap) return;
-        if (now < state.cooldownUntil) return;
-        const cur = currentOffset();
-        if (cur == null) return;
-        state.alignedLap = d.lap;
-        const offsetS = (d.at - t.at) / 1000;   // +: data crossed later ⇒ behind ⇒ seek forward
-        if (Math.abs(offsetS) < INSYNC_S) { setLight('ok'); return; }   // within deadband → don't re-sync
-        seekTo(cur + offsetS);
-        state.cooldownUntil = now + SEEK_COOLDOWN_MS;
-        setLight('adjust');
-    }
-
-    // Pre-race: OCR the countdown (which counts down to the SCHEDULED start, not
-    // lights-out) and coarse-align the data to the broadcast wall-clock:
-    //   broadcast_now = scheduled_start − countdown  →  seek data there.
-    // The data clock is UTC, so the target offset = broadcast_now − data_start.
-    async function tryCountdownAlign(now) {
-        const b = bus();
-        if (scheduledStartMs == null) { dbg('countdown skip: scheduledStartMs unknown (no startDate on sessionInfo — rebuild/reconnect?)'); return false; }
-        if (!b || !b.clockTime || !b.startTime) { dbg('countdown skip: clock not ready'); return false; }
-        if (b.clockTime.getTime() > scheduledStartMs + 5000) { dbg('countdown skip: past scheduled start'); return false; }
-        const worker = await ensureSparseWorker();
-        if (!worker) return false;
-        const canvas = cropToCanvas(RACE_COUNTDOWN_REGION, { upscale: 2, mode: 'white' });
-        if (!canvas) return false;
-        showDebugCrop(canvas, 'countdown sweep');
-        let txt = '';
-        try { const { data } = await worker.recognize(canvas); txt = (data.text || '').trim(); }
-        catch (e) { dbg('countdown OCR error', e); return false; }
-        const cands = cdCandidates(txt);
-        dbg('countdown sweep:', JSON.stringify(txt.replace(/\s+/g, ' ')), '→ cand(s)', cands.map(c => (c / 1000).toFixed(0)));
-        if (!cands.length) { state.cdAnchors = []; return false; }   // nothing time-like → defer to lap/ENTER
-
-        // Match candidates against tracked anchors. A real countdown ticks DOWN at
-        // wall-clock rate, so the observed value should equal (anchor − elapsed);
-        // confirm one only after it has tracked for CD_CONFIRM_MS (static numbers
-        // diverge from anchor−elapsed and get dropped before they can confirm).
-        let confirmed = null;
-        const next = [];
-        for (const a of state.cdAnchors) {
-            const exp = a.val - (now - a.at);
-            const hit = cands.find(c => Math.abs(c - exp) <= CD_MATCH_TOL_MS);
-            if (hit == null) continue;                              // anchor's countdown vanished → drop
-            next.push(a);                                           // keep ORIGINAL val/at (measures total drop)
-            if (now - a.at >= CD_CONFIRM_MS) confirmed = hit;       // tracked long enough → trust it
-        }
-        for (const c of cands) {                                    // seed anchors for untracked candidates
-            if (!next.some(a => Math.abs((a.val - (now - a.at)) - c) <= CD_MATCH_TOL_MS)) next.push({ val: c, at: now });
-        }
-        state.cdAnchors = next;
-
-        if (confirmed == null) { setLight('arming'); return true; } // still verifying which number is the countdown
-
-        const cur = b.getCurrentOffset();
-        const target = (scheduledStartMs - confirmed - b.startTime.getTime()) / 1000;
-        dbg('countdown CONFIRMED', (confirmed / 1000).toFixed(0), 's → target', target.toFixed(1), 'cur', cur.toFixed(1), 'Δ', (cur - target).toFixed(1));
-        if (Math.abs(cur - target) <= 1.5) { setLight('ok'); return true; }   // aligned → green
-        if (target >= 0 && now >= state.cooldownUntil) {
-            seekTo(target); state.cooldownUntil = now + SEEK_COOLDOWN_MS; dbg('countdown SEEK →', target.toFixed(1));
-        }
-        setLight('adjust');
+        const tvMs = read.ms;
+        // The TV clock counted down by `elapsedS` while OCR ran; add it back so we
+        // align to the LIVE picture, not the (now-stale) captured frame.
+        const elapsedS = (now - read.at) / 1000;
+        const deltaS = (dMs - tvMs) / 1000 + elapsedS;
+        dbg('clock sync: tv', (tvMs / 1000).toFixed(1), 'data', (dMs / 1000).toFixed(1),
+            'ocr elapsed', elapsedS.toFixed(2), 'Δ', deltaS.toFixed(2));
+        if (Math.abs(deltaS) >= 0.5) { seekTo(cur + deltaS); dbg('clock sync: seek', (cur + deltaS).toFixed(1)); }
         return true;
     }
 
-    async function runRaceLoop() {
-        if (!state.active) return;
-        if (document.hidden) { state.ocrTimer = setTimeout(runRaceLoop, 1000); return; }
-        showDebugFrame();
-
-        const now = performance.now();
-        const b = bus();
-        const cur = (b && typeof b.getCurrentOffset === 'function') ? b.getCurrentOffset() : null;
-        const schedOff = (b && b.startTime && scheduledStartMs != null)
-            ? (scheduledStartMs - b.startTime.getTime()) / 1000 : null;
-        const lightsOff = raceStartMs != null ? raceStartMs / 1000 : null;
-
-        // Phase gating. The FORMATION LAP (scheduled start → lights-out) is a sync
-        // dead zone: the upper-left graphics churn and the lap counter isn't live,
-        // so any OCR there only causes false de-syncs. We HOLD (no OCR, assume in
-        // sync) through it, and resume sync via LAP NUMBERS only after lights-out.
-        // Boundaries: scheduledStartMs (sessionInfo) + raceStartMs (GREEN event).
-        if (cur != null && schedOff != null && lightsOff != null && cur >= schedOff && cur < lightsOff) {
-            setLight('ok');
-            state.ocrTimer = setTimeout(runRaceLoop, 500);
-            return;
+    // Race: capture the lap-counter crop 1×/s for ~10 s, then batch-OCR and find
+    // the frame where the counter ticked up — that's the TV lap-cross. Align it to
+    // the data's lap-cross for the same lap. (Click near a lap change.)
+    async function syncRaceOnce() {
+        const w = await ensureWorker();
+        if (!w) return false;
+        const frames = [];
+        for (let i = 0; i < RACE_BURST_FRAMES; i++) {
+            const crop = cropToCanvas(sessionRegions()[0]);
+            if (crop) { showDebugCrop(crop, `lap frame ${i + 1}/${RACE_BURST_FRAMES}`); frames.push({ img: cloneCanvas(crop), at: performance.now() }); }
+            if (i < RACE_BURST_FRAMES - 1) await delay(RACE_BURST_INTERVAL_MS);
         }
-        // Before lights-out: pre-race countdown align ONLY (never lap OCR — the lap
-        // region churns pre-race). After lights-out: fall through to lap-num sync.
-        const beforeLights = (lightsOff != null) ? (cur != null && cur < lightsOff)
-                                                 : (schedOff != null && cur != null && cur < schedOff);
-        if (beforeLights) {
-            if (await tryCountdownAlign(now)) {       // pre-race coarse alignment
-                if (!state.active) return;
-                state.ocrTimer = setTimeout(runRaceLoop, 250);   // fast: anchors track the tick-down
-                return;
-            }
-            if (!state.active) return;
-            setLight('adjust');                       // searching for the countdown (use ENTER if absent)
-            state.ocrTimer = setTimeout(runRaceLoop, 300);
-            return;
+        const reads = [];
+        for (const f of frames) {
+            let lap = null;
+            try { const { data } = await w.recognize(f.img); lap = parseLap(data.text); } catch (e) {}
+            reads.push({ lap, at: f.at });
         }
-        if (!state.active) return;
-        let lap = null;
-        const canvas = cropToCanvas(sessionRegions()[0]);   // lap-counter region
-        if (canvas) {
-            showDebugCrop(canvas, 'lap region');
-            try { const { data } = await state.worker.recognize(canvas); lap = parseLap(data.text); dbg('lap OCR:', JSON.stringify((data.text || '').trim()), '→', lap); }
-            catch (e) { /* transient OCR error */ }
+        dbg('race frames →', reads.map(r => r.lap));
+        // First lap increment within the window = the TV lap-cross.
+        let crossAt = null, crossLap = null;
+        for (let i = 1; i < reads.length; i++) {
+            const a = reads[i - 1].lap, b = reads[i].lap;
+            if (a != null && b != null && b === a + 1) { crossAt = reads[i].at; crossLap = b; break; }
         }
-        if (!state.active) return;
-        lap = acceptLap(lap);
-
-        // TV lap-cross detection (count-up by 1).
-        if (lap != null && state.tvLap != null && lap === state.tvLap + 1) {
-            state.tvCross = { lap, at: now };
-            tryAlign(now);
-        }
-        if (lap != null) state.tvLap = lap;
-
-        // Coarse / light: same lap as the data?
-        if (lap == null || state.dataLap == null) {
-            setLight(state.tvLap != null ? 'ok' : 'adjust');   // badge gone → assume in sync
-        } else if (lap === state.dataLap) {
-            state.offLapStreak = 0; setLight('ok');
-        } else {
-            // Sustained whole-lap mismatch (not a near-cross ±1): best-effort coarse
-            // seek by the lap difference × the running lap time.
-            state.offLapStreak++;
-            const frac = state.dataLapAt ? (now - state.dataLapAt) / state.lapIntervalMs : 0;
-            if (state.offLapStreak >= 3 && frac < 0.9 && now >= state.cooldownUntil) {
-                const cur = currentOffset();
-                if (cur != null) {
-                    seekTo(cur - (state.dataLap - lap) * state.lapIntervalMs / 1000);
-                    state.cooldownUntil = now + SEEK_COOLDOWN_MS;
-                    state.offLapStreak = 0;
-                }
-            }
-            setLight('adjust');
-        }
-
-        // Burst near the expected lap-cross (≥95% of the lap), else 1 Hz.
-        let burst = false;
-        if (state.dataLapAt && state.dataLap === state.tvLap) {
-            const frac = (now - state.dataLapAt) / state.lapIntervalMs;
-            burst = frac >= 0.95 && frac < 1.3;
-        }
-        state.ocrTimer = setTimeout(runRaceLoop, burst ? 120 : 1000);
+        if (crossAt == null) { dbg('race sync: no lap increment in the capture window — click nearer a lap change'); return false; }
+        const dCross = (state.dataCross && state.dataCross.lap === crossLap) ? state.dataCross : null;
+        const cur = currentOffset();
+        if (!dCross || cur == null) { dbg('race sync: no matching data lap-cross for lap', crossLap); return false; }
+        const offsetS = (dCross.at - crossAt) / 1000;   // +: data crossed later ⇒ behind ⇒ seek forward
+        seekTo(cur + offsetS);
+        dbg('race sync: lap', crossLap, 'Δ', offsetS.toFixed(2), '→ seek', (cur + offsetS).toFixed(1));
+        return true;
     }
 
-    // Data leader lap (+ derive the running lap time from cross intervals). This
-    // runs whenever raceLaps fires; alignment only while video sync is active.
+    // ── Data leader lap (maintained for the race-cross alignment) ────────
     messageBus.on('raceLaps', (data) => {
         if (!data || typeof data.currentLap !== 'number') return;
         if (data.totalLaps) state.dataTotalLaps = data.totalLaps;
@@ -694,20 +428,15 @@
             const now = performance.now();
             if (state.dataLapAt) {
                 const iv = now - state.dataLapAt;
-                if (iv > 20000 && iv < 300000)              // sane lap time → smooth
-                    state.lapIntervalMs = 0.5 * state.lapIntervalMs + 0.5 * iv;
+                if (iv > 20000 && iv < 300000) state.lapIntervalMs = 0.5 * state.lapIntervalMs + 0.5 * iv;
             }
             state.dataLapAt = now;
             state.dataCross = { lap: L, at: now };
-            if (state.active && isRace()) tryAlign(now);
         }
         state.dataLap = L;
     });
 
     // ── Start / restart anchors (ENTER) ──────────────────────────────────
-    // GREEN markers from session:events = session starts + restarts (after red
-    // flags). For a race the FIRST green is lights-out; for P/Q each green is a
-    // part start or a restart.
     let raceStartMs = null;        // race lights-out (first green)
     let greenOffsetsMs = [];       // all green offsets, ascending
     messageBus.on('session:events', (events) => {
@@ -719,7 +448,6 @@
             .sort((a, b) => a - b);
         raceStartMs = greenOffsetsMs.length ? greenOffsetsMs[0] : null;
     });
-    // Scheduled session start (formation-lap start), UTC ms — from sessionInfo.
     let scheduledStartMs = null;
     function parseGmt(s) {
         const m = String(s || '').match(/(-?)(\d+):(\d+):(\d+)/);
@@ -730,18 +458,10 @@
             const naive = Date.parse(/[zZ]$/.test(d.startDate) ? d.startDate : d.startDate + 'Z');
             if (!isNaN(naive)) scheduledStartMs = naive - parseGmt(d.gmtOffset);
         }
-        dbg('sessionInfo startDate=', d && d.startDate, 'gmt=', d && d.gmtOffset, '→ scheduledStartMs', scheduledStartMs);
     });
-    // Seek with lag compensation — ENTER / "+" only (bias the target ahead so the
-    // server's fetch lag doesn't undershoot the requested instant).
     function seekAhead(offsetS) { seekToOffset(Math.max(0, offsetS + LAG_COMP_S)); }
 
     // ENTER — jump to the next start / restart.
-    //   Practice / Qualifying: the next GREEN (part start, or restart after a red
-    //     flag) AFTER the current position.
-    //   Race: > 1 min before lights-out (or no green known yet) → scheduled start
-    //     (formation lap); from there through the end of lap 1 → lights-out;
-    //     lap 2 onward → no-op (lap-increment sync owns it).
     document.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter') return;
         const tag = (e.target && e.target.tagName) || '';
@@ -750,12 +470,10 @@
         const b = bus();
         if (!b || !b.startTime || typeof b.getCurrentOffset !== 'function') return;
         const cur = b.getCurrentOffset();
-
         if (isRace()) {
             if (state.dataLap != null && state.dataLap >= 2) return;   // lap 2+ → disabled
             const greenS = raceStartMs != null ? raceStartMs / 1000 : null;
-            const schedS = scheduledStartMs != null
-                ? (scheduledStartMs - b.startTime.getTime()) / 1000 : null;
+            const schedS = scheduledStartMs != null ? (scheduledStartMs - b.startTime.getTime()) / 1000 : null;
             if (greenS == null || cur < greenS - 60) {
                 if (schedS != null) { e.preventDefault(); seekAhead(schedS); }   // → scheduled start
             } else {
@@ -763,19 +481,17 @@
             }
             return;
         }
-        // Practice / Qualifying: jump to the next green/restart ahead of us.
         const next = greenOffsetsMs.find(o => o / 1000 > cur + 1);
         if (next != null) { e.preventDefault(); seekAhead(next / 1000); }
     });
 
-    // Manual fine nudges while video sync is active:
-    //   "+" / "=" : TV ahead → skip the data forward ~0.5 s (with lag comp).
-    //   "−"       : TV behind → pause ~0.1 s and resume so the TV catches up
-    //               (no seek → unaffected by server response time).
+    // Manual fine nudges (once video sync has been used this session):
+    //   "+" / "=" : TV ahead → skip the data forward ~0.5 s.
+    //   "−"       : TV behind → pause ~0.1 s and resume so the TV catches up.
     document.addEventListener('keydown', (e) => {
         const tag = (e.target && e.target.tagName) || '';
         if (tag === 'INPUT' || tag === 'TEXTAREA' || e.isComposing) return;
-        if (!state.active) return;
+        if (!state.enabled) return;
         const b = bus();
         if (e.key === '+' || e.key === '=') {
             e.preventDefault();
@@ -790,5 +506,5 @@
         }
     });
 
-    window.toggleVideoSync = toggle;
+    window.toggleVideoSync = runSync;
 })();

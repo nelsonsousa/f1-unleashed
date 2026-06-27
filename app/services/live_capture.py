@@ -96,8 +96,14 @@ class LiveCaptureService:
     # or expired HLS URL can leave it hung with the output file not growing. We
     # poll commentary.aac's size and restart ffmpeg when it stops growing.
     _AUDIO_CHECK_S = 10         # poll cadence
-    _AUDIO_STALE_S = 30         # no file growth this long → stalled (HLS segs ~6-10s)
+    _AUDIO_STALE_S = 90         # no file growth this long → stalled (was 30s; too strict —
+                                #   HLS lulls / brief network blips tripped false restarts)
     _AUDIO_WIND_DOWN_S = 600    # don't restart if non-heartbeat data idle this long (session ending)
+    # SignalR data-stall watchdog: the connection can go silently half-open (no
+    # data, not even Heartbeats) with no error. Heartbeats are the liveness signal;
+    # if NONE arrive for _SIGNALR_STALL_S while connected, force a reconnect.
+    _SIGNALR_CHECK_S = 15       # poll cadence
+    _SIGNALR_STALL_S = 60       # no message (incl. Heartbeat) this long → force reconnect
 
     def __init__(self, cache_dir: Optional[str] = None):
         # Default to the OS-appropriate cache location (card 25).
@@ -235,6 +241,11 @@ class LiveCaptureService:
             audio_stale_watchdog = asyncio.create_task(
                 self._audio_stale_watchdog(cache_path)
             )
+            # Force a SignalR reconnect if the data feed goes silently dead
+            # (connected but no messages/Heartbeats) — it won't self-recover.
+            signalr_stall_watchdog = asyncio.create_task(
+                self._signalr_stall_watchdog(signalr_client)
+            )
 
             while capture["status"] == CaptureStatus.CAPTURING:
                 try:
@@ -315,7 +326,21 @@ class LiveCaptureService:
                 audio_stale_watchdog.cancel()
             except NameError:
                 pass
+            try:
+                signalr_stall_watchdog.cancel()
+            except NameError:
+                pass
             self._stop_audio(cache_path)
+            # Final audio re-anchor on the COMPLETE recording, ONCE and off the
+            # event loop. This used to run inside _stop_audio on every mid-session
+            # ffmpeg restart (full signature scan → CPU pegged + loop blocked).
+            try:
+                from app.services import audio_sync
+                final_start = await asyncio.to_thread(audio_sync.apply_sync, cache_path)
+                if final_start is not None:
+                    logger.info(f"Final audio sync applied: start_utc={final_start.isoformat()}")
+            except Exception as e:
+                logger.warning(f"Final audio sync failed for {cache_path.name}: {e}")
             if signalr_client:
                 signalr_client.stop()
 
@@ -679,6 +704,38 @@ class LiveCaptureService:
                 logger.error(f"Audio restart failed: {e}")
             last_size, last_grow = -1, time.monotonic()
 
+    async def _signalr_stall_watchdog(self, signalr_client) -> None:
+        """Force a reconnect when the SignalR data feed goes silently dead.
+
+        The connection can stay 'connected' yet deliver nothing — no timing data
+        AND no Heartbeats — with no error or close (a half-open socket). With the
+        client's idle timeout disabled (timeout=0), nothing detects this, so the
+        capture freezes indefinitely. Heartbeats are server-pushed regardless of
+        on-track activity, so a long message-age means a DEAD connection, not a
+        quiet session. We act only while CONNECTED; mid-reconnect we let the
+        client's own backoff loop work. force_reconnect() drops the socket so the
+        reconnect loop re-negotiates + re-subscribes — it never ends a live
+        session (per the retry-with-backoff policy)."""
+        try:
+            await asyncio.sleep(self._SIGNALR_STALL_S)   # startup grace (connect + subscribe)
+        except asyncio.CancelledError:
+            return
+        while True:
+            try:
+                await asyncio.sleep(self._SIGNALR_CHECK_S)
+            except asyncio.CancelledError:
+                return
+            if signalr_client is None or not signalr_client.is_alive:
+                continue                       # thread ended → the capture loop owns it
+            if not signalr_client.is_connected:
+                continue                       # already reconnecting → let backoff work
+            age = signalr_client.last_message_age
+            if age > self._SIGNALR_STALL_S:
+                logger.warning(
+                    f"SignalR data stalled ({age:.0f}s, no messages/Heartbeats) "
+                    f"— forcing reconnect")
+                signalr_client.force_reconnect()
+
     def _audio_tail_is_silent(self, cache_path: Path) -> bool:
         """True iff the LAST 60 s of commentary.aac contain no
         non-silent frames (silencedetect -50 dB / 60 s threshold)."""
@@ -822,16 +879,12 @@ class LiveCaptureService:
             size_mb = audio_file.stat().st_size / (1024 * 1024)
             logger.info(f"Audio recording saved: {audio_file} ({size_mb:.1f} MB)")
 
-        # Final sync pass once the recording is complete — the periodic
-        # watcher may have run earlier on a shorter file; this guarantees
-        # we re-anchor start_utc against the full first-audible detection.
-        try:
-            from app.services import audio_sync
-            new_start = audio_sync.apply_sync(cache_path)
-            if new_start is not None:
-                logger.info(f"Final audio sync applied: start_utc={new_start.isoformat()}")
-        except Exception as e:
-            logger.warning(f"Final audio sync failed for {cache_path.name}: {e}")
+        # NOTE: the final re-anchor (apply_sync) is intentionally NOT run here.
+        # _stop_audio is called on every mid-session ffmpeg restart (via
+        # _start_audio), and a full signature-scan re-sync per restart pegged the
+        # CPU and blocked the event loop. It now runs ONCE, off the loop, at true
+        # capture end (see _capture_loop finally). Live anchoring during the
+        # session is handled by PdtTracker + _schedule_sync_watcher.
 
     def get_status(self, session_id: str) -> dict:
         """Get capture status."""

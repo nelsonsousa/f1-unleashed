@@ -537,7 +537,8 @@
 /* Scrubber */
 .scrubber {
     flex: 1;
-    min-width: 150px;
+    /* Trimmed from 150px to make room for the audio Delay input. */
+    min-width: 120px;
     position: relative;
     height: 32px;
 }
