@@ -62,6 +62,8 @@
             offsetSeconds: 0,        // user-tunable shift (positive → audio plays later)
             decoupled: false,        // when true, syncAudio is suppressed; user controls audio
             seekOffset: 0,           // server-side ?t= seek position (s); added to currentTime when computing displayed-time
+            mse: false,              // true → audio is an MSE SourceBuffer (seekable; never ?t=-reload)
+            mseSeek: null,           // fn(targetSec): re-window the SourceBuffer around a far seek
         },
 
         // Animation
@@ -619,7 +621,7 @@
         // Single endpoint — server decides whether to tail-follow (capture
         // in progress) or serve the static file with range support.
         const audioUrl = `/api/v1/livetiming/audio/${encodeURIComponent(sessionName)}`;
-        const audio = new Audio(audioUrl);
+        const audio = new Audio();
         audio.preload = 'auto';
         audio.loop = false;
         state.audio.element = audio;
@@ -627,21 +629,36 @@
         // its actual playback position without depending on this IIFE's
         // private state.
         window.f1audioElement = audio;
-        // adjustAudioOffset retained as a no-op shim for tv_sync.js;
-        // with PDT-anchored audio there's no user-facing offset to
-        // adjust anymore.
-        window.adjustAudioOffset = function(_deltaSec) {};
+        // Manual audio delay. The PDT broadcast anchor is sometimes offset (see
+        // README known issues), so let the user shift the audio against the data
+        // clock. `offsetSeconds` is `off` in clockToAudioSec: positive → audio
+        // plays LATER (hear older content), negative → audio plays EARLIER.
+        function setAudioOffset(sec) {
+            if (!state.audio.isReady || !isFinite(sec)) { updateAudioDelayInput(); return; }
+            state.audio.offsetSeconds = sec;
+            updateAudioDelayInput();
+            alignAudioToClock();   // re-pull audio to the corrected position now
+            syncAudio();
+        }
+        // Absolute (Delay input box, ss.SSS) and relative (tv_sync.js) entry points.
+        window.applyAudioDelay = function(raw) { setAudioOffset(parseFloat(raw)); };
+        window.adjustAudioOffset = function(deltaSec) { setAudioOffset((state.audio.offsetSeconds || 0) + deltaSec); };
 
         if (audioInfo.start_utc) {
             state.audio.startUtc = new Date(audioInfo.start_utc.replace('Z', '+00:00'));
         }
         state.audio.offsetSeconds = audioInfo.offset_seconds || 0;
+        updateAudioDelayInput();
         // Per-segment map for piecewise clock→audio mapping + inter-segment gap
         // skipping on multi-segment replays (I15). Empty → single-anchor path.
         state.audio.segments = (audioInfo.segments || [])
             .filter(s => s.start_utc && s.duration > 0)
             .map(s => ({ startMs: new Date(s.start_utc.replace('Z', '+00:00')).getTime(),
                          duration: s.duration }));
+        // True current audio length (s) — set by the MSE muxer as it indexes the
+        // (possibly still-growing) file; lets clockToAudioSec extend a live last
+        // segment past its connect-time snapshot duration. null → non-MSE path.
+        state.audio.totalAudioSec = null;
 
         audio.volume = state.audio.isMuted ? 0 : state.audio.volume;
         state.audio.isReady = true;
@@ -657,15 +674,127 @@
         const slider = document.getElementById('volumeSlider');
         if (slider) slider.value = String(Math.round(state.audio.volume * 100));
 
-        // Once we have an initial clock position, align the audio with
-        // the data clock so they start together. Required for non-
-        // seekable chunked streams (multi-segment replays) where the
-        // browser can't seek natively — we ask the server to start the
-        // stream from the right byte via ?t=.
+        // Source. Preferred: MSE — range-fetch the .aac, transmux ADTS→fMP4
+        // in-browser, feed a SourceBuffer (Route A). This makes LIVE audio
+        // natively seekable EXACTLY like replay (no chunked stream, no ?t=
+        // byte estimate). Fallback (no MSE/codec): the legacy stream URL, which
+        // the server still serves chunked (live) / range (replay).
+        state.audio.mse = mseAudioSupported();
+        state.audio.mseSeek = null;
+        if (state.audio.mse) startMseAudio(audio, audioUrl);
+        else audio.src = audioUrl;
+
+        // Once we have an initial clock position, align the audio with the data
+        // clock so they start together (native seek on the seekable buffer).
         audio.addEventListener('loadedmetadata', alignAudioToClock, { once: true });
         // Also try once we have a confirmed clock; loadedmetadata may
         // not fire reliably on chunked transfer.
         setTimeout(alignAudioToClock, 500);
+    }
+
+    // ── MSE audio (Route A: client transmux) ─────────────────────────────
+    const MSE_MIME = 'audio/mp4; codecs="mp4a.40.2"';
+    function mseAudioSupported() {
+        try {
+            return typeof MediaSource !== 'undefined'
+                && MediaSource.isTypeSupported(MSE_MIME)
+                && typeof AacFmp4 !== 'undefined' && !!AacFmp4;
+        } catch (e) { return false; }
+    }
+
+    // Range-fetch the .aac, transmux ADTS→fMP4 in-browser, feed an MSE
+    // SourceBuffer — live and replay alike (one uniform loop). The muxer keeps an
+    // EXACT frame index (AAC-LC = fixed 1024 samples/frame), so any seek lands on
+    // the exact frame. The SourceBuffer is a WINDOW around the play head (Firefox
+    // caps audio at ~12 min); a reconciling state machine clears/evicts/extends it
+    // toward [wantFrom, wantTo). The fetch only builds the index (raw + offsets);
+    // segments are cut from the in-memory bytes on demand — no re-fetch on seek.
+    function startMseAudio(audio, audioUrl) {
+        const url = audioUrl + (audioUrl.indexOf('?') >= 0 ? '&' : '?') + 'seekable=1';
+        const ms = new MediaSource();
+        audio.src = URL.createObjectURL(ms);
+        ms.addEventListener('sourceopen', function onOpen() {
+            ms.removeEventListener('sourceopen', onOpen);
+            let sb;
+            try { sb = ms.addSourceBuffer(MSE_MIME); }
+            catch (e) { adbg('MSE addSourceBuffer failed — fallback to stream URL', e); state.audio.mse = false; state.audio.mseSeek = null; audio.src = audioUrl; return; }
+            const mux = AacFmp4.create();
+            const FETCH = 4 * 1024 * 1024;      // fetch chunk size (bytes)
+            const AHEAD_S = 300, BEHIND_S = 45; // SourceBuffer window around the play head (s); < Firefox ~12-min cap
+            const SEG_FRAMES = 1024;            // frames per appended segment (~22 s)
+            let fetched = 0, pollTimer = null, initDone = false;
+            let haveFrom = 0, haveTo = 0;       // appended frame range [haveFrom, haveTo) (empty when equal)
+            let wantFrom = 0, wantTo = 0, rebuildAt = 0, clearing = false;
+
+            function framesPer(sec) { return Math.round(sec * mux.sampleRate() / 1024); }
+
+            // Reconcile the SourceBuffer toward [wantFrom, wantTo): ONE async op per
+            // call (clear → init → evict-behind → extend-forward), repeated on each
+            // updateend until settled.
+            function reconcile() {
+                if (!sb || sb.updating || !mux.ready()) return;
+                if (clearing) {
+                    if (sb.buffered.length) { try { sb.remove(sb.buffered.start(0), sb.buffered.end(sb.buffered.length - 1) + 1); } catch (_) {} return; }
+                    clearing = false; haveFrom = haveTo = rebuildAt;          // cleared → window starts at the target frame
+                }
+                if (!initDone) { try { sb.appendBuffer(mux.init()); initDone = true; } catch (e) { adbg('MSE init append err', e); } return; }
+                if (wantFrom > haveFrom && sb.buffered.length) {              // evict behind
+                    try { sb.remove(0, mux.frameTime(wantFrom)); haveFrom = wantFrom; } catch (_) {}
+                    return;
+                }
+                const target = Math.min(wantTo, mux.frameCount());           // only append fetched frames
+                if (target > haveTo) {                                       // extend forward (one segment, exact time)
+                    const i1 = Math.min(haveTo + SEG_FRAMES, target);
+                    try { sb.appendBuffer(mux.segment(haveTo, i1)); haveTo = i1; }
+                    catch (e) { if (!(e && e.name === 'QuotaExceededError')) adbg('MSE seg append err', e); }
+                }
+            }
+            sb.addEventListener('updateend', reconcile);
+            sb.addEventListener('error', () => adbg('MSE SourceBuffer "error" event'));
+            audio.addEventListener('error', () => adbg('MSE audio element error, code', audio.error && audio.error.code));
+            adbg('MSE SourceBuffer created for', MSE_MIME);
+
+            // Aim the window at `centerSec`. Play head outside the buffered range →
+            // clear + rebuild starting at the EXACT target frame; else evict behind
+            // + extend forward. Idempotent — safe to call often (fetch / timeupdate / seek).
+            function setWindow(centerSec) {
+                if (!mux.ready()) return;
+                const i = mux.frameAt(centerSec);
+                const lo = Math.max(0, i - framesPer(BEHIND_S)), hi = i + framesPer(AHEAD_S);
+                const empty = (haveFrom === haveTo);
+                if (!empty && (i < haveFrom || i > haveTo)) {                // disjoint → rebuild at the target frame
+                    clearing = true; rebuildAt = i;
+                } else if (empty) {
+                    haveFrom = haveTo = i;
+                }
+                wantFrom = lo; wantTo = hi;
+                reconcile();
+            }
+
+            // One uniform loop for live AND replay: pull bytes from the fetch
+            // offset, index them (mux.feed), catch up fast, then idle-poll for
+            // growth (a live file grows; a replay returns 416 — same code).
+            async function poll() {
+                let again = 3000;
+                try {
+                    const resp = await fetch(url, { headers: { Range: 'bytes=' + fetched + '-' + (fetched + FETCH - 1) } });
+                    if (resp.status === 206 || resp.status === 200) {
+                        const buf = new Uint8Array(await resp.arrayBuffer());
+                        if (buf.length) { mux.feed(buf); fetched += buf.length; }
+                        if (mux.ready()) state.audio.totalAudioSec = mux.duration();  // true length → clockToAudioSec
+                        if (buf.length >= FETCH) again = 0;
+                        setWindow(audio.currentTime);                        // extend with newly-indexed frames
+                    }
+                } catch (e) { adbg('MSE fetch error', e); }
+                pollTimer = setTimeout(poll, again);
+            }
+
+            // Re-window on a seek (lands on the exact frame); also extend during playback.
+            state.audio.mseSeek = function (targetSec) { setWindow(targetSec); };
+            audio.addEventListener('timeupdate', () => setWindow(audio.currentTime));
+
+            poll();
+        });
     }
 
     // Debug: enable with  localStorage.setItem('audioSyncDebug','1')  then reload.
@@ -683,12 +812,21 @@
             return (clockMs - state.audio.startUtc.getTime()) / 1000 - off;
         }
         let cum = 0;
-        for (const s of segs) {
+        for (let k = 0; k < segs.length; k++) {
+            const s = segs[k];
             if (clockMs < s.startMs) return null;          // before this segment → gap
-            if (clockMs < s.startMs + s.duration * 1000) {
+            // The LAST segment may still be growing (live capture): its true end
+            // is the audio that actually exists now (the muxer's exact duration),
+            // not the connect-time snapshot. For a completed replay file the muxer
+            // duration equals the summed segment durations, so this is a no-op.
+            let dur = s.duration;
+            if (k === segs.length - 1 && state.audio.totalAudioSec != null) {
+                dur = Math.max(dur, state.audio.totalAudioSec - cum);
+            }
+            if (clockMs < s.startMs + dur * 1000) {
                 return cum + (clockMs - s.startMs) / 1000 - off;
             }
-            cum += s.duration;
+            cum += dur;
         }
         return cum - off;                                  // past the last segment → clamp to end
     }
@@ -701,6 +839,14 @@
     // started LATER than the data feed — common on long pre-shows),
     // pause the audio entirely so it doesn't race ahead. We'll re-fire
     // alignAudioToClock when the data clock catches up.
+    // Diagnostic: is time `t` inside any buffered range of the element?
+    function targetWithinBuffered(audio, t) {
+        for (let i = 0; i < audio.buffered.length; i++) {
+            if (t >= audio.buffered.start(i) - 0.1 && t <= audio.buffered.end(i) + 0.1) return true;
+        }
+        return false;
+    }
+
     function alignAudioToClock() {
         const audio = state.audio.element;
         if (!audio || !state.audio.startUtc || !messageBus.clockTime) {
@@ -720,11 +866,18 @@
         const canSeek = audio.seekable && audio.seekable.length > 0
             && audio.seekable.end(audio.seekable.length - 1) > 0;
         if (canSeek) {
-            if (Math.abs(audio.currentTime - targetSec) > 1) {
+            // Runs on an EXPLICIT seek (state:seek-complete) + init — follow it
+            // exactly, NO deadband (small skips must not be lost). Continuous-drift
+            // thrash protection lives in syncAudio, not here. Native seek is cheap.
+            if (Math.abs(audio.currentTime - targetSec) > 0.1) {
                 adbg('align: SEEK', audio.currentTime.toFixed(2), '→', targetSec.toFixed(2));
                 audio.currentTime = targetSec;
-            } else {
-                adbg('align: no-seek (Δ', (audio.currentTime - targetSec).toFixed(2), '≤ 1s)');
+            }
+            // MSE window: if the target isn't buffered, re-window around it (the
+            // SourceBuffer only holds ~12 min; far seeks fall outside it).
+            if (state.audio.mse && state.audio.mseSeek && !targetWithinBuffered(audio, targetSec)) {
+                adbg('align: target unbuffered → MSE re-window', targetSec.toFixed(1));
+                state.audio.mseSeek(targetSec);
             }
             return;
         }
@@ -743,13 +896,12 @@
         const fileOffset = state.audio.seekOffset || 0;
         const expectedCurrentTime = targetSec - fileOffset;
         const drift = audio.currentTime - expectedCurrentTime;
-        // Only reload when drift is significant (≥ 5 s). Each reload
-        // tears down + re-fetches the chunked stream and re-buffers,
-        // so frequent reloads = the "1-2 s of audio then silent" loop
-        // observed during Monaco 2026 live. Real-time clock + audio
-        // both advance at 1× and stay in sync without intervention;
-        // we only need to correct after a buffer underrun.
-        if (Math.abs(drift) > 5) {
+        // This is the EXPLICIT-seek handler (state:seek-complete) + init, NOT a
+        // loop — so reload to follow even small jumps (>0.3 s). The "1-2 s then
+        // silent" reload-thrash came from CONTINUOUS correction (syncAudio), which
+        // keeps its own larger deadband; explicit seeks are infrequent (video sync
+        // is on-demand), so a reload-per-seek is fine and must not lose sync.
+        if (Math.abs(drift) > 0.3) {
             adbg('align: reload ?t=', targetSec.toFixed(2), '(non-seekable, drift', drift.toFixed(2), ')');
             reloadAudioAtOffset(targetSec);
         }
@@ -771,6 +923,11 @@
     function reloadAudioAtOffset(targetSec) {
         const audio = state.audio.element;
         if (!audio) return;
+        // MSE audio IS its own seekable source — replacing audio.src with a ?t=
+        // reload would detach the MediaSource and make the SourceBuffer unusable
+        // (NotSupportedError). Native currentTime seeking handles MSE; if it's
+        // not seekable yet, just wait for the buffer.
+        if (state.audio.mse) { adbg('reload skipped — MSE source'); return; }
         const intTarget = Math.floor(targetSec);
         // Two debounces:
         //   (a) Skip if same offset (= < 2 s drift since last reload).
@@ -923,6 +1080,14 @@
             });
         }
         updateAudioPlayButton();
+    }
+
+    // Reflect the current audio delay in the Delay input box (ss.SSS), unless
+    // the user is mid-edit (focused).
+    function updateAudioDelayInput() {
+        const el = document.getElementById('audioDelayInput');
+        if (!el || el === document.activeElement) return;
+        el.value = (state.audio.offsetSeconds || 0).toFixed(3);
     }
 
     // Reflect audio playState on the button (green when playing).
