@@ -629,15 +629,26 @@
         // its actual playback position without depending on this IIFE's
         // private state.
         window.f1audioElement = audio;
-        // adjustAudioOffset retained as a no-op shim for tv_sync.js;
-        // with PDT-anchored audio there's no user-facing offset to
-        // adjust anymore.
-        window.adjustAudioOffset = function(_deltaSec) {};
+        // Manual audio delay. The PDT broadcast anchor is sometimes offset (see
+        // README known issues), so let the user shift the audio against the data
+        // clock. `offsetSeconds` is `off` in clockToAudioSec: positive → audio
+        // plays LATER (hear older content), negative → audio plays EARLIER.
+        function setAudioOffset(sec) {
+            if (!state.audio.isReady || !isFinite(sec)) { updateAudioDelayInput(); return; }
+            state.audio.offsetSeconds = sec;
+            updateAudioDelayInput();
+            alignAudioToClock();   // re-pull audio to the corrected position now
+            syncAudio();
+        }
+        // Absolute (Delay input box, ss.SSS) and relative (tv_sync.js) entry points.
+        window.applyAudioDelay = function(raw) { setAudioOffset(parseFloat(raw)); };
+        window.adjustAudioOffset = function(deltaSec) { setAudioOffset((state.audio.offsetSeconds || 0) + deltaSec); };
 
         if (audioInfo.start_utc) {
             state.audio.startUtc = new Date(audioInfo.start_utc.replace('Z', '+00:00'));
         }
         state.audio.offsetSeconds = audioInfo.offset_seconds || 0;
+        updateAudioDelayInput();
         // Per-segment map for piecewise clock→audio mapping + inter-segment gap
         // skipping on multi-segment replays (I15). Empty → single-anchor path.
         state.audio.segments = (audioInfo.segments || [])
@@ -1069,6 +1080,14 @@
             });
         }
         updateAudioPlayButton();
+    }
+
+    // Reflect the current audio delay in the Delay input box (ss.SSS), unless
+    // the user is mid-edit (focused).
+    function updateAudioDelayInput() {
+        const el = document.getElementById('audioDelayInput');
+        if (!el || el === document.activeElement) return;
+        el.value = (state.audio.offsetSeconds || 0).toFixed(3);
     }
 
     // Reflect audio playState on the button (green when playing).
