@@ -644,6 +644,10 @@
             .filter(s => s.start_utc && s.duration > 0)
             .map(s => ({ startMs: new Date(s.start_utc.replace('Z', '+00:00')).getTime(),
                          duration: s.duration }));
+        // True current audio length (s) — set by the MSE muxer as it indexes the
+        // (possibly still-growing) file; lets clockToAudioSec extend a live last
+        // segment past its connect-time snapshot duration. null → non-MSE path.
+        state.audio.totalAudioSec = null;
 
         audio.volume = state.audio.isMuted ? 0 : state.audio.volume;
         state.audio.isReady = true;
@@ -766,6 +770,7 @@
                     if (resp.status === 206 || resp.status === 200) {
                         const buf = new Uint8Array(await resp.arrayBuffer());
                         if (buf.length) { mux.feed(buf); fetched += buf.length; }
+                        if (mux.ready()) state.audio.totalAudioSec = mux.duration();  // true length → clockToAudioSec
                         if (buf.length >= FETCH) again = 0;
                         setWindow(audio.currentTime);                        // extend with newly-indexed frames
                     }
@@ -796,12 +801,21 @@
             return (clockMs - state.audio.startUtc.getTime()) / 1000 - off;
         }
         let cum = 0;
-        for (const s of segs) {
+        for (let k = 0; k < segs.length; k++) {
+            const s = segs[k];
             if (clockMs < s.startMs) return null;          // before this segment → gap
-            if (clockMs < s.startMs + s.duration * 1000) {
+            // The LAST segment may still be growing (live capture): its true end
+            // is the audio that actually exists now (the muxer's exact duration),
+            // not the connect-time snapshot. For a completed replay file the muxer
+            // duration equals the summed segment durations, so this is a no-op.
+            let dur = s.duration;
+            if (k === segs.length - 1 && state.audio.totalAudioSec != null) {
+                dur = Math.max(dur, state.audio.totalAudioSec - cum);
+            }
+            if (clockMs < s.startMs + dur * 1000) {
                 return cum + (clockMs - s.startMs) / 1000 - off;
             }
-            cum += s.duration;
+            cum += dur;
         }
         return cum - off;                                  // past the last segment → clamp to end
     }

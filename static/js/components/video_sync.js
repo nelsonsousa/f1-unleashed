@@ -292,8 +292,12 @@
         return out;
     }
 
-    // OCR the wide P/Q sweep, anchored on the session badge, → clock ms (or null).
+    // OCR the wide P/Q sweep, anchored on the session badge, → { ms, at } (or null).
+    // `at` is the frame-capture instant (performance.now), so the caller can add
+    // back the OCR elapsed time — the TV clock keeps counting down while OCR runs,
+    // and without this the seek lands `ocr_duration` behind the live picture.
     async function readSessionClock() {
+        const at = performance.now();
         const sweep = cropToCanvas(PQ_CLOCK_SWEEP, { upscale: 2 });
         const tw = await ensureTextWorker();
         if (!sweep || !tw) return null;
@@ -303,13 +307,13 @@
         const badgeRe = pqBadgeRx();
         const badgeLine = (data.text || '').split('\n').map(s => s.trim())
             .find(ln => badgeRe.test(ln) && timeCandidates(ln).length);
-        if (badgeLine) return timeCandidates(badgeLine)[0];
+        if (badgeLine) return { ms: timeCandidates(badgeLine)[0], at };
         // No badge → nearest-data across all time-like reads (filters lap times/gaps).
         const all = timeCandidates(data.text || ''), dRef = dataClockMs();
         if (all.length && dRef != null) {
             let b = null, bd = Infinity;
             for (const c of all) { const dd = Math.abs(c - dRef); if (dd < bd) { bd = dd; b = c; } }
-            return bd <= PQ_MATCH_TOL_MS ? b : null;
+            return bd <= PQ_MATCH_TOL_MS ? { ms: b, at } : null;
         }
         return null;
     }
@@ -358,16 +362,24 @@
     // P/Q: read the clock once, seek the data so it matches. Both count DOWN, so
     // to show tvMs remaining we move by (dMs − tvMs): + → back, − → forward.
     async function syncClockOnce() {
-        let tvMs = null;
-        for (let i = 0; i < PQ_CLOCK_TRIES && tvMs == null; i++) {
-            tvMs = await readSessionClock();
-            if (tvMs == null) await delay(300);
+        let read = null;
+        for (let i = 0; i < PQ_CLOCK_TRIES && read == null; i++) {
+            read = await readSessionClock();
+            if (read == null) await delay(300);
         }
+        const now = performance.now();
         const dMs = dataClockMs(), cur = currentOffset();
-        dbg('clock sync: tv', tvMs != null ? (tvMs / 1000).toFixed(1) : null,
-            'data', dMs != null ? (dMs / 1000).toFixed(1) : null);
-        if (tvMs == null || dMs == null || cur == null) return false;
-        const deltaS = (dMs - tvMs) / 1000;
+        if (read == null || dMs == null || cur == null) {
+            dbg('clock sync: incomplete read', read, dMs, cur);
+            return false;
+        }
+        const tvMs = read.ms;
+        // The TV clock counted down by `elapsedS` while OCR ran; add it back so we
+        // align to the LIVE picture, not the (now-stale) captured frame.
+        const elapsedS = (now - read.at) / 1000;
+        const deltaS = (dMs - tvMs) / 1000 + elapsedS;
+        dbg('clock sync: tv', (tvMs / 1000).toFixed(1), 'data', (dMs / 1000).toFixed(1),
+            'ocr elapsed', elapsedS.toFixed(2), 'Δ', deltaS.toFixed(2));
         if (Math.abs(deltaS) >= 0.5) { seekTo(cur + deltaS); dbg('clock sync: seek', (cur + deltaS).toFixed(1)); }
         return true;
     }
