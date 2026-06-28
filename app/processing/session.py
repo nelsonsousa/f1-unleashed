@@ -12,6 +12,7 @@ Seeking is instant via DB lookups — no message replay.
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -34,6 +35,12 @@ TICK_INTERVAL = 0.016  # ~60fps tick rate
 # stream is lagging so neither feed is outrun and audio/data stay aligned at
 # the edge. The buffer is wiggle room for buffering / download delay.
 LIVE_EDGE_BUFFER_S = 8.0
+
+# Soft-couple stall-release: if the audio leading edge (pdt_map.jsonl) hasn't
+# been refreshed within this long, the PdtTracker/ffmpeg has stalled — stop
+# capping playback to it so the DATA clock keeps flowing instead of the whole
+# session freezing on an audio hiccup. (Tracker refreshes every ~5 s.)
+AUDIO_EDGE_STALE_S = 9.0
 
 # Keep the transient scratch DB after the last client disconnects (for
 # inspection) instead of deleting it.
@@ -872,10 +879,17 @@ class SessionEngine:
         if not last:
             return None
         try:
-            edge_pdt = _parse_timestamp(json.loads(last).get("edge_pdt_utc", ""))
+            rec = json.loads(last)
+            edge_pdt = _parse_timestamp(rec.get("edge_pdt_utc", ""))
+            wall_ms = rec.get("wall_ms")
         except (json.JSONDecodeError, AttributeError):
             return None
         if edge_pdt is None:
+            return None
+        # Soft-couple stall-release: a stale edge means audio capture stalled —
+        # return None so _capped_edge_ms falls back to the raw data edge and the
+        # data clock keeps flowing (audio just goes silent until it recovers).
+        if wall_ms is not None and (time.time() * 1000 - wall_ms) > AUDIO_EDGE_STALE_S * 1000:
             return None
         return (edge_pdt - self._start_time).total_seconds()
 
