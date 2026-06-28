@@ -139,6 +139,8 @@ class PdtTracker(threading.Thread):
         self._file_frames = 0
         self._file_sr = 0
         self._anchor_max: Optional[datetime] = None
+        # Byte-0 content time (set once anchored) — base for the captured edge.
+        self._byte0_pdt: Optional[datetime] = None
 
     def stop(self) -> None:
         self._stop_evt.set()
@@ -312,6 +314,7 @@ class PdtTracker(threading.Thread):
             info = json.loads(info_file.read_text()) if info_file.exists() else {}
         except (json.JSONDecodeError, OSError):
             info = {}
+        self._byte0_pdt = anchor          # base for the captured-edge in _write_edge
         info["start_utc"] = _iso_z(anchor)
         info["pdt_anchored"] = True
         info["pdt_method"] = method
@@ -322,16 +325,23 @@ class PdtTracker(threading.Thread):
             logger.warning(f"PdtTracker: audio_info.json write failed: {e}")
 
     def _write_edge(self, segs: list) -> None:
-        """Append the broadcast live edge to pdt_map.jsonl — the signal the
+        """Append the CAPTURED-file live edge to pdt_map.jsonl — the signal the
         server's live-edge cap (_audio_edge_offset) reads to hold the data clock
-        back to the audio edge. Without this the cap no-ops and data outruns
-        audio (the ~75 s lag). Edge = newest segment PDT + its duration."""
-        edge = None
-        for s in segs:
-            if s["pdt"] is not None:
-                edge = s["pdt"] + timedelta(seconds=s["dur"])
-        if edge is None:
+        to the audio the CLIENT can actually play.
+
+        Edge = byte-0 content time + the duration of the bytes ffmpeg has
+        WRITTEN (frame-counted), NOT the broadcast playlist edge. The playlist
+        edge leads the captured file by ffmpeg's download/write lag (~17 s
+        observed), so capping to it let the data clock outrun the captured audio
+        → red traffic light at the live tail. Capping to the captured edge keeps
+        the tail green and self-adjusts to ffmpeg's lag. (No-op until anchored —
+        no byte-0 reference yet.)"""
+        if self._byte0_pdt is None:
             return
+        self._update_file_frames()
+        if not self._file_sr or self._file_frames <= 0:
+            return
+        edge = self._byte0_pdt + timedelta(seconds=self._file_frames * 1024 / self._file_sr)
         try:
             with open(self.cache_path / "pdt_map.jsonl", "a", encoding="utf-8") as f:
                 f.write(json.dumps({"wall_ms": int(time.time() * 1000),
