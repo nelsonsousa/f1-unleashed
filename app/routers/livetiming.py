@@ -472,6 +472,56 @@ def _serve_audio_range(path, request: Request) -> Response:
                     })
 
 
+def _serve_concat_range(segments, request: Request) -> Response:
+    """Byte-range serve a VIRTUAL concatenation of multiple AAC segments.
+
+    The rotated segments (commentary.NNN.aac) have fixed sizes; the current
+    `commentary.aac` is still growing in live — its size is re-read every
+    request, so the total grows and the client's incremental Range fetches pick
+    up new audio (live behaves exactly like replay). A byte range is satisfied
+    by reading across whichever segment files it spans. Concatenating raw ADTS
+    is frame-safe (the muxer resyncs on the 0xFFF syncword at each seam), and
+    the client's per-segment byte-0 anchor map (clockToAudioSec) lines up with
+    the concatenated frame stream. Single-segment sessions use _serve_audio_range.
+    """
+    sizes = [s.stat().st_size for s in segments]
+    total = sum(sizes)
+    starts, acc = [], 0
+    for sz in sizes:
+        starts.append(acc)
+        acc += sz
+    range_header = request.headers.get("range")
+    if not range_header:
+        data = b"".join(s.read_bytes() for s in segments)
+        return Response(content=data, media_type="audio/aac",
+                        headers={"Accept-Ranges": "bytes", "Content-Length": str(len(data))})
+    m = re.match(r"bytes=(\d+)-(\d*)", range_header.strip())
+    if not m:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{total}"})
+    start = int(m.group(1))
+    end = int(m.group(2)) if m.group(2) else total - 1
+    if start >= total:
+        # Past the (current) end — live edge, no new bytes yet; client retries.
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{total}"})
+    end = min(end, total - 1)
+    out = bytearray()
+    for seg, seg_start, sz in zip(segments, starts, sizes):
+        seg_end = seg_start + sz                       # exclusive
+        if seg_end <= start or seg_start > end:
+            continue
+        rs = max(start, seg_start) - seg_start
+        re_end = min(end, seg_end - 1) - seg_start
+        with open(seg, "rb") as f:
+            f.seek(rs)
+            out += f.read(re_end - rs + 1)
+    return Response(content=bytes(out), status_code=206, media_type="audio/aac",
+                    headers={
+                        "Content-Range": f"bytes {start}-{end}/{total}",
+                        "Accept-Ranges": "bytes",
+                        "Content-Length": str(len(out)),
+                    })
+
+
 @router.get("/audio/{session_name:path}")
 async def get_audio(session_name: str, request: Request):
     """Serve commentary audio for a cached session.
@@ -508,19 +558,23 @@ async def get_audio(session_name: str, request: Request):
     # browser ends up with 1-2 s of audio + silence (= Monaco 2026 race
     # symptom). Replays after the session ends use ffprobe per-segment
     # so they can concatenate cleanly.
-    if is_live:
-        segments = segments[-1:]
-
-    # MSE client (Route A) requests ?seekable=1 + HTTP Range. Serve byte ranges
-    # against ONE file — the current segment (live) or the concatenated replay —
-    # so live and replay share an identical, natively-seekable fetch path. The
-    # legacy chunked/FileResponse paths below stay for non-MSE fallback clients.
+    # MSE client (Route A) requests ?seekable=1 + HTTP Range. Serve a virtual
+    # byte-concatenation of ALL segments (rotated + the growing current one),
+    # IDENTICAL for live and replay — the client's per-segment byte-0 anchor map
+    # (clockToAudioSec) lines up with the concatenated frame stream, and the last
+    # segment's size is re-read each request so live growth is followed. This is
+    # handled BEFORE the live-only trim below, so live multi-segment captures
+    # (capture restarts) no longer break (client maps all segments, server now
+    # serves all of them).
     if request.query_params.get("seekable"):
         if len(segments) == 1:
-            audio_path = segments[0]
-        else:
-            audio_path = _build_concat_aac(session_path, segments) or segments[-1]
-        return _serve_audio_range(audio_path, request)
+            return _serve_audio_range(segments[0], request)
+        return _serve_concat_range(segments, request)
+
+    # Legacy non-MSE path only: live serves just the current segment (chunked).
+    # (The seekable MSE path above already handled live with all segments.)
+    if is_live:
+        segments = segments[-1:]
 
     # Client may request a starting offset (?t=SECONDS) — used by the
     # live skip path since chunked streaming doesn't support byte ranges.
