@@ -1127,11 +1127,12 @@ class SessionEngine:
     def _build_audio_info_for_client(self) -> Optional[dict[str, Any]]:
         """Return audio metadata to ship to a new client.
 
-        For an active live capture the audio endpoint serves bytes from
-        slightly before EOF (so the browser has data immediately). The
-        `start_utc` reported here must match the wall-clock time those
-        bytes correspond to, otherwise the displayed audio timestamp
-        will be off.
+        Unified live/replay: `start_utc` is always the byte-0 PROGRAM-DATE-TIME
+        anchor (from audio_info.json / the per-segment map), identical in both
+        modes. The MSE client fetches from byte 0 and maps the data clock →
+        audio position via that anchor, so it must NOT be overridden with the
+        near-EOF `effective_start` (that was for the legacy chunked path and
+        skewed the anchor + traffic light in live).
         """
         if not self._audio_info:
             return None
@@ -1139,10 +1140,6 @@ class SessionEngine:
         br = self._audio_bitrate_kbps()
         if br:
             info["bitrateKbps"] = br
-        if live_capture.is_capturing_path(self._session_path):
-            _, effective_start = live_capture.get_live_stream_position(self._session_path)
-            if effective_start:
-                info["start_utc"] = effective_start
         return info
 
     def _audio_bitrate_kbps(self) -> Optional[int]:
