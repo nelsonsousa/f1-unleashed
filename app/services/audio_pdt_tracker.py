@@ -54,7 +54,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 START_POLL_S = 1.0            # poll fast until anchored
-STEADY_POLL_S = 15.0         # then just watch for discontinuities
+STEADY_POLL_S = 5.0          # keep the live-edge cap (pdt_map.jsonl) fresh
 FF_TIMEOUT_S = 20.0          # no ffmpeg-logged segment by now → segs[-3] fallback
 START_TIMEOUT_S = 60.0       # still no PDT → edge−duration fallback
 PLAYLIST_FAIL_TIMEOUT_S = 90
@@ -321,6 +321,24 @@ class PdtTracker(threading.Thread):
         except OSError as e:
             logger.warning(f"PdtTracker: audio_info.json write failed: {e}")
 
+    def _write_edge(self, segs: list) -> None:
+        """Append the broadcast live edge to pdt_map.jsonl — the signal the
+        server's live-edge cap (_audio_edge_offset) reads to hold the data clock
+        back to the audio edge. Without this the cap no-ops and data outruns
+        audio (the ~75 s lag). Edge = newest segment PDT + its duration."""
+        edge = None
+        for s in segs:
+            if s["pdt"] is not None:
+                edge = s["pdt"] + timedelta(seconds=s["dur"])
+        if edge is None:
+            return
+        try:
+            with open(self.cache_path / "pdt_map.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps({"wall_ms": int(time.time() * 1000),
+                                    "edge_pdt_utc": _iso_z(edge)}) + "\n")
+        except OSError as e:
+            logger.warning(f"PdtTracker: pdt_map.jsonl write failed: {e}")
+
     def _write_ledger(self) -> None:
         try:
             (self.cache_path / "pdt_ledger.json").write_text(json.dumps({
@@ -367,6 +385,7 @@ class PdtTracker(threading.Thread):
 
             try:
                 segs = self._parse_media_playlist(resp.text)
+                self._write_edge(segs)          # feed the server's live-edge cap
                 # Tail: hold filename→PDT so we have ffmpeg's first segment's PDT
                 # even as the window slides (only needed until anchored).
                 if not self._anchored:
