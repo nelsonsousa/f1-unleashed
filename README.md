@@ -1,14 +1,14 @@
 # F1Unleashed
 
-![F1Unleashed — race view](screenshots/race.png)
+![F1Unleashed — race view](static/images/screenshots/race.png)
 
 A Formula 1 live-timing and replay application with synchronised audio commentary and per-session deep analysis.
 
 **Release 1.0.0** — June 7, 2026, day of the 2016 Monaco Grand Prix. Celebrating Mclaren's 1000th Grand Prix and 60th anniversary of their first Grand Prix.
 
-**Current release**: 1.2.0, 2026-06-25
+**Current release**: 1.3.0, 2026-06-29
 
-For what it does and how, see [DOCUMENTATION.md](DOCUMENTATION.md). For a tour of the interface, see [USER_GUIDE.md](USER_GUIDE.md).
+For what it does, how it works, and a tour of the interface, see [DOCUMENTATION.md](DOCUMENTATION.md).
 
 ---
 
@@ -34,9 +34,7 @@ The implementation (= Python services, processors, JavaScript components, OCR/sy
 
 ### Audio sync
 
-No external setup required. F1Unleashed captures the commentary HLS feed alongside the data feed and anchors it via the HLS `PROGRAM-DATE-TIME` tag (= continuous re-anchor by a background side-car). The audio displayed in the player is the broadcast UTC of each sample, kept aligned with the data clock without virtual loopbacks or cross-correlation.
-
-**Known issue — anchor offset.** The broadcast `PROGRAM-DATE-TIME` anchor is not always accurate: the commentary can end up offset from the data by a variable amount (a few seconds up to ~30 s), and the offset differs from session to session. When this happens, use the **Delay** box next to the volume control (seconds, `ss.SSS`) to manually align the audio — positive plays the commentary later, negative earlier. Reducing the anchor's variance is on the roadmap.
+No external setup required. F1Unleashed captures the commentary HLS feed alongside the data feed and anchors it to the broadcast `PROGRAM-DATE-TIME` of ffmpeg's exact first captured segment (byte-0 anchoring). The commentary aligns to the data clock automatically — for live and replay alike — without virtual loopbacks or cross-correlation. A **Delay** box next to the volume control (`ss.SSS`, ±) is available as a manual fallback should you ever want to nudge it (positive plays the commentary later, negative earlier).
 
 ### Weather radar
 
@@ -84,6 +82,13 @@ python -m app.cli.login          # browser-based F1 login
 
 The application covers Practice / Qualifying / Race in usable form today. Active development is focused on these next:
 
+
+### Recently shipped (v1.3)
+
+- **Automatic audio sync** — commentary auto-anchors to the broadcast PDT of ffmpeg's first captured segment, so it aligns to the data clock with no manual step (the Delay box is now just a fallback).
+- **Unified live/replay audio** — MSE playback; the server serves multi-segment (restarted) captures as one virtual stream, so live behaves exactly like replay.
+- **Robust live-edge audio** — audio stays available at the live tail, and a capture stall no longer freezes the session.
+- **Video-sync race anchoring** — ENTER snaps to the scheduled start or lights-out and resumes if paused.
 
 ### Recently shipped (v1.2)
 

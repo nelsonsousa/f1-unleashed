@@ -11,6 +11,10 @@
 
 * { box-sizing: border-box; }
 
+/* Offset anchor jumps (TOC links) by the sticky help-bar height so the target
+   heading lands just below the bar instead of hidden behind it. */
+html { scroll-padding-top: 64px; }
+
 body {
     margin: 0;
     background: var(--bg);
@@ -65,6 +69,17 @@ body {
 .help-content p { margin: 0.8em 0; }
 .help-content ul, .help-content ol { padding-left: 1.5em; }
 .help-content li { margin: 0.3em 0; }
+
+/* Screenshots are full-resolution in the markdown source (detail + GitHub view);
+   scale them to the content width here so they don't overflow the HTML view. */
+.help-content img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 1em 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
 
 .help-content code {
     background: #1c1f27;
