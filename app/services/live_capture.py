@@ -476,10 +476,18 @@ class LiveCaptureService:
         try:
             self._audio_process = subprocess.Popen(
                 [
-                    "ffmpeg", "-nostdin",
+                    "ffmpeg", "-nostdin", "-hide_banner",
+                    # verbose so ffmpeg logs `Opening '…segment_N.aac' for reading`
+                    # — the PdtTracker reads the FIRST such line to learn the exact
+                    # byte-0 segment, then matches it to that segment's PDT in the
+                    # playlist (race-free anchoring, card zpn5J5U4).
+                    "-loglevel", "verbose",
                     "-reconnect", "1",
                     "-reconnect_streamed", "1",
                     "-reconnect_delay_max", "30",
+                    # 3 segments behind the edge (ffmpeg default, explicit) for a
+                    # smooth start; correctness no longer depends on this value.
+                    "-live_start_index", "-3",
                     "-i", url,
                     "-c", "copy",
                     # No -y: ffmpeg would otherwise truncate. We've already
@@ -487,7 +495,9 @@ class LiveCaptureService:
                     str(output_path),
                 ],
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                # Per-run ffmpeg log (fresh each run); PdtTracker tails it for the
+                # first opened segment. Child keeps its own dup of the fd.
+                stderr=open(cache_path / "audio_ffmpeg.log", "wb"),
             )
             self._audio_url = url   # for the stale-download restart watchdog
             logger.info(f"Started audio recording: {url} -> {output_path}")
@@ -554,6 +564,13 @@ class LiveCaptureService:
                 info.rename(cache_path / f"audio_info.{idx:03d}.json")
             except Exception as e:
                 logger.warning(f"Failed to rotate audio_info: {e}")
+        # Keep each file's PDT audit map alongside it (audit only).
+        ledger = cache_path / "pdt_ledger.json"
+        if ledger.exists():
+            try:
+                ledger.rename(cache_path / f"pdt_ledger.{idx:03d}.json")
+            except Exception as e:
+                logger.warning(f"Failed to rotate pdt_ledger: {e}")
 
     @staticmethod
     def _compute_hls_start(master_url: str, now: datetime) -> Optional[str]:

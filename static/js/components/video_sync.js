@@ -11,11 +11,17 @@
  *   P/Q:  one frame → OCR the session clock → seek by the difference (<1 s).
  *   Race: click near a lap change → capture the lap counter 1×/s for ~10 s →
  *         batch-OCR → find the lap-increment frame → align it to the data's
- *         lap-cross. Pre-race start/restart anchoring is on ENTER.
+ *         lap-cross. Pre-race start anchoring is on ENTER.
  *
- * Manual helpers (keyboard, once video sync has been used): ENTER jumps to the
- * next session start/restart; "+"/"=" nudge data forward ~0.5 s; "−" pauses
- * ~0.1 s so the TV catches up.
+ * Keyboard:
+ *   ENTER (always available) — jump to a start instant AND resume if paused.
+ *     P/Q : the next GREEN flag (session start / restart).
+ *     Race: scheduled start (= formation-lap start, when the analog Rolex hand
+ *           hits the hour) if the clock is within the first minute after the
+ *           scheduled time; otherwise lights-out (press as the 5 lights go out).
+ *           Snap is start-phase only (≤ lap 1); past that ENTER only resumes.
+ *   "+"/"=" / "−" (after video sync has been used this session): nudge the data
+ *     forward ~0.5 s, or pause ~0.1 s so the TV catches up.
  */
 
 (function () {
@@ -471,14 +477,28 @@
         if (!b || !b.startTime || typeof b.getCurrentOffset !== 'function') return;
         const cur = b.getCurrentOffset();
         if (isRace()) {
-            if (state.dataLap != null && state.dataLap >= 2) return;   // lap 2+ → disabled
-            const greenS = raceStartMs != null ? raceStartMs / 1000 : null;
+            // Snap to one of two unambiguously-identifiable instants, split at
+            // scheduled-start + 60 s:
+            //   • clock BEFORE sched+60s → scheduled start (= formation-lap
+            //     start; the analog Rolex hand hacks onto the hour). The full
+            //     minute of leeway lets the user hit ENTER on that exact moment
+            //     even if the data/audio feed momentarily leads the TV.
+            //   • clock AFTER  sched+60s → lights-out (no fixed time — the user
+            //     presses ENTER when the 5 lights go out). Formation runs ~2-4
+            //     min, so the two instants never overlap the 60 s boundary.
+            // Snap is start-phase only (≤ lap 1) so a mid-race ENTER (e.g. to
+            // resume after pausing to let the TV catch up) does NOT yank back to
+            // lights-out. ENTER also RESUMES playback whenever it is paused.
             const schedS = scheduledStartMs != null ? (scheduledStartMs - b.startTime.getTime()) / 1000 : null;
-            if (greenS == null || cur < greenS - 60) {
-                if (schedS != null) { e.preventDefault(); seekAhead(schedS); }   // → scheduled start
-            } else {
-                e.preventDefault(); seekAhead(greenS);                            // → lights-out
+            const greenS = raceStartMs != null ? raceStartMs / 1000 : null;
+            const startPhase = (state.dataLap == null || state.dataLap < 2);
+            let handled = false;
+            if (startPhase) {
+                if (schedS != null && cur < schedS + 60) { seekAhead(schedS); handled = true; }   // → scheduled start
+                else if (greenS != null) { seekAhead(greenS); handled = true; }                    // → lights-out
             }
+            if (b.isPlaying === false && typeof b.send === 'function') { b.send({ cmd: 'play' }); handled = true; }
+            if (handled) e.preventDefault();
             return;
         }
         const next = greenOffsetsMs.find(o => o / 1000 > cur + 1);

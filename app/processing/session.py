@@ -12,6 +12,7 @@ Seeking is instant via DB lookups — no message replay.
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -34,6 +35,12 @@ TICK_INTERVAL = 0.016  # ~60fps tick rate
 # stream is lagging so neither feed is outrun and audio/data stay aligned at
 # the edge. The buffer is wiggle room for buffering / download delay.
 LIVE_EDGE_BUFFER_S = 8.0
+
+# Soft-couple stall-release: if the audio leading edge (pdt_map.jsonl) hasn't
+# been refreshed within this long, the PdtTracker/ffmpeg has stalled — stop
+# capping playback to it so the DATA clock keeps flowing instead of the whole
+# session freezing on an audio hiccup. (Tracker refreshes every ~5 s.)
+AUDIO_EDGE_STALE_S = 9.0
 
 # Keep the transient scratch DB after the last client disconnects (for
 # inspection) instead of deleting it.
@@ -872,10 +879,17 @@ class SessionEngine:
         if not last:
             return None
         try:
-            edge_pdt = _parse_timestamp(json.loads(last).get("edge_pdt_utc", ""))
+            rec = json.loads(last)
+            edge_pdt = _parse_timestamp(rec.get("edge_pdt_utc", ""))
+            wall_ms = rec.get("wall_ms")
         except (json.JSONDecodeError, AttributeError):
             return None
         if edge_pdt is None:
+            return None
+        # Soft-couple stall-release: a stale edge means audio capture stalled —
+        # return None so _capped_edge_ms falls back to the raw data edge and the
+        # data clock keeps flowing (audio just goes silent until it recovers).
+        if wall_ms is not None and (time.time() * 1000 - wall_ms) > AUDIO_EDGE_STALE_S * 1000:
             return None
         return (edge_pdt - self._start_time).total_seconds()
 
@@ -1113,11 +1127,12 @@ class SessionEngine:
     def _build_audio_info_for_client(self) -> Optional[dict[str, Any]]:
         """Return audio metadata to ship to a new client.
 
-        For an active live capture the audio endpoint serves bytes from
-        slightly before EOF (so the browser has data immediately). The
-        `start_utc` reported here must match the wall-clock time those
-        bytes correspond to, otherwise the displayed audio timestamp
-        will be off.
+        Unified live/replay: `start_utc` is always the byte-0 PROGRAM-DATE-TIME
+        anchor (from audio_info.json / the per-segment map), identical in both
+        modes. The MSE client fetches from byte 0 and maps the data clock →
+        audio position via that anchor, so it must NOT be overridden with the
+        near-EOF `effective_start` (that was for the legacy chunked path and
+        skewed the anchor + traffic light in live).
         """
         if not self._audio_info:
             return None
@@ -1125,10 +1140,6 @@ class SessionEngine:
         br = self._audio_bitrate_kbps()
         if br:
             info["bitrateKbps"] = br
-        if live_capture.is_capturing_path(self._session_path):
-            _, effective_start = live_capture.get_live_stream_position(self._session_path)
-            if effective_start:
-                info["start_utc"] = effective_start
         return info
 
     def _audio_bitrate_kbps(self) -> Optional[int]:
