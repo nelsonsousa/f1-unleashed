@@ -1,6 +1,6 @@
 # F1Unleashed
 
-![F1Unleashed — race view](screenshots/race.png)
+![F1Unleashed — race view](static/images/screenshots/race.png)
 
 A Formula 1 live-timing and replay application with synchronised audio commentary and per-session deep analysis.
 

@@ -55,7 +55,7 @@ A tour of what each part of the UI shows and does.
 
 ### Main page
 
-![Main page](screenshots/main_page.png)
+![Main page](static/images/screenshots/main_page.png)
 
 The landing page lists every Grand Prix weekend in the current season and the prior weekend's cached sessions, plus controls for login and live-capture status.
 
@@ -67,7 +67,7 @@ The landing page lists every Grand Prix weekend in the current season and the pr
 
 ### Practice view
 
-![Practice view](screenshots/practice.png)
+![Practice view](static/images/screenshots/practice.png)
 
 Optimised for free practice: lots of timed-lap context, pace classification, tyre history, telemetry comparison.
 
@@ -79,7 +79,7 @@ Optimised for free practice: lots of timed-lap context, pace classification, tyr
 
 ### Qualifying view
 
-![Qualifying view](screenshots/qualifying.png)
+![Qualifying view](static/images/screenshots/qualifying.png)
 
 Practice-like layout plus Q-specific features: knockout-zone indicator, lap-time prediction, and predicted qualifying pace per team.
 
@@ -88,7 +88,7 @@ Practice-like layout plus Q-specific features: knockout-zone indicator, lap-time
 
 ### Race view
 
-![Race view](screenshots/race.png)
+![Race view](static/images/screenshots/race.png)
 
 Optimised for the race: gaps to leader and to the car ahead, tyre history, penalties, and championship standings.
 
