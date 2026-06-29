@@ -4,10 +4,10 @@ Download, replay, and analyse Formula 1 live-timing data, with synchronised
 commentary audio and per-session analysis. Python/FastAPI backend, Jinja2 +
 vanilla-JS modular frontend.
 
-For what the app does and the UI, see [README.md](README.md),
-[DOCUMENTATION.md](DOCUMENTATION.md) (architecture + processor reference), and
-[USER_GUIDE.md](USER_GUIDE.md). Open work is tracked on the project's Trello
-board (the "F1 Unleashed" board).
+For what the app does, how it's built, and a tour of the UI, see
+[README.md](README.md) and [DOCUMENTATION.md](DOCUMENTATION.md) (architecture +
+processor reference + interface guide). Open work is tracked on the project's
+Trello board (the "F1 Unleashed" board).
 
 ## Critical rules
 

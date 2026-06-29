@@ -4,11 +4,29 @@ A Formula 1 live-timing and replay application with synchronised audio commentar
 
 **Release 1.0.0** — June 7, 2026, day of the 2016 Monaco Grand Prix. Celebrating Mclaren's 1000th Grand Prix and 60th anniversary of their first Grand Prix.
 
-**Current release**: 1.2.0, 2026-06-25
+**Current release**: 1.3.0, 2026-06-29
 
 The server listens on port **1950**, an homage to the first F1 World Championship.
 
 This document describes what the application does and how it's structured. For install instructions see [README.md](README.md).
+
+## Contents
+
+- [Legal disclaimer](#legal-disclaimer)
+- [What it does](#what-it-does)
+- [The interface](#the-interface)
+- [Data stream + visuals](#data-stream-visuals)
+- [Audio stream](#audio-stream)
+- [Team radio](#team-radio)
+- [Status footer + data-health monitor](#status-footer-data-health-monitor)
+- [Weather — current conditions + forecast](#weather-current-conditions-forecast)
+- [Video sync](#video-sync)
+- [Login process](#login-process)
+- [Settings](#settings)
+- [Caching](#caching)
+- [Replays vs live](#replays-vs-live)
+- [Architecture](#architecture)
+- [Future developments](#future-developments)
 
 ---
 
@@ -28,6 +46,63 @@ Distribution of the processed data is therefore not allowed. Streaming of the cl
 F1Unleashed connects to the F1 SignalR feed (live) or replays cached session data (historic), runs pre-processing on the raw timing stream, and visualises everything in a browser. It captures broadcast audio in parallel, aligns it to the data stream, and ships a session-aware UI tuned per session type (Practice / Qualifying / Race).
 
 Lap classification (= PUSH / COOL / LONG / OUT / IN / PIT / RACE / WET / STOP) is derived from a combination of telemetry data and lap-time deltas, with absolute-delta fallback when the telemetry feed has outages.
+
+---
+
+## The interface
+
+A tour of what each part of the UI shows and does.
+
+### Main page
+
+![Main page](screenshots/main_page.png)
+
+The landing page lists every Grand Prix weekend in the current season and the prior weekend's cached sessions, plus controls for login and live-capture status.
+
+- **Race calendar** — one card per event. Past events are clickable and open the session popover; upcoming events appear faded.
+- **Session popover** — opens beneath the event card and lists the FP / Q / Sprint / Race sessions for that weekend. Each session row offers **Download** (pull the raw F1 timing data for a finished session — one-shot, runs in the background), **Open** (launch the session view at speed 1×), and **Delete** (remove the cached session from disk).
+- **Login button** — opens the browser-based F1 login. After login the token is stored at `~/Library/Application Support/fastf1/f1auth.json` for ~72 h.
+- **Live-capture status** — shows when a live session is being captured automatically by the adaptive session monitor.
+- **Footer** — the app name and version sit in the centre, a Help (?) icon on the left opens this documentation page, and a settings gear on the right opens the settings dialog (see [Settings](#settings)).
+
+### Practice view
+
+![Practice view](screenshots/practice.png)
+
+Optimised for free practice: lots of timed-lap context, pace classification, tyre history, telemetry comparison.
+
+- **Header** — local + session clock, track status, playback controls, audio controls.
+- **Standings** — position, driver, lap type, best lap, gap to leader, mini-sectors, S1/S2/S3 times, last lap time, tyre history, number of laps.
+- **Track map** — track SVG with the position of each driver, the Current Conditions weather panel, the rain-radar overlay, and a short-range weather forecast widget (In 15' / 30' / 60', with rain probability for wet slots).
+- **Telemetry** — multi-driver SPD / RPM / GEAR / THR-BRK traces with a per-driver lap list. Can show the live trace, last lap, best lap, and a selection of laps for comparison; in qualifying a toggle groups the lap list by part (Q1/Q2/Q3). Corner labels along the x-axis match the circuit map.
+- **Race control** — RC message stream (with team-radio clips interleaved by time) plus a **Team Radio** tab listing every clip. Each clip has Play / Stop buttons; playing a clip ducks the commentary for its duration and then restores it.
+
+### Qualifying view
+
+![Qualifying view](screenshots/qualifying.png)
+
+Practice-like layout plus Q-specific features: knockout-zone indicator, lap-time prediction, and predicted qualifying pace per team.
+
+- **Standings** — for drivers in the elimination zone, the gap is shown to the driver on the bubble. Only the current tyre is shown. During a qualifying attempt the driver's delta to their best lap is shown live with the positions it would gain; once the lap completes, the actual delta and positions gained are shown.
+- **Pecking order** — a tab in the race-control tile shows the predicted ranking of teams and their gaps.
+
+### Race view
+
+![Race view](screenshots/race.png)
+
+Optimised for the race: gaps to leader and to the car ahead, tyre history, penalties, and championship standings.
+
+- **Standings** — like the Practice view but showing gaps to leader and to the car ahead. Also shows blue flags, penalties (under investigation and imposed), and black-and-white flags.
+- **Race control** — tabs: **RCM** (live RC message stream with team-radio clips interleaved by time); **Team Radio** (every captured clip, each with Play / Stop; playing a clip ducks the commentary); **Pecking order** (pre-race predicted team rank and pace); **Championship** (provisional driver + constructor standings updated from the current order).
+
+### Common controls
+
+- **Scrubber** — drag to seek to any point in the session. Click an event marker to jump to ~60 s before that event. Marked events: 2' notice before the race; session start; session finished; safety car / virtual safety car; green flags; red flags.
+- **LIVE button** (live sessions only) — replaces the speed button; red when at the live edge, black when behind. Click to snap to the latest available state.
+- **Speed** — 1× during live; 1×–50× during replay.
+- **Audio controls** — mute, volume, a **Delay** box (`ss.SSS`; manual fallback offset — positive plays the commentary later, negative earlier), and a traffic light (green = audio in sync; yellow = seeking / loading; red = no audio for the current data-clock position).
+- **Status footer** — see [Status footer + data-health monitor](#status-footer-data-health-monitor).
+- **Video sync** — align the data clock to a TV broadcast you're watching alongside; see [Video sync](#video-sync).
 
 ---
 
@@ -60,14 +135,14 @@ All clock-relative computations use the message's payload timestamp for faithful
 
 ## Audio stream
 
-Audio commentary from `rdio.formula1.com` is captured as HLS, written to disk as `commentary.aac`, and stored alongside the session data. The browser plays it through an HTMLAudioElement.
+Audio commentary from `rdio.formula1.com` is captured as HLS (`ffmpeg -c copy`), written to disk as `commentary.aac`, and stored alongside the session data. The browser plays it through **MediaSource Extensions**: the raw ADTS-AAC bytes are range-fetched and transmuxed to fMP4 in-browser (`static/js/lib/aac_fmp4.js`), so live and replay share one natively-seekable playback path.
 
 **Sync rules:**
-- The capture-time audio anchor (`audio_info.json:start_utc`) is continuously re-derived from the HLS playlist's `PROGRAM-DATE-TIME` tag (= the broadcast wall-clock UTC of each segment) by a small background side-car (`app/services/audio_pdt_tracker.py`).
-- On the frontend, audio plays at the position matching the data clock: `audio.currentTime = (clockTime − audio_start_utc) / 1000`. Because both anchors are broadcast UTC, the alignment holds across reconnects, HLS rolling-window drift, and ffmpeg timing jitter.
-- A `pdt_map.jsonl` audit trail records every side-car observation (= wall-clock time, audio file duration, edge segment PDT) for post-session debugging.
+- **Byte-0 anchoring.** `audio_info.json:start_utc` is pinned to the broadcast `PROGRAM-DATE-TIME` (UTC) of the *exact first segment ffmpeg captured* — identified from ffmpeg's own log, so it is race-free regardless of when capture started. A background side-car (`app/services/audio_pdt_tracker.py`) reads the HLS playlist to establish and persist this anchor, identically for live and replay.
+- The client maps the data clock to an audio position via that per-segment anchor (`clockToAudioSec`), so the two stay aligned across reconnects, HLS rolling-window drift, and ffmpeg jitter. A capture restart produces additional segments; the server serves them as one virtual concatenation so the mapping still holds.
+- **Live-edge cap.** During live capture the data clock is held to whichever stream is lagging — `min(data_edge, audio_edge) − buffer` — where the audio edge is the *captured-file* edge (byte-0 anchor + the duration of the bytes ffmpeg has written), tracked in `pdt_map.jsonl`. This keeps audio available at the live tail; if the audio edge goes stale (a capture stall) the cap releases so the data clock keeps flowing.
 
-The audio controls in the header are: traffic light (= sync state), mute, volume. No manual offset, no output-device picker — the PDT anchor is the single source of truth.
+The audio controls in the header are: a traffic light (sync state), mute, volume, and a **Delay** box (`ss.SSS`, ±) — a manual fallback offset, rarely needed now that the byte-0 anchor is automatic.
 
 During live capture a watchdog restarts the commentary ffmpeg process if its HLS download stalls (= the output file stops growing). This is distinct from the silence-based watchdog that detects the end of a session.
 
@@ -114,7 +189,20 @@ The forecast is **captured live**: `ForecastCapture` (`app/services/weather_fore
 
 ## Video sync
 
-Sync the data clock to a live TV broadcast you are watching alongside. Screen-share the (muted) TV window; the app runs OCR (Tesseract.js) over the shared frame to read the broadcast's session clock / countdown — layout-agnostic (it crops large black borders and sub-frames the region of interest rather than assuming a fixed position) — compares it to the data clock, and nudges playback to match. `ENTER` jumps to the next relevant moment for the session type (Practice / Qualifying: next start or restart; Race: formation lap, then lights-out, then tracking by lap number); `+` skips forward and `-` pauses briefly to let the picture catch up. It does not re-sync while the observed gap is under ~0.5 s, but always accepts a manual keypress. Audio stays auto-sync'd to the data clock via PDT, so you only ever align the data clock to the TV moment.
+Align the data clock to a live TV broadcast you are watching alongside. It is **one-shot, on demand** — clicking **Video sync** briefly screen-shares the (muted) TV, runs OCR (Tesseract.js) over the shared frame, seeks the data once to match, then releases the capture (zero idle cost). It is layout-agnostic: it crops large black borders and sub-frames the region of interest rather than assuming a fixed position. Audio stays auto-synced to the data clock via the PDT anchor, so you only ever align the *data* clock to the TV moment.
+
+- **P/Q (button)** — OCRs the on-screen session clock once and seeks the data to match (<1 s).
+- **Race (button)** — captures the lap counter ~1×/s for ~10 s, finds the frame where it ticks up, and aligns that to the data's lap-cross. Click near a lap change. (It needs laps running, so this is the tool to use once the race is green.)
+
+**Keyboard**
+
+- **ENTER** (always available) — jump to a start instant, and resume playback if paused.
+    - *P/Q*: the next GREEN flag (session start / restart).
+    - *Race*: the **scheduled start** (= formation-lap start, when the analog Rolex hand hits the hour) if the clock is within the first minute after the scheduled time; otherwise **lights-out** (press as the five lights go out). The snap is start-phase only (≤ lap 1); after that ENTER just resumes.
+- **`+` / `=`** — the TV is ahead: nudge the data forward ~0.5 s.
+- **`−`** — the TV is behind: pause ~0.1 s so the picture catches up.
+
+The `+` / `−` nudges become available once you have used the Video sync button at least once in the session.
 
 ---
 
@@ -191,7 +279,7 @@ The data directory holds:
 - Loads processed data for the chosen cached session.
 - SSE replays messages at adjustable speed (1× – 50×).
 - Seeking lands on requested timestamp.
-- Audio playback follows the data clock by default; offsets persist across seeks.
+- Audio follows the data clock automatically via the byte-0 PDT anchor; native (MSE) seeking lands audio together with the data.
 
 The adaptive live-session monitor polls F1's API at intervals depending on time-to-next-session (= 60 min when > 2 h away, 5 min when 1–2 h away, 60 s when < 1 h away) so live capture starts automatically with no user action.
 
@@ -377,6 +465,13 @@ Data analysis and predictions are the hardest part of this project.
 Not only is the available data very sparse, when compared to each teams own telemetry, but there are data outages on occasion (GPS failures, telemetry failures, timing data delays, etc.). 
 
 But, as much as possible, I'll work to enrich the analysis of the data and provide what I hope is a better viewing experience for the Formula 1 fans.
+
+### Delivered in v1.3
+
+- **Automatic audio sync** — commentary is anchored to the broadcast `PROGRAM-DATE-TIME` of ffmpeg's exact first captured segment, so it aligns to the data clock automatically; the manual **Delay** box is now just a fallback (see [Audio stream](#audio-stream)).
+- **Unified live/replay audio** — MSE playback with the server serving multi-segment captures as one virtual concatenation, so a capture restart no longer breaks live audio and live behaves exactly like replay.
+- **Robust live-edge cap** — the data clock is capped to the captured-file audio edge (audio stays available at the live tail) with a soft-couple stall-release so an audio hiccup no longer freezes the session.
+- **Video-sync race anchoring** — ENTER snaps to the scheduled start or lights-out on a fixed pivot and resumes playback if paused (see [Video sync](#video-sync)).
 
 ### Delivered in v1.2
 

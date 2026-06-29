@@ -422,6 +422,7 @@ app = FastAPI(
 )
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/screenshots", StaticFiles(directory="screenshots"), name="screenshots")
 
 # Jinja2 templates
 templates = Jinja2Templates(directory="templates")
