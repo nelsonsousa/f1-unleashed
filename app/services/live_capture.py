@@ -127,9 +127,6 @@ class LiveCaptureService:
         # audio_info.json:start_utc with a broadcast-derived anchor.
         # Started in _start_audio, stopped in _stop_audio.
         self._pdt_tracker = None
-        # Per-cache-path background task that re-anchors audio_info.start_utc
-        # once the recording has enough audible content for silencedetect.
-        self._sync_tasks: dict[Path, asyncio.Task] = {}
 
     def _generate_session_id(self) -> str:
         import uuid
@@ -331,16 +328,8 @@ class LiveCaptureService:
             except NameError:
                 pass
             self._stop_audio(cache_path)
-            # Final audio re-anchor on the COMPLETE recording, ONCE and off the
-            # event loop. This used to run inside _stop_audio on every mid-session
-            # ffmpeg restart (full signature scan → CPU pegged + loop blocked).
-            try:
-                from app.services import audio_sync
-                final_start = await asyncio.to_thread(audio_sync.apply_sync, cache_path)
-                if final_start is not None:
-                    logger.info(f"Final audio sync applied: start_utc={final_start.isoformat()}")
-            except Exception as e:
-                logger.warning(f"Final audio sync failed for {cache_path.name}: {e}")
+            # Audio is anchored solely by PdtTracker (byte-0 PROGRAM-DATE-TIME);
+            # no end-of-capture re-anchor.
             if signalr_client:
                 signalr_client.stop()
 
@@ -896,13 +885,6 @@ class LiveCaptureService:
             size_mb = audio_file.stat().st_size / (1024 * 1024)
             logger.info(f"Audio recording saved: {audio_file} ({size_mb:.1f} MB)")
 
-        # NOTE: the final re-anchor (apply_sync) is intentionally NOT run here.
-        # _stop_audio is called on every mid-session ffmpeg restart (via
-        # _start_audio), and a full signature-scan re-sync per restart pegged the
-        # CPU and blocked the event loop. It now runs ONCE, off the loop, at true
-        # capture end (see _capture_loop finally). Live anchoring during the
-        # session is handled by PdtTracker + _schedule_sync_watcher.
-
     def get_status(self, session_id: str) -> dict:
         """Get capture status."""
         capture = self._captures.get(session_id)
@@ -916,62 +898,6 @@ class LiveCaptureService:
             "error": capture["error"],
         }
 
-    def _schedule_sync_watcher(self, cache_path: Path) -> None:
-        """Background task: re-anchor audio_info once first-audible is detected.
-
-        ffmpeg writes the file in HLS-segment bursts; the first 5-15 min
-        is typically silent (broadcast pre-roll). We poll periodically and
-        run silencedetect on the file. Once first-audible is detected,
-        rewrite audio_info.json so the front-end's clock formula maps it
-        to (session_start − 5 min). Stops after success or after the file
-        has stopped growing for 30 min (capture ended).
-        """
-        if cache_path in self._sync_tasks and not self._sync_tasks[cache_path].done():
-            return  # already watching
-
-        async def watcher():
-            from app.services import audio_sync
-            audio_file = cache_path / "commentary.aac"
-            sess_start = audio_sync.session_start_utc(cache_path)
-            if sess_start is None:
-                logger.info(f"audio sync watcher: no session start for {cache_path.name} — skipping")
-                return
-
-            # Poll aggressively at the start so live viewers see a
-            # corrected sync within a couple of minutes of the broadcast
-            # going audible (instead of waiting for the next 60 s tick).
-            poll_interval = 20.0
-            last_size = -1
-            stale_polls = 0
-            while True:
-                await asyncio.sleep(poll_interval)
-                if not audio_file.exists():
-                    return
-                size = audio_file.stat().st_size
-                if size == last_size:
-                    stale_polls += 1
-                    if stale_polls >= 30:
-                        logger.info(f"audio sync watcher: file stopped growing — exit")
-                        return
-                else:
-                    stale_polls = 0
-                    last_size = size
-                # Need a couple of minutes of audio for a robust
-                # silencedetect run — bumped lower (~80 KB ≈ 6 s of HE-AAC
-                # @ ~100 kbps) so the first detection attempt happens
-                # sooner. apply_sync just returns None and we retry until
-                # there's enough content.
-                if size < 80 * 1024:
-                    continue
-                new_start = await asyncio.to_thread(audio_sync.apply_sync, cache_path)
-                if new_start is not None:
-                    return
-                # After the first apply attempt, back off slightly so we
-                # don't churn ffmpeg every 20 s.
-                poll_interval = 60.0
-
-        task = asyncio.create_task(watcher())
-        self._sync_tasks[cache_path] = task
 
     def is_capturing_path(self, cache_path: Path) -> bool:
         """Check if a live capture is currently writing to this directory."""
