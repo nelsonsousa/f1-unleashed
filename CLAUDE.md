@@ -90,9 +90,9 @@ tmp/{year}_{event}_{session}.db   # transient processed DB (built on demand, del
 ### `utils/track_generation/` — tooling
 Track-SVG generation (`generate_track_svgs.py`, `fetch_circuit_data.py`,
 `track_config.json`) — run rarely, only when a new circuit appears (e.g. Madrid
-2026). Audio↔data re-anchoring runs automatically in capture via
-`app/services/audio_sync.apply_sync` (the old standalone `apply_audio_sync.py`
-wrapper was removed).
+2026). Audio↔data anchoring is purely PDT-based: `app/services/audio_pdt_tracker.py`
+pins the byte-0 PROGRAM-DATE-TIME anchor during capture (no cross-correlation /
+credits detection — `audio_sync.py` was removed).
 
 ## Client message bus
 
