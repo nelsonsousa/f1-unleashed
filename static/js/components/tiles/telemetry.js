@@ -516,7 +516,10 @@
         const yMax = chInfo.max;
 
         drawGrid(ctx, margin, plotW, plotH, yMin, yMax, h);
-        drawYellowSectors(ctx, margin, plotW, plotH);
+        // Yellow marshal-sector bands reflect the *current* track status, so
+        // they only make sense against the live trace — the Best/Last/Selection
+        // views show historical laps where a "now" yellow is meaningless.
+        if (state.mode === 'live') drawYellowSectors(ctx, margin, plotW, plotH);
 
         const teamOrder = {};
         for (const { num, teamOrder: to } of getSortedDrivers()) teamOrder[num] = to;
