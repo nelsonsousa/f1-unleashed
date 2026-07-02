@@ -365,12 +365,12 @@
             }
         }
 
+        // Always show all four slots when forecast data is available — even
+        // when the forecast matches the current condition (reversal of the
+        // earlier collapse-when-unchanged behaviour, card RGCfGhUz).
         let slots = [['Now', now]];
         if (f15 && f30 && f60) {
-            const same = (a, b) => a && b && a.key === b.key;
-            const unchanged = same(now, f15) && same(now, f30) && same(now, f60);
-            if (unchanged) slots.push(["60'", f60]);
-            else slots.push(["15'", f15], ["30'", f30], ["60'", f60]);
+            slots.push(["15'", f15], ["30'", f30], ["60'", f60]);
         }
 
         const rows = slots.map(([when, s]) =>
