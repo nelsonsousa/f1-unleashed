@@ -1,45 +1,31 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- Background -->
-  <rect width="64" height="64" rx="8" fill="#15151e"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Sideways stylised F1 car: orange body, black tyres, transparent background. Nose left. -->
+  <g transform="translate(4,-16)">
+    <!-- Front wing (far left, near ground) -->
+    <rect x="6" y="346" width="128" height="24" rx="6" fill="#FF6A00"/>
 
-  <!-- F1 Car - Top-down view -->
+    <!-- Rear wing (far right): wide top plane on a vertical support -->
+    <rect x="436" y="188" width="64" height="22" rx="5" fill="#FF6A00"/>
+    <rect x="462" y="196" width="26" height="150" rx="5" fill="#FF6A00"/>
 
-  <!-- Rear wing -->
-  <rect x="6" y="10" width="52" height="4" rx="1" fill="#333333"/>
+    <!-- Body: pointed nose -> deck -> cockpit/halo hump -> airbox -> engine cover -> tail -->
+    <path d="M12 342
+             L110 318
+             L202 302
+             C216 300 222 300 230 300
+             C240 232 302 228 324 302
+             L446 312
+             L482 326
+             L482 360
+             L12 360 Z" fill="#FF6A00"/>
 
-  <!-- Rear body -->
-  <path d="M24 14 L40 14 L42 20 L22 20 Z" fill="#1a1a1a"/>
+    <!-- Cockpit opening (subtle) -->
+    <path d="M238 298 C246 266 288 264 302 298 Z" fill="#141414" opacity="0.5"/>
 
-  <!-- Engine cover / rear bodywork -->
-  <path d="M22 20 L42 20 L44 30 L20 30 Z" fill="#1a1a1a"/>
-
-  <!-- Sidepods - ORANGE -->
-  <path d="M10 24 L20 22 L20 38 L12 36 Z" fill="#FF8000"/>
-  <path d="M54 24 L44 22 L44 38 L52 36 Z" fill="#FF8000"/>
-
-  <!-- Cockpit opening -->
-  <ellipse cx="32" cy="32" rx="6" ry="8" fill="#15151e"/>
-
-  <!-- Halo -->
-  <path d="M28 26 L36 26 L36 28 L28 28 Z" fill="#333333"/>
-
-  <!-- Nose cone - ORANGE -->
-  <path d="M20 30 L44 30 L40 42 L24 42 Z" fill="#FF8000"/>
-  <path d="M24 42 L40 42 L36 50 L28 50 Z" fill="#FF8000"/>
-
-  <!-- Front wing - DARK GRAY -->
-  <rect x="4" y="50" width="56" height="4" rx="1" fill="#333333"/>
-  <path d="M28 50 L36 50 L36 54 L28 54 Z" fill="#FF8000"/>
-
-  <!-- Front wing endplates -->
-  <rect x="4" y="48" width="4" height="8" rx="1" fill="#333333"/>
-  <rect x="56" y="48" width="4" height="8" rx="1" fill="#333333"/>
-
-  <!-- Rear wheels -->
-  <ellipse cx="14" cy="18" rx="6" ry="3" fill="#1a1a1a"/>
-  <ellipse cx="50" cy="18" rx="6" ry="3" fill="#1a1a1a"/>
-
-  <!-- Front wheels -->
-  <ellipse cx="12" cy="46" rx="5" ry="3" fill="#1a1a1a"/>
-  <ellipse cx="52" cy="46" rx="5" ry="3" fill="#1a1a1a"/>
+    <!-- Tyres (black) over the body -->
+    <circle cx="150" cy="322" r="72" fill="#141414"/>
+    <circle cx="374" cy="322" r="72" fill="#141414"/>
+    <circle cx="150" cy="322" r="16" fill="#2b2b2b"/>
+    <circle cx="374" cy="322" r="16" fill="#2b2b2b"/>
+  </g>
 </svg>
