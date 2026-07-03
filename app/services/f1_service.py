@@ -44,26 +44,42 @@ def get_event_schedule(year: int, include_testing: bool = False) -> pd.DataFrame
         return cached[0]
 
     last_error: Exception | None = None
+    last_empty: pd.DataFrame | None = None
     for attempt in range(1, _SCHEDULE_FETCH_RETRIES + 1):
         try:
             schedule = fastf1.get_event_schedule(year, include_testing=include_testing)
-            _schedule_cache[key] = (schedule, time.monotonic())
-            return schedule
         except Exception as e:
             last_error = e
             logger.warning(
                 "Schedule fetch for %s (testing=%s) failed on attempt %d/%d: %s",
                 year, include_testing, attempt, _SCHEDULE_FETCH_RETRIES, e,
             )
-            if attempt < _SCHEDULE_FETCH_RETRIES:
-                time.sleep(_SCHEDULE_RETRY_BACKOFF_S * attempt)
+        else:
+            # Only a non-empty schedule is trustworthy. FastF1 can return an
+            # empty frame (backends soft-failing) without raising; caching that
+            # would poison the whole TTL window, so treat empty as a failure —
+            # retry, and never cache it.
+            if schedule is not None and len(schedule) > 0:
+                _schedule_cache[key] = (schedule, time.monotonic())
+                return schedule
+            last_empty = schedule
+            logger.warning(
+                "Schedule fetch for %s (testing=%s) returned empty on attempt %d/%d",
+                year, include_testing, attempt, _SCHEDULE_FETCH_RETRIES,
+            )
+        if attempt < _SCHEDULE_FETCH_RETRIES:
+            time.sleep(_SCHEDULE_RETRY_BACKOFF_S * attempt)
 
+    # Exhausted retries: prefer a previously-cached good schedule over a stale
+    # failure so a transient blip never blanks the home countdown.
     if cached is not None:
         logger.warning(
             "Schedule refresh for %s (testing=%s) failed; serving stale copy.",
             year, include_testing,
         )
         return cached[0]
+    if last_empty is not None:
+        return last_empty  # genuinely empty (no prior good copy) — let caller 404
     raise last_error
 
 
