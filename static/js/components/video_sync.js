@@ -200,6 +200,28 @@
         }
         return out;
     }
+    // Pre-session countdown-to-start. Both broadcasters place the clock adjacent
+    // to a caption (ServusTV "STARTS IN" above; ORF "bis zum Start" below), on a
+    // DIFFERENT line from the session badge — so the badge-line match misses it.
+    // Take the mm:ss on/next to the caption line; else, if the badge is showing
+    // and there's exactly one clock in the block, that lone clock is the
+    // countdown (a running session clock would have matched the badge line).
+    const COUNTDOWN_RX = /STARTS?\s*IN|BIS\s*ZUM\s*START|UNTIL\s*(?:THE\s*)?START/i;
+    function countdownFromLines(lines, badgePresent) {
+        const pi = lines.findIndex(l => COUNTDOWN_RX.test(l));
+        if (pi >= 0) {
+            for (const i of [pi, pi + 1, pi - 1, pi + 2]) {
+                if (i < 0 || i >= lines.length) continue;
+                const c = timeCandidates(lines[i]);
+                if (c.length) return c[0];
+            }
+            const any = timeCandidates(lines.join(' '));
+            if (any.length) return any[0];
+        }
+        const all = timeCandidates(lines.join(' '));
+        if (badgePresent && all.length === 1) return all[0];
+        return null;
+    }
     function parseLap(str) {
         if (!str) return null;
         let m = String(str).match(/(\d{1,2})\s*\/\s*(\d{1,3})/);   // "6/66" → leader 6
@@ -311,9 +333,13 @@
         let data;
         try { ({ data } = await tw.recognize(sweep)); } catch (e) { return null; }
         const badgeRe = pqBadgeRx();
-        const badgeLine = (data.text || '').split('\n').map(s => s.trim())
-            .find(ln => badgeRe.test(ln) && timeCandidates(ln).length);
+        const lines = (data.text || '').split('\n').map(s => s.trim());
+        const badgeLine = lines.find(ln => badgeRe.test(ln) && timeCandidates(ln).length);
         if (badgeLine) return { ms: timeCandidates(badgeLine)[0], at };
+        // Pre-session countdown ("STARTS IN mm:ss" / "mm:ss bis zum Start"): the
+        // clock is on its own line, so the badge-line match above misses it.
+        const cdMs = countdownFromLines(lines, lines.some(ln => badgeRe.test(ln)));
+        if (cdMs != null) return { ms: cdMs, at, countdown: true };
         // No badge → nearest-data across all time-like reads (filters lap times/gaps).
         const all = timeCandidates(data.text || ''), dRef = dataClockMs();
         if (all.length && dRef != null) {
@@ -374,15 +400,36 @@
             if (read == null) await delay(300);
         }
         const now = performance.now();
-        const dMs = dataClockMs(), cur = currentOffset();
-        if (read == null || dMs == null || cur == null) {
-            dbg('clock sync: incomplete read', read, dMs, cur);
+        const cur = currentOffset();
+        if (read == null || cur == null) {
+            dbg('clock sync: incomplete read', read, cur);
             return false;
         }
-        const tvMs = read.ms;
         // The TV clock counted down by `elapsedS` while OCR ran; add it back so we
         // align to the LIVE picture, not the (now-stale) captured frame.
         const elapsedS = (now - read.at) / 1000;
+
+        // Pre-session countdown: mm:ss is time-until-start. There is no matching
+        // data-side clock (the data shows session duration, not a countdown), so
+        // anchor to the scheduled session start instead: place the data the same
+        // distance before it. (offset 0 = SessionInfo; scheduledStartMs from it.)
+        if (read.countdown) {
+            const b = bus();
+            if (scheduledStartMs == null || !b || !b.startTime) {
+                dbg('countdown sync: no scheduled start'); return false;
+            }
+            const startOffS = (scheduledStartMs - b.startTime.getTime()) / 1000;
+            const tvRemainS = read.ms / 1000 - elapsedS;
+            const target = startOffS - tvRemainS;
+            dbg('countdown sync: start@', startOffS.toFixed(1), 'tvRemain',
+                tvRemainS.toFixed(1), '→', target.toFixed(1));
+            if (target >= 0) seekTo(target);
+            return true;
+        }
+
+        const dMs = dataClockMs();
+        if (dMs == null) { dbg('clock sync: no data clock'); return false; }
+        const tvMs = read.ms;
         const deltaS = (dMs - tvMs) / 1000 + elapsedS;
         dbg('clock sync: tv', (tvMs / 1000).toFixed(1), 'data', (dMs / 1000).toFixed(1),
             'ocr elapsed', elapsedS.toFixed(2), 'Δ', deltaS.toFixed(2));
