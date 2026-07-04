@@ -571,6 +571,12 @@ class LiveTimingFetcher:
         for session in self.get_cached_sessions():
             if session["name"] == cache_key:
                 return Path(session["path"])
+            # Clients address sessions WITHOUT the numeric session-key folder
+            # prefix (e.g. "2026_1289_Silverstone_Sprint" for the on-disk
+            # "…/11321_Sprint"), so also match with that prefix stripped.
+            sk = session.get("session_key")
+            if sk and session["name"].replace(f"{sk}_", "", 1) == cache_key:
+                return Path(session["path"])
 
         # Fallback: try legacy flat path
         legacy_path = self.cache_dir / cache_key
