@@ -840,6 +840,29 @@ class LiveCaptureService:
                 if tmp.exists():
                     tmp.unlink()
 
+    @staticmethod
+    def _prune_empty_segment(cache_path: Path) -> None:
+        """Delete a 0-byte trailing commentary.aac (and its sidecars) left when
+        an ffmpeg restart rotated the real capture to commentary.NNN.aac but the
+        fresh run captured nothing (e.g. the session ended before it produced a
+        frame). Without this, audio_info.json points at an empty file and the
+        replay's byte-0 anchor / segment map carry a dead 0-length segment. Any
+        rotated commentary.NNN.aac remain the real (last) segment."""
+        current = cache_path / "commentary.aac"
+        try:
+            if not current.exists() or current.stat().st_size > 0:
+                return
+        except OSError:
+            return
+        for name in ("commentary.aac", "audio_info.json", "pdt_ledger.json"):
+            p = cache_path / name
+            try:
+                if p.exists():
+                    p.unlink()
+            except OSError as e:
+                logger.warning(f"Failed to prune empty audio sidecar {name}: {e}")
+        logger.info(f"Pruned empty audio segment (0-byte commentary.aac) in {cache_path.name}")
+
     def _stop_audio(self, cache_path: Path) -> None:
         """Stop ffmpeg and log file size.
 
@@ -884,6 +907,8 @@ class LiveCaptureService:
         if audio_file.exists():
             size_mb = audio_file.stat().st_size / (1024 * 1024)
             logger.info(f"Audio recording saved: {audio_file} ({size_mb:.1f} MB)")
+
+        self._prune_empty_segment(cache_path)
 
     def get_status(self, session_id: str) -> dict:
         """Get capture status."""
