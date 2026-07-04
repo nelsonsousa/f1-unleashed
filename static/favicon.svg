@@ -2,5 +2,5 @@
   <!-- Soft-tyre icon with F1 in the centre. Transparent background. -->
   <circle cx="12" cy="12" r="10" fill="#e10600" stroke="#e10600" stroke-width="1"/>
   <circle cx="12" cy="12" r="9" fill="transparent" stroke="#000" stroke-width="1"/>
-  <text x="12" y="12" text-anchor="middle" dominant-baseline="central" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#000">F1</text>
+  <text x="12" y="12" text-anchor="middle" dominant-baseline="central" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#fff">F1</text>
 </svg>
