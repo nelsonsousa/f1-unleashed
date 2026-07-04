@@ -200,7 +200,13 @@ class LapTimingProcessor(Processor):
             advanced = True
         if ll is not None:
             changed |= self._standalone(num, ll, clock_time)
-        elif flag_only and not advanced:
+        elif flag_only:
+            # Late PersonalFastest/OverallFastest flags (no Value) — apply to the
+            # just-completed lap even when they arrive WITH the NumberOfLaps
+            # advance. That advance sets the completed lap's time from the held
+            # _pending value, which carried the STALE (pre-flag) personalBest, so
+            # without re-applying the flags here the fastest lap is never counted
+            # as best (its driver shows no best + purple lands on the next car).
             changed |= self._apply_late_flags(num, clock_time)
         return changed
 
