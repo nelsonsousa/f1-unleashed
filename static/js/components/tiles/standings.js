@@ -723,6 +723,11 @@
         if (isRetired(num)) {
             return `<span class="lap-time lap-last lap-empty">--:--.---</span>`;
         }
+        // Quali: an eliminated driver keeps their best lap but the last-lap cell
+        // is cleared — they're done running in the part they were knocked out of.
+        if (!IS_RACE && state.eliminated && state.eliminated.has(num)) {
+            return `<span class="lap-time lap-last lap-empty">--:--.---</span>`;
+        }
         // Spec depends on session type:
         //   - PRACTICE / QUALIFYING: show the actual lap time including
         //     in-pit and out laps (card 81); cool-down (SLOW) falls back to
