@@ -11,8 +11,17 @@
     if (!$('statusFooter')) return;
 
     // Internal/control topics that aren't F1 data — excluded from counts/rate.
+    // `heartbeat` is a keep-alive, not data throughput, so it's excluded from
+    // the msg/s count but DOES drive the stream light (liveness) below.
     const INTERNAL = ['state:', 'session:', 'playback:', 'clock:', 'stream:', 'status:'];
-    const isData = (t) => t && !INTERNAL.some((p) => t.startsWith(p));
+    const isData = (t) => t && t !== 'heartbeat' && !INTERNAL.some((p) => t.startsWith(p));
+
+    // Stream light = data-feed liveness by Heartbeat recency (~15 s cadence).
+    // Pre/post-session the msg/s rate drops to ~0 (only heartbeats arrive) yet
+    // the feed is healthy, so the light tracks heartbeat age, not the rate.
+    const HB_YELLOW_S = 30;   // no heartbeat this long → yellow
+    const HB_RED_S = 60;      // no heartbeat this long → red
+    let lastHeartbeatMs = null;
 
     let total = 0, windowCount = 0;
     let health = null;   // latest dataHealth payload from the server
@@ -64,7 +73,8 @@
         setBox($('sfhPos'), health && health.position, 'Position stale');
     }
     messageBus.on('dataHealth', (d) => { health = d; renderHealth(); });
-    messageBus.on('state:reset', () => { health = null; renderHealth(); });
+    messageBus.on('state:reset', () => { health = null; lastHeartbeatMs = null; renderHealth(); });
+    messageBus.on('heartbeat', () => { lastHeartbeatMs = performance.now(); });
 
     messageBus.on('status:rates', (d) => {
         if (!d) return;
@@ -89,10 +99,12 @@
         $('sfMsgs').textContent = total.toLocaleString();
         $('sfRate').textContent = `${rate.toFixed(rate < 10 ? 1 : 0)} msg/s`;
 
+        // Stream light: data-feed liveness by heartbeat recency (not msg/s).
         const playing = messageBus.isPlaying;
-        if (!playing) light($('sfStreamLight'), 'grey');
-        else if (rate >= 5) light($('sfStreamLight'), 'green');
-        else if (rate > 0) light($('sfStreamLight'), 'yellow');
+        const hbAge = lastHeartbeatMs === null ? null : (now - lastHeartbeatMs) / 1000;
+        if (!playing || hbAge === null) light($('sfStreamLight'), 'grey');
+        else if (hbAge <= HB_YELLOW_S) light($('sfStreamLight'), 'green');
+        else if (hbAge <= HB_RED_S) light($('sfStreamLight'), 'yellow');
         else light($('sfStreamLight'), 'red');
     }, 1000);
 })();
