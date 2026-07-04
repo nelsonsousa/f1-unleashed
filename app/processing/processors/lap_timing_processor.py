@@ -74,6 +74,7 @@ class LapTimingProcessor(Processor):
         self._best: dict[str, dict] = {}                     # num -> {lap,time,ms,part} — CURRENT part (display), reset per part
         self._session_best: dict[str, dict] = {}             # num -> {lap,time,ms} — session-wide, kept for delta prediction (card 63)
         self._part: Optional[int] = None                     # current qualifying part (1/2/3); None outside quali
+        self._knocked: dict[str, bool] = {}                  # num -> KnockedOut (quali); their part-best is preserved across the next part reset
         # PersonalFastest/OverallFastest are STICKY F1 deltas — carry forward
         # until the field reappears (it flips False on the first non-improving lap).
         self._pb: dict[str, bool] = {}
@@ -103,7 +104,10 @@ class LapTimingProcessor(Processor):
         if part is None or part == self._part:
             return
         self._part = part
-        self._best = {}
+        # Eliminated drivers keep the best lap from the part they were knocked
+        # out in (it stays visible); everyone still in has their displayed best
+        # cleared for the new part (card US3eJeKz).
+        self._best = {n: b for n, b in self._best.items() if self._knocked.get(n)}
         self._part_fastest_ms = None
         for num in list(self._laps.keys()):
             self._emit(num, clock_time)
@@ -145,6 +149,8 @@ class LapTimingProcessor(Processor):
         for num, d in lines.items():
             if isinstance(d, dict):
                 self._capture_flags(num, d)
+                if "KnockedOut" in d:
+                    self._knocked[num] = bool(d["KnockedOut"])
         if not self._started:    # laps only count once the session has started
             return
         changed = set()
