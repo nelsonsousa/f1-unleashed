@@ -412,6 +412,13 @@
         if (!t.sectors) t.sectors = [{}, {}, {}];
         if (data[0] && data[0].value && !state.sectorsCleared[num]) {
             state.sectorsCleared[num] = true;   // first new S1 → clear overlay
+            // Drop a spent observed position-gain once the driver reaches S1 of
+            // a lap AFTER the one that earned it — one-shot delete, so it can't
+            // reappear later (e.g. after a pit stop / new run). (Card V2auWGhu.)
+            const pg = state.prediction[num];
+            if (pg && pg.observed && pg.lap != null && (t.lap || 0) > pg.lap) {
+                delete state.prediction[num];
+            }
         }
         for (let i = 0; i < 3; i++) {
             const seg = t.sectors[i] && t.sectors[i].segments;
@@ -476,6 +483,13 @@
         if (!num) return;
         state.status[num] = data;
         if (data === 'ELIMINATED') state.eliminated.add(num);
+        // A spent observed position-gain is dropped when the driver STOPs or
+        // pits (their run is over) so it doesn't linger or reappear on the way
+        // back out. (Card V2auWGhu.)
+        if (data === 'STOP' || data === 'PIT') {
+            const pg = state.prediction[num];
+            if (pg && pg.observed) delete state.prediction[num];
+        }
         render();
     });
 
@@ -978,14 +992,11 @@
         // time is dropped, but its slot is kept (empty) so the positions stay in
         // the same fixed column position as during the live projection.
         if (p.observed) {
-            // Positions gained show only transiently: until the driver's S1 of
-            // the NEXT lap is observed (sectorsCleared, once past the observed
-            // lap) or the driver STOPs — then hide.
-            const curLap = (state.timing[num] || {}).lap;
-            const nextLapStarted = curLap != null && p.lap != null && curLap > p.lap;
-            if (state.status[num] === 'STOP' || (nextLapStarted && state.sectorsCleared[num])) {
-                return '<span class="pred"></span>';
-            }
+            // The observed positions-gained is removed by DELETING
+            // state.prediction[num] once the driver reaches S1 of the next lap,
+            // or STOPs/pits (see the driverSectors / driverStatus handlers) — a
+            // one-shot removal so it can't reappear after a pit/new run. Until
+            // then, show it (empty delta slot keeps the column aligned).
             return `<span class="pred"><span class="pred-delta"></span>${posHtml}</span>`;
         }
         // Live projection: delta (0.1s) on the left, positions gained on the right.
