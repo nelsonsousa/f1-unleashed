@@ -256,8 +256,28 @@
     // qualifyingSegment {segment, eliminated:[nums], isSprintQuali}.
     messageBus.on('qualifyingSegment', (data) => {
         if (!data) return;
+        const newElim = new Set((data.eliminated || []).map(String));
+        // A new part starting clears best laps (server-driven). Clear gap + last
+        // lap too, so the prior part's values don't linger — but NOT for
+        // eliminated drivers, who keep their best + a frozen gap from the part
+        // they were knocked out in (handled elsewhere).
+        if (data.segment && data.segment !== state.qualifyingSegment) {
+            for (const num of Object.keys(state.timing)) {
+                if (newElim.has(num)) continue;
+                const t = state.timing[num];
+                t.lapTime = null; t.personalFastest = false; t.overallFastest = false;
+                delete state.prevLap[num];
+                delete state.prevFastLap[num];
+                state.sectorsCleared[num] = false;
+            }
+            for (const num of Object.keys(state.driverData)) {
+                if (newElim.has(num)) continue;
+                const e = state.driverData[num];
+                e.gap = ''; e.gapIsRed = false; e.gapTrend = '';
+            }
+        }
         if (data.segment) state.qualifyingSegment = data.segment;
-        state.eliminated = new Set((data.eliminated || []).map(String));
+        state.eliminated = newElim;
         render();
     });
 
@@ -943,14 +963,24 @@
             }
         }
         // Positions gained: green up-triangle + WHITE count, right-aligned.
+        // Predicted (live projection) gain = green; observed (completed) = white.
+        const gainCls = p.observed ? 'pred-pos-observed' : 'pred-pos-predicted';
         const posHtml = (p.placesGained != null && p.placesGained > 0)
-            ? `<span class="pred-pos-gain"><span class="pred-pos-arrow">&#9650;</span>`
+            ? `<span class="pred-pos-gain ${gainCls}"><span class="pred-pos-arrow">&#9650;</span>`
               + `<span class="pred-pos-num">${p.placesGained}</span></span>`
             : '';
         // On completion (observed) only the positions gained are shown — the delta
         // time is dropped, but its slot is kept (empty) so the positions stay in
         // the same fixed column position as during the live projection.
         if (p.observed) {
+            // Positions gained show only transiently: until the driver's S1 of
+            // the NEXT lap is observed (sectorsCleared, once past the observed
+            // lap) or the driver STOPs — then hide.
+            const curLap = (state.timing[num] || {}).lap;
+            const nextLapStarted = curLap != null && p.lap != null && curLap > p.lap;
+            if (state.status[num] === 'STOP' || (nextLapStarted && state.sectorsCleared[num])) {
+                return '<span class="pred"></span>';
+            }
             return `<span class="pred"><span class="pred-delta"></span>${posHtml}</span>`;
         }
         // Live projection: delta (0.1s) on the left, positions gained on the right.
