@@ -42,6 +42,12 @@ LIVE_EDGE_BUFFER_S = 8.0
 # session freezing on an audio hiccup. (Tracker refreshes every ~5 s.)
 AUDIO_EDGE_STALE_S = 9.0
 
+# The data leading edge (MAX processed offset) is "stale" if it hasn't advanced
+# in this long (wall-clock). With Heartbeats emitted (~15 s) a healthy feed
+# always advances well inside this window; a longer gap means the data stream
+# stalled, so the playhead should follow the audio edge alone. (~2 missed beats.)
+DATA_EDGE_STALE_S = 30.0
+
 # Keep the transient scratch DB after the last client disconnects (for
 # inspection) instead of deleting it.
 _DEBUG = REPLAY_DEBUG
@@ -894,22 +900,40 @@ class SessionEngine:
         return (edge_pdt - self._start_time).total_seconds()
 
     def _capped_edge_ms(self) -> Optional[int]:
-        """The playback live edge (ms), capped at the lagging stream.
+        """The playback live edge (ms), health-gated against both feeds.
 
-        Live: min(data_edge, audio_edge) − LIVE_EDGE_BUFFER_S, so playback
-        never outruns either feed and audio/data stay aligned at the edge.
-        Replay, or live with no audio PDT yet, returns the raw data edge
-        (nothing to cap against). None if no data yet."""
+        Policy: when BOTH data and audio are healthy, the edge is the lagging
+        (earlier) of the two — min — so playback never outruns either feed. If
+        one feed is UNHEALTHY the other alone sets the edge: stalled/absent audio
+        → data drives; a stalled data stream → audio drives (so the playhead
+        doesn't freeze on a dead data feed while audio still flows). A
+        LIVE_EDGE_BUFFER_S cushion is always applied. Replay returns the raw data
+        edge (nothing to cap). None if neither feed has produced anything."""
         data_ms = self._data_edge_ms()
-        if data_ms is None:
-            return None
         if not self._live:
             return data_ms
-        audio_edge_s = self._audio_edge_offset()
-        if audio_edge_s is None:
-            return data_ms
-        capped = min(data_ms, int(audio_edge_s * 1000)) - int(LIVE_EDGE_BUFFER_S * 1000)
-        return max(0, capped)
+
+        # Data-edge liveness: stale if MAX(offset_ms) hasn't advanced recently.
+        now_mono = time.monotonic()
+        if data_ms is not None and data_ms != getattr(self, "_last_data_ms", None):
+            self._last_data_ms = data_ms
+            self._last_data_advance = now_mono
+        data_healthy = (data_ms is not None
+                        and (now_mono - getattr(self, "_last_data_advance", now_mono))
+                        <= DATA_EDGE_STALE_S)
+
+        audio_edge_s = self._audio_edge_offset()   # None when audio stalled/absent
+        audio_ms = int(audio_edge_s * 1000) if audio_edge_s is not None else None
+
+        if data_healthy and audio_ms is not None:
+            edge = min(data_ms, audio_ms)          # both healthy → lagging stream limits
+        elif audio_ms is not None:
+            edge = audio_ms                        # data stalled/absent → audio drives
+        elif data_ms is not None:
+            edge = data_ms                         # audio stalled/absent → data drives
+        else:
+            return None
+        return max(0, edge - int(LIVE_EDGE_BUFFER_S * 1000))
 
     # ── Duration Tracking (live mode) ──
 
