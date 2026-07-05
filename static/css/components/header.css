@@ -158,21 +158,43 @@
     max-width: 140px;
 }
 
-/* TV-signal + Sync panel — sits before the Audio panel. Capture from a
- * named audio input (= BlackHole-2ch) and align the data clock to the
- * incoming broadcast via cross-correlation. */
+/* SYNC TO panel — "SYNC TO" label on top, two buttons (previous / next marker)
+ * below. Markers are wall-clock minutes / session-clock minutes / lap starts;
+ * clicking a button seeks playback there (see header.js updateSyncButtons). */
 .sync-controls {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 8px;
+    justify-content: center;
+    gap: 3px;
     flex: 0 0 auto;
-    padding: 0 8px;
+    padding: 2px 8px;
     margin-right: 8px;
     border: 1px solid rgba(255, 255, 255, 0.6);
     border-radius: 6px;
     height: 38px;
     box-sizing: border-box;
 }
+.sync-to-btns {
+    display: flex;
+    gap: 4px;
+}
+.btn-sync {
+    font-size: 12px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    font-family: 'Monaco', 'Consolas', monospace;
+    line-height: 1;
+    padding: 2px 6px;
+    min-width: 48px;
+    background: rgba(0, 0, 0, 0.4);
+    color: #d4d4d4;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+    cursor: pointer;
+}
+.btn-sync:hover:not(:disabled) { background: rgba(255, 255, 255, 0.15); }
+.btn-sync:disabled { opacity: 0.4; cursor: default; }
 .btn-tv-signal,
 .btn-sync {
     display: inline-flex;
