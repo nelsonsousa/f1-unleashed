@@ -676,7 +676,8 @@
                 // P/Q: trust F1's overallFastest flag tracking. Single
                 // purple holder maintained in state.overallBestLapDriver
                 // and reset on Q segment change.
-                if (state.overallBestLapDriver === num) cls = 'lap-purple';
+                if (state.eliminated && state.eliminated.has(num)) cls = 'lap-white';
+                else if (state.overallBestLapDriver === num) cls = 'lap-purple';
                 else if (e.bestLapPersonal) cls = 'lap-green';
                 else cls = 'lap-yellow';
             }
@@ -1023,6 +1024,10 @@
         const e = state.driverData[num] || {};
         const txt = e.gap || '';
         if (!txt) return '<span class="gap gap-empty">+-.---</span>';
+        // Eliminated (quali): gap is the frozen bubble gap, shown white.
+        if (!IS_RACE && state.eliminated && state.eliminated.has(num)) {
+            return `<span class="gap gap-white">${txt}</span>`;
+        }
         const cls = e.gapIsRed ? 'gap gap-red' : 'gap';
         return `<span class="${cls}">${txt}</span>`;
     }

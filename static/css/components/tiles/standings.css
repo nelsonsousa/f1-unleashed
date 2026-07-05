@@ -198,6 +198,7 @@
 .lap-time.lap-yellow { color: #ffcc00; }
 .lap-time.lap-green { color: #00ff88; }
 .lap-time.lap-purple { color: #cc66ff; }
+.lap-time.lap-white { color: #ffffff; }   /* eliminated driver's best lap (card 1smo53RX) */
 
 /* Race "current pace" bands — last lap vs the leader's reference lap. */
 .lap-time.lap-pace-white  { color: #ffffff; }
@@ -216,6 +217,7 @@
 }
 
 .gap.gap-red { color: #ff5555; }
+.gap.gap-white { color: #ffffff; }   /* eliminated driver's frozen bubble gap (card 1smo53RX) */
 .gap.gap-empty { color: var(--text-muted); }
 
 /* Race gap trend vs the previous value (±0.1 s deadzone stays default/white). */
