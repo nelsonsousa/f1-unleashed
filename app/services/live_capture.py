@@ -338,7 +338,7 @@ class LiveCaptureService:
                 signalr_stall_watchdog.cancel()
             except NameError:
                 pass
-            self._stop_audio(cache_path)
+            self._stop_audio(cache_path, terminal=True)
             # Audio is anchored solely by PdtTracker (byte-0 PROGRAM-DATE-TIME);
             # no end-of-capture re-anchor.
             if signalr_client:
@@ -456,6 +456,15 @@ class LiveCaptureService:
         a fresh ffmpeg writing into `commentary.aac`. The audio endpoint
         concatenates the segments at serve time.
         """
+        # Once the session is Finalised we NEVER (re)start capture — the existing
+        # recording runs until the broadcast-over silence watchdog stops it. A
+        # late/reconnect AudioStreams or a stale-watchdog restart landing here
+        # would rotate the real audio to commentary.NNN.aac and record post-
+        # session junk (card xJAG0l4A). Guarding the single start point covers
+        # both restart routes (_handle_audio_streams and _audio_stale_watchdog).
+        if self._finalised_seen:
+            logger.info("Session Finalised — not (re)starting audio capture")
+            return
         self._stop_audio(cache_path)
 
         output_path = cache_path / "commentary.aac"
@@ -665,9 +674,7 @@ class LiveCaptureService:
                     f"Stopping audio capture for {cache_path.name}: "
                     f"Finalised + 60 s trailing silence"
                 )
-                self._stop_audio(cache_path)
-                self._trim_trailing_silence(cache_path)
-                self._trim_leading_silence(cache_path)
+                self._stop_audio(cache_path, terminal=True)
                 return
 
     async def _audio_stale_watchdog(self, cache_path: Path) -> None:
@@ -958,12 +965,20 @@ class LiveCaptureService:
                 logger.warning(f"Failed to prune empty audio sidecar {name}: {e}")
         logger.info(f"Pruned empty audio segment (0-byte commentary.aac) in {cache_path.name}")
 
-    def _stop_audio(self, cache_path: Path) -> None:
+    def _stop_audio(self, cache_path: Path, terminal: bool = False) -> None:
         """Stop ffmpeg and log file size.
 
         SIGINT first (lets ffmpeg flush its current segment cleanly), then
         SIGKILL after 5 s if it's still alive, with a final 5 s wait so
         we don't leave a zombie if SIGKILL is also somehow pending.
+
+        terminal=True marks the FINAL stop of the session (the session-end
+        cleanup or the broadcast-over silence watchdog) — NOT a mid-session
+        reconnect rotation. Only a terminal stop trims silence (trailing pad to
+        60 s + the long leading gap, re-pinning the byte-0 anchor); a rotation
+        must not, since that segment isn't the session's final audio. Previously
+        the trim ran only on the watchdog path, so a stop via session-end left
+        the audio untrimmed (card 4rz9EWSL).
         """
         # Stop the PDT side-car first so it doesn't keep ffprobing the
         # file while ffmpeg is in the middle of flushing.
@@ -1004,6 +1019,13 @@ class LiveCaptureService:
             logger.info(f"Audio recording saved: {audio_file} ({size_mb:.1f} MB)")
 
         self._prune_empty_segment(cache_path)
+
+        # Terminal stop → trim silence off the session's final audio. Trailing
+        # first (pad to 60 s), then leading (drop the pre-commentary gap + re-pin
+        # the byte-0 PDT anchor). A reconnect rotation passes terminal=False.
+        if terminal:
+            self._trim_trailing_silence(cache_path)
+            self._trim_leading_silence(cache_path)
 
     def get_status(self, session_id: str) -> dict:
         """Get capture status."""

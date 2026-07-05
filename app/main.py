@@ -188,15 +188,23 @@ async def live_session_monitor():
                                     _active_live_capture["session_type"] != live_type):
                                 need_start = True
                             elif _active_live_capture["session_id"]:
-                                # Same session — check if capture is still healthy
+                                # Same session — check the capture's health.
                                 try:
                                     info = live_capture.get_status(
                                         _active_live_capture["session_id"])
-                                    if info["status"] in ("completed", "error"):
+                                    if info["status"] == "error":
                                         logger.info(
                                             f"Capture {_active_live_capture['session_id']} "
-                                            f"ended ({info['status']}), restarting")
+                                            f"errored, restarting")
                                         need_start = True
+                                    # "completed" = the SignalR feed closed = session
+                                    # over. Do NOT restart: F1 can still report a
+                                    # just-ended session as live while ArchiveStatus
+                                    # lags, and restarting re-captures post-session —
+                                    # rotating the real audio to commentary.NNN.aac
+                                    # and recording junk (card xJAG0l4A). Red-flag
+                                    # data gaps never reach "completed" (SignalR owns
+                                    # reconnection, so is_alive stays true).
                                 except (ValueError, KeyError):
                                     need_start = True
 
