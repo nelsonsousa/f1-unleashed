@@ -646,19 +646,15 @@
     // P1-delta colour bands. deltaMs = value − reference (>=0). `sector` uses the
     // tighter sector thresholds (card cKNdwUoZ); otherwise the gap/best/last
     // thresholds (card IeBKH1Xz). Returns a band-* class or null.
-    function bandClass(deltaMs, sector) {
+    // Δ-to-P1 colour bands (ms): <0.1 blue, 0.1-0.3 green, 0.3-0.5 yellow,
+    // 0.5-1.0 orange, >1.0 red. `capOrange` clamps red→orange (best-lap/gap in
+    // quali reserve red for the elimination zone).
+    function bandClass(deltaMs, capOrange) {
         if (deltaMs == null || isNaN(deltaMs) || deltaMs < 0) return null;
-        if (sector) {
-            if (deltaMs < 100) return 'band-blue';
-            if (deltaMs < 200) return 'band-green';
-            if (deltaMs < 300) return 'band-yellow';
-            if (deltaMs < 500) return 'band-orange';
-            return 'band-red';
-        }
         if (deltaMs < 100) return 'band-blue';
         if (deltaMs < 300) return 'band-green';
         if (deltaMs < 500) return 'band-yellow';
-        if (deltaMs < 1000) return 'band-orange';
+        if (deltaMs < 1000 || capOrange) return 'band-orange';
         return 'band-red';
     }
 
@@ -695,19 +691,28 @@
         const txt = e.bestLap || t.bestLapTime || '';
         let cls = 'lap-empty';
         if (txt) {
+            const ms = parseLapMs(txt);
+            const isFastest = ms != null && ms === state.overallBestLapMs;
             if (IS_RACE) {
-                // Race: colour the best lap the SAME as the race last-lap — pace
-                // vs the leader's reference lap (server paceColour). (card IeBKH1Xz)
-                const pc = (state.driverData[num] || {}).paceColour;
-                cls = pc ? `lap-pace-${pc}` : 'lap-pace-white';
-            } else if (state.eliminated && state.eliminated.has(num)) {
-                cls = 'lap-white';   // eliminated: best shown white (card 1smo53RX)
+                // Race: only the fastest is purple; everyone else by pace colour.
+                if (isFastest) cls = 'lap-purple';
+                else {
+                    const pc = (state.driverData[num] || {}).paceColour;
+                    cls = pc ? `lap-pace-${pc}` : 'lap-pace-white';
+                }
+            } else if (IS_QUALI) {
+                // Quali: eliminated → white; fastest → purple; elimination-zone
+                // (gapIsRed) → red; else Δ-to-P1 bands capped at orange (no red).
+                if (state.eliminated && state.eliminated.has(num)) cls = 'lap-white';
+                else if (isFastest) cls = 'lap-purple';
+                else if ((state.driverData[num] || {}).gapIsRed) cls = 'band-red';
+                else cls = (ms != null && state.overallBestLapMs != null
+                            ? bandClass(ms - state.overallBestLapMs, true) : null) || 'band-orange';
             } else {
-                // P/Q: colour by delta to the overall-best lap (P1) — bands
-                // (card IeBKH1Xz). Falls back to yellow before a reference exists.
-                const ms = parseLapMs(txt);
-                cls = (ms != null && state.overallBestLapMs != null
-                       ? bandClass(ms - state.overallBestLapMs, false) : null) || 'lap-yellow';
+                // Practice: standard purple(fastest)/green(PB)/yellow — no bands.
+                if (state.overallBestLapDriver === num) cls = 'lap-purple';
+                else if (e.bestLapPersonal) cls = 'lap-green';
+                else cls = 'lap-yellow';
             }
         }
         return `<span class="lap-time ${cls}">${txt || '--:--.---'}</span>`;
@@ -819,17 +824,19 @@
         let cls = 'lap-empty';
         if (last) {
             if (IS_RACE) {
-                // Race: colour by pace vs the leader's reference lap (server-
-                // computed, replaces the PB/SB colouring). White for in/out laps
-                // and until a pace colour arrives.
+                // Race: colour by pace vs the leader's reference lap (paceColour).
                 const pc = (state.driverData[num] || {}).paceColour;
                 cls = pc ? `lap-pace-${pc}` : 'lap-pace-white';
+            } else if (IS_QUALI) {
+                // Quali: the last lap is NOT colour-coded (only the best lap is).
+                cls = 'lap-plain';
             } else {
-                // P/Q: colour by delta to the overall-best lap (P1) — bands
-                // (card IeBKH1Xz). Falls back to yellow before a reference exists.
+                // Practice: standard purple(fastest)/green(PB)/yellow.
                 const lastMs = parseLapMs(last);
-                cls = (lastMs != null && state.overallBestLapMs != null
-                       ? bandClass(lastMs - state.overallBestLapMs, false) : null) || 'lap-yellow';
+                if (state.overallBestLapMs != null && lastMs != null
+                        && lastMs === state.overallBestLapMs) cls = 'lap-purple';
+                else if (source.personalFastest) cls = 'lap-green';
+                else cls = 'lap-yellow';
             }
         }
         return `<span class="lap-time lap-last ${cls}">${last || '--:--.---'}</span>`;
@@ -887,18 +894,29 @@
         if (IS_RACE && !cleared && prevAny && prevAny.sectors) {
             sectors = prevAny.sectors;
         }
-        // Colour each sector by its delta to the fastest current sector (P1's
-        // sector) — bands, all sessions (card cKNdwUoZ).
-        const fastest = fastestSectors();
+        // Sector colouring:
+        //   Quali → PLAIN (current sectors not colour-coded; only best sectors are).
+        //   Race  → fastest sector purple, else Δ-to-fastest bands (lenient).
+        //   Practice → standard purple(fastest)/green(PB)/yellow.
+        const fastest = IS_RACE ? fastestSectors() : null;
         const out = [];
         for (let i = 0; i < 3; i++) {
             const s = sectors[i] || {};
             const v = s.value || '';
             let cls = 'sector-empty';
             if (v) {
-                const ms = parseSectorMs(v);
-                cls = (ms != null && fastest[i] != null
-                       ? bandClass(ms - fastest[i], true) : null) || 'sector-yellow';
+                if (IS_QUALI) {
+                    cls = 'sector-plain';
+                } else if (IS_RACE) {
+                    const ms = parseSectorMs(v);
+                    if (ms != null && fastest[i] != null && ms === fastest[i]) cls = 'sector-purple';
+                    else cls = (ms != null && fastest[i] != null
+                                ? bandClass(ms - fastest[i], false) : null) || 'sector-yellow';
+                } else {
+                    if (s.overallFastest) cls = 'sector-purple';
+                    else if (s.personalFastest) cls = 'sector-green';
+                    else cls = 'sector-yellow';
+                }
             }
             out.push(`<span class="sector-time ${cls}">${v || '--.---'}</span>`);
         }
@@ -1047,17 +1065,22 @@
         const txt = e.gap || '';
         if (!txt) return '<span class="gap gap-empty">+-.---</span>';
         // Eliminated (quali): gap is the frozen bubble gap, shown white.
-        if (!IS_RACE && state.eliminated && state.eliminated.has(num)) {
+        if (state.eliminated && state.eliminated.has(num)) {
             return `<span class="gap gap-white">${txt}</span>`;
         }
-        // In-zone (drop-zone) gap is measured to the cutoff car, not P1 — keep it
-        // red (danger). Otherwise the gap IS the delta to P1 → colour it by bands
-        // (card IeBKH1Xz). (P/Q only; race uses gapOrLapForRaceP1.)
+        // Elimination zone → red (red is reserved for the zone only).
         if (e.gapIsRed) return `<span class="gap gap-red">${txt}</span>`;
-        let gms = txt.includes(':') ? parseLapMs(txt)
-                : Math.round(parseFloat(txt.replace('+', '')) * 1000);
-        const band = bandClass(gms, false);
-        return `<span class="gap ${band || ''}">${txt}</span>`;
+        if (IS_QUALI) {
+            // Gap = Δ to P1 → bands, capped at orange (big gaps stay orange; red
+            // is reserved for the elimination zone). (P/Q only; race uses
+            // gapOrLapForRaceP1.)
+            const gms = txt.includes(':') ? parseLapMs(txt)
+                      : Math.round(parseFloat(txt.replace('+', '')) * 1000);
+            const band = bandClass(gms, true);
+            return `<span class="gap ${band || ''}">${txt}</span>`;
+        }
+        // Practice: plain (no bands).
+        return `<span class="gap">${txt}</span>`;
     }
 
     function penaltiesCell(num) {
