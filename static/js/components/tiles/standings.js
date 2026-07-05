@@ -351,6 +351,12 @@
             t.lapTime = data.lastLap.time;
             t.personalFastest = data.lastLap.personalBest;
             t.overallFastest = data.lastLap.overallBest;
+        } else {
+            // Server blanked the last lap (e.g. new quali part) — clear it so the
+            // cell blanks instead of holding the previous value. (hqb93XEw)
+            t.lapTime = null;
+            t.personalFastest = false;
+            t.overallFastest = false;
         }
 
         // Per-lap times map {lapNum → time_str} (lapCount + prediction ref).
@@ -797,18 +803,10 @@
             if (cur && cur.lapTime) source = cur;
             else source = prevAny || cur;
         } else {
-            // P/Q: in-pit and out laps now show their actual time (card 81);
-            // cool-down (SLOW) still falls back to the previous fast lap, and
-            // the !cleared fallback avoids a ~30s blank between laps.
-            if (slow) {
-                source = prevFast;
-            } else if (!cleared) {
-                source = prevFast;
-            } else if (cur && cur.lapTime) {
-                source = cur;
-            } else {
-                source = prevFast;
-            }
+            // P/Q: render the CURRENT lap directly — the server owns blanking
+            // (a new part / no current lap → the cell blanks). No prev-fast /
+            // slow / cleared client fallback. (hqb93XEw)
+            source = cur;
         }
 
         // An out lap / stopped "lap" isn't a representative timed lap —
@@ -874,11 +872,10 @@
             // own data for the current lap is authoritative.
             lap = cur;
         } else {
-            // In-pit and out laps now show their sectors (card 81); cool-down
-            // (SLOW) still falls back to the previous fast lap.
-            if (slow) lap = prevFast;
-            else if (cleared) lap = cur;
-            else lap = prevFast;
+            // P/Q: render the CURRENT lap's sectors directly — server owns
+            // blanking (a new part / rollover → blank). No prev-fast fallback.
+            // (hqb93XEw)
+            lap = cur;
         }
 
         // Race-mode sector display rules:
