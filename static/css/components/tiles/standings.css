@@ -200,6 +200,13 @@
 .lap-time.lap-purple { color: #cc66ff; }
 .lap-time.lap-white { color: #ffffff; }   /* eliminated driver's best lap (card 1smo53RX) */
 
+/* P1-delta colour bands — gap / best / last (IeBKH1Xz) + sectors (cKNdwUoZ). */
+.lap-time.band-blue,   .sector-time.band-blue,   .gap.band-blue   { color: #33ccff; }
+.lap-time.band-green,  .sector-time.band-green,  .gap.band-green  { color: #00ff88; }
+.lap-time.band-yellow, .sector-time.band-yellow, .gap.band-yellow { color: #ffcc00; }
+.lap-time.band-orange, .sector-time.band-orange, .gap.band-orange { color: #ff9933; }
+.lap-time.band-red,    .sector-time.band-red,    .gap.band-red    { color: #ff5555; }
+
 /* Race "current pace" bands — last lap vs the leader's reference lap. */
 .lap-time.lap-pace-white  { color: #ffffff; }
 .lap-time.lap-pace-purple { color: #cc66ff; }

@@ -643,6 +643,46 @@
         return base;
     }
 
+    // P1-delta colour bands. deltaMs = value − reference (>=0). `sector` uses the
+    // tighter sector thresholds (card cKNdwUoZ); otherwise the gap/best/last
+    // thresholds (card IeBKH1Xz). Returns a band-* class or null.
+    function bandClass(deltaMs, sector) {
+        if (deltaMs == null || isNaN(deltaMs) || deltaMs < 0) return null;
+        if (sector) {
+            if (deltaMs < 100) return 'band-blue';
+            if (deltaMs < 200) return 'band-green';
+            if (deltaMs < 300) return 'band-yellow';
+            if (deltaMs < 500) return 'band-orange';
+            return 'band-red';
+        }
+        if (deltaMs < 100) return 'band-blue';
+        if (deltaMs < 300) return 'band-green';
+        if (deltaMs < 500) return 'band-yellow';
+        if (deltaMs < 1000) return 'band-orange';
+        return 'band-red';
+    }
+
+    function parseSectorMs(v) {
+        if (!v) return null;
+        const f = parseFloat(v);
+        return isNaN(f) ? null : Math.round(f * 1000);
+    }
+
+    // Fastest current sector time (ms) per S1/S2/S3 across all drivers — the
+    // reference for the sector colour bands. Cheap (drivers × 3) per render.
+    function fastestSectors() {
+        const best = [null, null, null];
+        for (const n of Object.keys(state.timing)) {
+            const secs = (state.timing[n] || {}).sectors;
+            if (!Array.isArray(secs)) continue;
+            for (let i = 0; i < 3; i++) {
+                const ms = parseSectorMs(secs[i] && secs[i].value);
+                if (ms != null && (best[i] == null || ms < best[i])) best[i] = ms;
+            }
+        }
+        return best;
+    }
+
     function bestLapCell(num) {
         const e = state.driverData[num] || {};
         const t = state.timing[num] || {};
@@ -656,30 +696,18 @@
         let cls = 'lap-empty';
         if (txt) {
             if (IS_RACE) {
-                // Race: recompute the overall fastest from all drivers'
-                // bestLap. F1 doesn't push a reliable demotion signal
-                // and retroactive lap-time changes shuffle the leader,
-                // so the data-driven flag-tracking path used for P/Q
-                // is too lossy here. 20-driver sweep per cell is cheap.
-                const ms = parseLapMs(txt);
-                let overallBest = Infinity;
-                for (const n of Object.keys(state.driverData)) {
-                    const od = state.driverData[n] || {};
-                    const ot = state.timing[n] || {};
-                    const m = parseLapMs(od.bestLap || ot.bestLapTime);
-                    if (m != null && m < overallBest) overallBest = m;
-                }
-                if (ms != null && ms === overallBest) cls = 'lap-purple';
-                else if (e.bestLapPersonal) cls = 'lap-green';
-                else cls = 'lap-yellow';
+                // Race: colour the best lap the SAME as the race last-lap — pace
+                // vs the leader's reference lap (server paceColour). (card IeBKH1Xz)
+                const pc = (state.driverData[num] || {}).paceColour;
+                cls = pc ? `lap-pace-${pc}` : 'lap-pace-white';
+            } else if (state.eliminated && state.eliminated.has(num)) {
+                cls = 'lap-white';   // eliminated: best shown white (card 1smo53RX)
             } else {
-                // P/Q: trust F1's overallFastest flag tracking. Single
-                // purple holder maintained in state.overallBestLapDriver
-                // and reset on Q segment change.
-                if (state.eliminated && state.eliminated.has(num)) cls = 'lap-white';
-                else if (state.overallBestLapDriver === num) cls = 'lap-purple';
-                else if (e.bestLapPersonal) cls = 'lap-green';
-                else cls = 'lap-yellow';
+                // P/Q: colour by delta to the overall-best lap (P1) — bands
+                // (card IeBKH1Xz). Falls back to yellow before a reference exists.
+                const ms = parseLapMs(txt);
+                cls = (ms != null && state.overallBestLapMs != null
+                       ? bandClass(ms - state.overallBestLapMs, false) : null) || 'lap-yellow';
             }
         }
         return `<span class="lap-time ${cls}">${txt || '--:--.---'}</span>`;
@@ -797,20 +825,11 @@
                 const pc = (state.driverData[num] || {}).paceColour;
                 cls = pc ? `lap-pace-${pc}` : 'lap-pace-white';
             } else {
-                // P/Q: overallFastest in the snapshot is frozen at the moment the
-                // lap completed — F1 doesn't re-emit demotions. Compute the purple
-                // tint live vs the running overall best so a beaten lap drops to
-                // green / yellow.
+                // P/Q: colour by delta to the overall-best lap (P1) — bands
+                // (card IeBKH1Xz). Falls back to yellow before a reference exists.
                 const lastMs = parseLapMs(last);
-                if (state.overallBestLapMs != null
-                        && lastMs != null
-                        && lastMs === state.overallBestLapMs) {
-                    cls = 'lap-purple';
-                } else if (source.personalFastest) {
-                    cls = 'lap-green';
-                } else {
-                    cls = 'lap-yellow';
-                }
+                cls = (lastMs != null && state.overallBestLapMs != null
+                       ? bandClass(lastMs - state.overallBestLapMs, false) : null) || 'lap-yellow';
             }
         }
         return `<span class="lap-time lap-last ${cls}">${last || '--:--.---'}</span>`;
@@ -868,15 +887,18 @@
         if (IS_RACE && !cleared && prevAny && prevAny.sectors) {
             sectors = prevAny.sectors;
         }
+        // Colour each sector by its delta to the fastest current sector (P1's
+        // sector) — bands, all sessions (card cKNdwUoZ).
+        const fastest = fastestSectors();
         const out = [];
         for (let i = 0; i < 3; i++) {
             const s = sectors[i] || {};
             const v = s.value || '';
             let cls = 'sector-empty';
             if (v) {
-                if (s.overallFastest) cls = 'sector-purple';
-                else if (s.personalFastest) cls = 'sector-green';
-                else cls = 'sector-yellow';
+                const ms = parseSectorMs(v);
+                cls = (ms != null && fastest[i] != null
+                       ? bandClass(ms - fastest[i], true) : null) || 'sector-yellow';
             }
             out.push(`<span class="sector-time ${cls}">${v || '--.---'}</span>`);
         }
@@ -1028,8 +1050,14 @@
         if (!IS_RACE && state.eliminated && state.eliminated.has(num)) {
             return `<span class="gap gap-white">${txt}</span>`;
         }
-        const cls = e.gapIsRed ? 'gap gap-red' : 'gap';
-        return `<span class="${cls}">${txt}</span>`;
+        // In-zone (drop-zone) gap is measured to the cutoff car, not P1 — keep it
+        // red (danger). Otherwise the gap IS the delta to P1 → colour it by bands
+        // (card IeBKH1Xz). (P/Q only; race uses gapOrLapForRaceP1.)
+        if (e.gapIsRed) return `<span class="gap gap-red">${txt}</span>`;
+        let gms = txt.includes(':') ? parseLapMs(txt)
+                : Math.round(parseFloat(txt.replace('+', '')) * 1000);
+        const band = bandClass(gms, false);
+        return `<span class="gap ${band || ''}">${txt}</span>`;
     }
 
     function penaltiesCell(num) {
