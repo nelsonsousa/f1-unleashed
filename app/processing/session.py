@@ -138,27 +138,8 @@ class SessionEngine:
         self._session_info = self._initial_state.get("SessionInfo", {})
         self._gmt_offset = self._session_info.get("GmtOffset")
 
-        # Load audio info — prefer the EARLIEST segment for multi-segment
-        # captures. The audio endpoint streams segments oldest-first, so
-        # the start_utc that aligns with the start of the playback is the
-        # one belonging to the lowest-numbered segment (audio_info.001.json),
-        # not the latest (audio_info.json).
-        audio_info_file = self._session_path / "audio_info.json"
-        rotated_info = sorted(self._session_path.glob("audio_info.[0-9][0-9][0-9].json"))
-        if rotated_info:
-            audio_info_file = rotated_info[0]
-        if audio_info_file.exists():
-            with open(audio_info_file, "r", encoding="utf-8") as f:
-                self._audio_info = json.load(f)
-            # Per-segment map (start_utc + duration), chronological, so a
-            # multi-segment REPLAY can map the data clock to the audio stream
-            # piecewise and SKIP the real-time gap between capture segments
-            # (issue I15). Single-segment sessions get a 1-entry list (no-op).
-            # Run in a worker thread — it shells out to ffprobe per segment,
-            # which would otherwise block the event loop (and every other
-            # client/session on it) during engine startup.
-            self._audio_info["segments"] = await asyncio.to_thread(
-                self._build_audio_segments)
+        # Load audio info (retried on client connect for live — see add_client).
+        await self._load_audio_info()
 
         # Detect session type from SessionInfo if not provided
         if not self._session_type:
@@ -369,11 +350,34 @@ class SessionEngine:
 
     # ── WebSocket Client Management ──
 
+    async def _load_audio_info(self) -> None:
+        """(Re)load audio_info.json + build the per-segment map, preferring the
+        EARLIEST segment (audio_info.001.json) whose start_utc aligns with the
+        start of playback. For LIVE the audio can start AFTER the engine (audio
+        now begins ~10 min pre-session), so this is retried on client connect
+        until the file appears. Segments built in a worker thread (ffprobe)."""
+        audio_info_file = self._session_path / "audio_info.json"
+        rotated_info = sorted(self._session_path.glob("audio_info.[0-9][0-9][0-9].json"))
+        if rotated_info:
+            audio_info_file = rotated_info[0]
+        if not audio_info_file.exists():
+            return
+        with open(audio_info_file, "r", encoding="utf-8") as f:
+            self._audio_info = json.load(f)
+        self._audio_info["segments"] = await asyncio.to_thread(self._build_audio_segments)
+
     async def add_client(self, ws: WebSocket) -> int:
         """Add a WebSocket client. Returns client ID."""
         self._client_counter += 1
         client_id = self._client_counter
         self._clients[client_id] = ws
+
+        # Live: audio can start AFTER this engine did (audio begins ~10 min
+        # pre-session), so a client that connected before then would never learn
+        # audio exists. Re-read audio_info.json on connect so a reconnect/reload
+        # picks it up without the engine being torn down.
+        if self._live and self._audio_info is None:
+            await self._load_audio_info()
 
         # Stream immediately: do NOT wait for the transient-DB build to finish.
         # The client connects and plays from offset 0 while the preprocessor
