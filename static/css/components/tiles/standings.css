@@ -199,6 +199,9 @@
 .lap-time.lap-green { color: #00ff88; }
 .lap-time.lap-purple { color: #cc66ff; }
 .lap-time.lap-white { color: #ffffff; }   /* eliminated driver's best lap (card 1smo53RX) */
+/* Plain (uncoloured) — quali last-lap + current sector times are not pace-coloured. */
+.lap-time.lap-plain { color: #d4d4d4; }
+.sector-time.sector-plain { color: #d4d4d4; }
 
 /* P1-delta colour bands — gap / best / last (IeBKH1Xz) + sectors (cKNdwUoZ). */
 .lap-time.band-blue,   .sector-time.band-blue,   .gap.band-blue   { color: #33ccff; }
