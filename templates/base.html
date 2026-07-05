@@ -8,7 +8,6 @@
     <link rel="manifest" href="/static/manifest.json">
     <link rel="stylesheet" href="{{ asset('css/base.css') }}">
     <link rel="stylesheet" href="{{ asset('css/components/header.css') }}">
-    <link rel="stylesheet" href="{{ asset('css/components/video_sync.css') }}">
     <link rel="stylesheet" href="{{ asset('css/components/status_footer.css') }}">
     {% block styles %}{% endblock %}
     <meta name="theme-color" content="#0a0a0a">
@@ -52,10 +51,6 @@
     <!-- Settings dialog lives on the home page only; here we load it solely to
          prime window.F1_SETTINGS (read once at load, e.g. team-radio auto-play). -->
     <script src="{{ asset('js/settings.js') }}"></script>
-    <!-- Tesseract.js for the video-sync OCR (3-video-sync). CDN for now;
-         vendor locally before release so the app stays self-contained. -->
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-    <script src="{{ asset('js/components/video_sync.js') }}"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -70,6 +70,19 @@
         clockAnimId: null,
     };
 
+    // SYNC TO: per-lap start offset (ms), recorded as raceLaps arrive — the
+    // race markers seek to these. Lap starts are immutable, so keep the first
+    // (earliest) offset seen for each lap.
+    const _lapOffset = {};
+
+    // SYNC TO click → seek playback to the marker stored on the button.
+    window.syncSeek = function (dir) {
+        const btn = document.getElementById(dir === 'prev' ? 'syncPrevBtn' : 'syncNextBtn');
+        if (btn && btn._syncOffset != null && typeof seekToOffset === 'function') {
+            seekToOffset(btn._syncOffset);
+        }
+    };
+
     // =========================================================================
     // Session Info
     // =========================================================================
@@ -188,6 +201,73 @@
         state.clockAnimId = requestAnimationFrame(updateClocks);
     }
 
+    // ── SYNC TO markers ──
+    // Two buttons that seek playback to the previous / next marker. Markers are
+    // context-dependent: pre/post-session → wall-clock whole minutes (hh:MM);
+    // P/Q running → session-clock whole minutes (MM:ss); race → lap starts.
+    function fmtHHMM(ms) { return new Date(ms).toUTCString().slice(17, 22); }
+    function fmtMMSS(sec) {
+        sec = Math.max(0, Math.round(sec));
+        const m = Math.floor(sec / 60), s = sec % 60;
+        return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+    function applySyncBtn(btn, label, offset) {
+        if (!btn) return;
+        const ok = label != null && offset != null && offset >= 0;
+        btn.textContent = label != null ? label : '--';
+        btn.disabled = !ok;
+        btn._syncOffset = ok ? offset : null;
+    }
+
+    function updateSyncButtons() {
+        const prevBtn = document.getElementById('syncPrevBtn');
+        const nextBtn = document.getElementById('syncNextBtn');
+        if (!prevBtn || !nextBtn || !messageBus.clockTime || !messageBus.startTime) return;
+
+        const sType = (window.SESSION_CONFIG && window.SESSION_CONFIG.sessionType) || '';
+        const isRaceLike = (sType === 'race' || sType === 'sprint');
+        const startMs = messageBus.startTime.getTime();
+        const curOffset = messageBus.getCurrentOffset();   // seconds
+
+        let prevLabel = null, prevOff = null, nextLabel = null, nextOff = null;
+
+        if (isRaceLike && state.raceStarted && state.raceCurrentLap) {
+            // Race: markers = lap starts. prev = current lap; next = next lap
+            // (next only seekable once its start has been observed).
+            const cl = state.raceCurrentLap;
+            prevLabel = `Lap ${cl}`;
+            prevOff = _lapOffset[cl] != null ? _lapOffset[cl] / 1000 : null;
+            nextLabel = `Lap ${cl + 1}`;
+            nextOff = _lapOffset[cl + 1] != null ? _lapOffset[cl + 1] / 1000 : null;
+        } else if (state.clockStatus === 'play' && state.firstNonZeroSeen
+                   && state.sessionTimeMs != null) {
+            // P/Q (or practice) running: markers = session-clock whole minutes.
+            // The clock counts DOWN, so "previous" = more remaining (earlier).
+            let remMs = state.sessionTimeMs;
+            if (state.sessionTimeAnchorMs != null) {
+                remMs = state.sessionTimeMs - (curOffset * 1000 - state.sessionTimeAnchorMs);
+            }
+            const remSec = Math.max(0, remMs / 1000);
+            const onBoundary = Math.round(remSec) % 60 === 0;
+            const prevSec = onBoundary ? Math.round(remSec) + 60 : Math.ceil(remSec / 60) * 60;
+            const nextSec = onBoundary ? Math.round(remSec) - 60 : Math.floor(remSec / 60) * 60;
+            prevLabel = fmtMMSS(prevSec);
+            prevOff = curOffset + (remSec - prevSec);
+            if (nextSec >= 0) { nextLabel = fmtMMSS(nextSec); nextOff = curOffset + (remSec - nextSec); }
+        } else {
+            // Pre/post session: markers = wall-clock (track) whole minutes.
+            const wallMs = messageBus.clockTime.getTime();
+            const prevWall = Math.floor(wallMs / 60000) * 60000;
+            const nextWall = prevWall + 60000;
+            const off = state.gmtOffset || 0;
+            prevLabel = fmtHHMM(prevWall + off); prevOff = (prevWall - startMs) / 1000;
+            nextLabel = fmtHHMM(nextWall + off); nextOff = (nextWall - startMs) / 1000;
+        }
+
+        applySyncBtn(prevBtn, prevLabel, prevOff);
+        applySyncBtn(nextBtn, nextLabel, nextOff);
+    }
+
     function updateClocks() {
         // The track time and the session-time countdown are both derived
         // from the playback clock (messageBus) so they respond correctly
@@ -234,6 +314,8 @@
         // Traffic light (green/yellow/red) — updated each frame so it
         // reflects buffering / seeking transitions promptly.
         updateAudioStatusLight();
+
+        updateSyncButtons();
 
         state.clockAnimId = requestAnimationFrame(updateClocks);
     }
@@ -1266,9 +1348,14 @@
     messageBus.on('sessionInfo', handleSessionInfo);
     messageBus.on('meetingName', handleMeetingName);
     messageBus.on('sessionBadge', handleSessionBadge);
-    messageBus.on('raceLaps', (data) => {
+    messageBus.on('raceLaps', (data, offset_ms) => {
         if (!data) return;
-        if (data.currentLap != null) state.raceCurrentLap = data.currentLap;
+        if (data.currentLap != null) {
+            state.raceCurrentLap = data.currentLap;
+            if (offset_ms != null && _lapOffset[data.currentLap] == null) {
+                _lapOffset[data.currentLap] = offset_ms;   // lap-start offset (SYNC TO)
+            }
+        }
         if (data.totalLaps != null) state.raceTotalLaps = data.totalLaps;
         renderSessionBadge();
     });
