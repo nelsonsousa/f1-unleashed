@@ -1037,6 +1037,20 @@
         return `<span class="pens">${items.join('')}</span>`;
     }
 
+    function lapCountClass(num) {
+        // Race only: colour the lap counter by laps-down from the leader.
+        //   yellow — a full lap or more down (gap shows laps, e.g. "+1 LAP")
+        //   white  — 1 lap behind on the counter but gap is still a time
+        //   green  — same lap as the leader (default)
+        if (!IS_RACE) return '';
+        const n = (state.timing[num] || {}).lap || 0;
+        const leaderLap = state.currentLap || 0;
+        const gap = ((state.driverData[num] || {}).gap || '').toUpperCase();
+        if (gap.includes('L')) return ' lap-count-yellow';
+        if (n && leaderLap && n < leaderLap) return ' lap-count-white';
+        return ' lap-count-green';
+    }
+
     function lapCountCell(num) {
         const t = state.timing[num] || {};
         // Lap count = the authoritative NoL-based current lap
@@ -1045,7 +1059,7 @@
         // time arrived the count regressed (e.g. COL 1→2→1, I10). currentLap is
         // monotonic and already session-correct.
         const n = t.lap || 0;
-        return `<span class="lap-count">${n || '0'}</span>`;
+        return `<span class="lap-count${lapCountClass(num)}">${n || '0'}</span>`;
     }
 
     function gapOrLapForRaceP1(num, position) {
