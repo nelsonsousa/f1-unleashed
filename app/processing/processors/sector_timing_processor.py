@@ -48,6 +48,7 @@ class SectorTimingProcessor(Processor):
     def __init__(self, bus: SessionMessageBus, session_type: str):
         super().__init__(bus, session_type)
         self._sectors: dict[str, list] = {}
+        self._part: Optional[int] = None   # current qualifying part (reset trigger)
         # Max segment count seen per sector (track-wide — all cars share the
         # mini-sector layout). Mini-sector arrays are padded to this on every
         # emit so the layout is fixed-length and the client render is
@@ -56,6 +57,18 @@ class SectorTimingProcessor(Processor):
 
     def subscribe(self) -> None:
         self._bus.on("TimingData", self._handle)
+        self._bus.on("qualifyingPart", self._handle_part)
+
+    def _handle_part(self, data: Any, clock_time: datetime) -> None:
+        """New qualifying part → blank every driver's sector times + mini-sectors
+        so the client shows a clean slate, server-driven (no client-side reset)."""
+        part = data if isinstance(data, int) else None
+        if part is None or part == self._part:
+            return
+        self._part = part
+        for num in list(self._sectors.keys()):
+            self._sectors[num] = _empty_sectors()
+            self._emit(num, clock_time)
 
     def _handle(self, data: Any, clock_time: datetime) -> None:
         lines = data.get("Lines") if isinstance(data, dict) else None
