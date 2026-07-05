@@ -98,6 +98,9 @@ class DriverGapProcessor(Processor):
         self._best_ms: dict[str, int] = {}
         self._gap_p1: dict[str, str] = {}
         self._seen: set[str] = set()
+        # Eliminated drivers: frozen gap to the bubble (last advancing car) of the
+        # part they went out in — captured once, kept + shown white thereafter.
+        self._elim_gap: dict[str, str] = {}
         # emit dedup
         self._last_gap: dict[str, dict] = {}
         self._last_int: dict[str, Any] = {}
@@ -244,8 +247,22 @@ class DriverGapProcessor(Processor):
                     cutoff_best_ms = self._best_ms.get(n)
                     break
         for num in self._seen:
+            if self._knocked.get(num):
+                # Eliminated: freeze the gap to the bubble (last advancing car) of
+                # the part they went out in — their last in-zone gap already IS the
+                # gap to the cutoff car — and show it WHITE (cutoff=False), not red
+                # (cards 1smo53RX / US3eJeKz).
+                if num not in self._elim_gap:
+                    prev = (self._last_gap.get(num) or {}).get("gap")
+                    if prev:
+                        self._elim_gap[num] = prev
+                    else:
+                        bms = self._best_ms.get(num)
+                        self._elim_gap[num] = (_fmt_gap(bms - cutoff_best_ms)
+                                               if bms is not None and cutoff_best_ms is not None else "")
+                self._emit_gap(num, self._elim_gap[num], False, clock_time)
+                continue
             in_zone = (cutoff_pos is not None
-                       and not self._knocked.get(num)
                        and self._pos.get(num, 0) > cutoff_pos)
             if in_zone:
                 bms = self._best_ms.get(num)
