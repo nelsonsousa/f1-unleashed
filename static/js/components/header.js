@@ -230,8 +230,10 @@
         const curOffset = messageBus.getCurrentOffset();   // seconds
 
         let prevLabel = null, prevOff = null, nextLabel = null, nextOff = null;
+        let titleText = 'SYNC TO CLOCK';
 
         if (isRaceLike && state.raceStarted && state.raceCurrentLap) {
+            titleText = 'SYNC TO LAP';
             // Race: markers = lap starts. prev = current lap; next = next lap
             // (next only seekable once its start has been observed).
             const cl = state.raceCurrentLap;
@@ -241,6 +243,7 @@
             nextOff = _lapOffset[cl + 1] != null ? _lapOffset[cl + 1] / 1000 : null;
         } else if (state.clockStatus === 'play' && state.firstNonZeroSeen
                    && state.sessionTimeMs != null) {
+            titleText = 'SYNC TO SESSION';
             // P/Q (or practice) running: markers = session-clock whole minutes.
             // The clock counts DOWN, so "previous" = more remaining (earlier).
             let remMs = state.sessionTimeMs;
@@ -266,6 +269,8 @@
 
         applySyncBtn(prevBtn, prevLabel, prevOff);
         applySyncBtn(nextBtn, nextLabel, nextOff);
+        const lbl = document.getElementById('syncToLabel');
+        if (lbl) lbl.textContent = titleText;
     }
 
     function updateClocks() {
