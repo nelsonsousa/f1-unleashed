@@ -1049,7 +1049,14 @@
         //   green  — same lap as the leader (default)
         if (!IS_RACE) return '';
         const n = (state.timing[num] || {}).lap || 0;
-        const leaderLap = state.currentLap || 0;
+        // Leader lap = the highest per-driver lap — SAME source as `n`
+        // (driverLaps.currentLap). Using raceLaps (state.currentLap) here misreads
+        // the leader as 1-down, since raceLaps.currentLap can lead t.lap by one.
+        let leaderLap = 0;
+        for (const k in state.timing) {
+            const l = state.timing[k].lap || 0;
+            if (l > leaderLap) leaderLap = l;
+        }
         const gap = ((state.driverData[num] || {}).gap || '').toUpperCase();
         if (gap.includes('L')) return ' lap-count-yellow';
         if (n && leaderLap && n < leaderLap) return ' lap-count-white';
