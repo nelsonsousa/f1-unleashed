@@ -5,8 +5,11 @@ Manages live SignalR connections to F1's timing service.
 Captures timing data to disk (JSONL) and audio commentary (AAC).
 Does NOT handle streaming to clients — that's SessionEngine's job.
 
-Audio lifecycle: starts when the AudioStreams message provides the HLS URL,
-stops when the capture ends (session over, cancelled, or error).
+Audio lifecycle: commentary is a standalone broadcast on a fixed rdio HLS URL,
+so it's captured directly on a timer — started with the capture (pre-session),
+stopped 10 min after SessionStatus=Finalised (or a max-duration backstop, or
+when the capture ends). ffmpeg is only ever restarted if the download goes
+stale; there is no AudioStreams / reconnect-driven (re)start.
 """
 
 import asyncio
@@ -105,6 +108,15 @@ class LiveCaptureService:
     _SIGNALR_CHECK_S = 15       # poll cadence
     _SIGNALR_STALL_S = 60       # no message (incl. Heartbeat) this long → force reconnect
 
+    # Commentary audio is a standalone broadcast on a FIXED HLS URL (verified
+    # constant across every session), so it's captured directly on a timer —
+    # decoupled from AudioStreams / SignalR reconnects. Start with the capture
+    # (which begins pre-session), stop 10 min after SessionStatus=Finalised, and
+    # only ever restart ffmpeg if the download goes stale.
+    _RDIO_AUDIO_URL = "https://rdio.formula1.com/rdio-prod/livetimingts/hls.m3u8"
+    _AUDIO_END_AFTER_FINALISED_S = 600   # stop audio 10 min after Finalised
+    _AUDIO_MAX_S = 6 * 3600              # hard backstop if Finalised never arrives
+
     def __init__(self, cache_dir: Optional[str] = None):
         # Default to the OS-appropriate cache location (card 25).
         self.cache_dir = Path(cache_dir) if cache_dir else CACHE_DIR
@@ -174,6 +186,7 @@ class LiveCaptureService:
             "cache_path": cache_path,
             "message_count": 0,
             "error": None,
+            "session_type": session_type,   # gates the audio.{type} capture toggle at start
         }
 
         self._tasks[session_id] = asyncio.create_task(
@@ -228,10 +241,18 @@ class LiveCaptureService:
             self._last_non_heartbeat_ts = time.monotonic()
             self._session_end_seen = False
             self._finalised_seen = False
+            self._finalised_monotonic = None   # set when SessionStatus=Finalised arrives
             self._radio_static_path = None
             self._radio_seen = set()
             self._radio_pending = []
-            self._capture_session_type = None
+            # Audio is a standalone broadcast on a fixed URL — start it now (the
+            # capture begins pre-session), independent of AudioStreams/SignalR.
+            self._capture_session_type = _norm_session_type(capture.get("session_type") or "")
+            stype = self._capture_session_type
+            if stype and not settings.get(f"audio.{stype}", True):
+                logger.info(f"Audio capture disabled for {stype} (settings)")
+            else:
+                self._start_audio(self._RDIO_AUDIO_URL, cache_path)
             audio_watchdog = asyncio.create_task(
                 self._audio_session_end_watchdog(cache_path)
             )
@@ -279,8 +300,9 @@ class LiveCaptureService:
                                 and isinstance(message.get("data"), dict)
                                 and message["data"].get("Status") == "Finalised"):
                             self._finalised_seen = True
+                            self._finalised_monotonic = time.monotonic()
                             logger.info(
-                                "SessionStatus=Finalised — arming audio-end silence monitor")
+                                "SessionStatus=Finalised — audio will stop in 10 min")
 
                         # Start the DB preprocessor once live.jsonl exists
                         # (the SignalR client writes it on first data).
@@ -291,11 +313,10 @@ class LiveCaptureService:
                             )
                             logger.info(f"DB preprocessor started for capture {session_id}")
 
-                        # Start audio when AudioStreams provides the URL
-                        if topic == "AudioStreams":
-                            self._handle_audio_streams(message.get("data"), cache_path)
+                        # Audio no longer depends on AudioStreams — it's captured
+                        # directly from the fixed rdio URL, started with the capture.
                         # Team radio (card 8): static Path → download new clips.
-                        elif topic == "SessionInfo":
+                        if topic == "SessionInfo":
                             self._capture_radio_static_path(message.get("data"), cache_path)
                         elif topic == "TeamRadio":
                             self._handle_team_radio(message.get("data"), cache_path)
@@ -371,31 +392,6 @@ class LiveCaptureService:
                 except OSError as e:
                     logger.warning(f"keepFiles cleanup failed: {e}")
 
-    # ── Audio Recording ──
-
-    def _handle_audio_streams(self, data, cache_path: Path) -> None:
-        """Extract HLS URL from AudioStreams message and start recording."""
-        if self._audio_process and self._audio_process.poll() is None:
-            return  # Already recording
-        # Per-session-type commentary toggle (card 27).
-        stype = self._capture_session_type
-        if stype and not settings.get(f"audio.{stype}", True):
-            return
-
-        try:
-            streams = data if isinstance(data, list) else (data or {}).get("Streams", [])
-            for stream in streams:
-                if not isinstance(stream, dict):
-                    continue
-                uri = stream.get("Uri")
-                if uri:
-                    # Use the stream's Utc as audio start reference
-                    stream_utc = stream.get("Utc")
-                    self._start_audio(uri, cache_path, stream_utc)
-                    return
-        except Exception as e:
-            logger.error(f"Failed to parse AudioStreams: {e}")
-
     # ── Team radio (card 8) ──
     def _capture_radio_static_path(self, data, cache_path: Path) -> None:
         """Record the session's CDN static Path + normalised type from SessionInfo,
@@ -447,21 +443,17 @@ class LiveCaptureService:
         The first segment in the playlist (which ffmpeg will record from) maps
         to: now - program_date_time_seconds.
 
-        IMPORTANT: this is called every time AudioStreams arrives — on the
-        initial subscribe and on every SignalR reconnect during a session.
-        We MUST NOT let ffmpeg open the output with O_TRUNC (which is what
-        the `-y` flag implies when the file already exists), because doing
-        so wipes the audio captured so far in the same session. Instead,
-        rotate the existing recording into `commentary.NNN.aac` and start
-        a fresh ffmpeg writing into `commentary.aac`. The audio endpoint
-        concatenates the segments at serve time.
+        Called once at capture start, and again ONLY by the stale-download
+        watchdog if ffmpeg stops producing. On a restart we MUST NOT let ffmpeg
+        open the output with O_TRUNC (the `-y` implies it when the file exists),
+        which would wipe the audio captured so far. Instead, rotate the existing
+        recording into `commentary.NNN.aac` and start a fresh ffmpeg writing into
+        `commentary.aac`; the audio endpoint concatenates the segments at serve
+        time. On the initial start there's no existing file, so no rotation.
         """
-        # Once the session is Finalised we NEVER (re)start capture — the existing
-        # recording runs until the broadcast-over silence watchdog stops it. A
-        # late/reconnect AudioStreams or a stale-watchdog restart landing here
-        # would rotate the real audio to commentary.NNN.aac and record post-
-        # session junk (card xJAG0l4A). Guarding the single start point covers
-        # both restart routes (_handle_audio_streams and _audio_stale_watchdog).
+        # Once the session is Finalised we never restart — the recording runs
+        # until the end-watchdog stops it 10 min later. A stale-watchdog restart
+        # landing here post-Finalised would just record wind-down junk.
         if self._finalised_seen:
             logger.info("Session Finalised — not (re)starting audio capture")
             return
@@ -642,38 +634,33 @@ class LiveCaptureService:
             return None
 
     async def _audio_session_end_watchdog(self, cache_path: Path) -> None:
-        """Stop audio capture when the BROADCAST ends. We keep recording
-        UNINTERRUPTED through the session; the stop is gated on
-        SessionStatus=Finalised — only after that do we monitor audio level, and
-        60 s of trailing silence then means the broadcast is over. Polls every
-        30 s. (A terminal SignalR disconnect / cancel still stops audio via the
-        capture loop's finally.)
-
-        After stopping, trim trailing AND leading silence from the commentary so
-        the captured file isn't padded with dead air (the leading trim re-pins
-        the byte-0 PDT anchor).
-        """
-        # Brief startup grace so ffmpeg has a chance to actually start
-        # producing samples before we test for silence.
-        await asyncio.sleep(120)
-
+        """Stop audio on a timer: 10 min after SessionStatus=Finalised, or a hard
+        max-duration backstop if Finalised never arrives (the feed died before
+        emitting it). A terminal SignalR disconnect / cancel still stops audio via
+        the capture loop's finally. The terminal stop trims trailing + leading
+        silence and re-pins the byte-0 PDT anchor."""
+        start = time.monotonic()
         while True:
             try:
-                await asyncio.sleep(30)
+                await asyncio.sleep(self._AUDIO_CHECK_S)
             except asyncio.CancelledError:
                 return
 
             if not self._audio_process or self._audio_process.poll() is not None:
                 return  # Audio already stopped — nothing left to do.
 
-            # Keep recording UNINTERRUPTED until the broadcast ends. Only once
-            # SessionStatus=Finalised has been seen do we watch the audio level;
-            # 60 s of trailing silence past that = broadcast over → stop.
-            if self._finalised_seen and self._audio_tail_is_silent(cache_path):
+            now = time.monotonic()
+            if (self._finalised_monotonic is not None
+                    and now - self._finalised_monotonic >= self._AUDIO_END_AFTER_FINALISED_S):
                 logger.info(
-                    f"Stopping audio capture for {cache_path.name}: "
-                    f"Finalised + 60 s trailing silence"
-                )
+                    f"Stopping audio for {cache_path.name}: "
+                    f"{self._AUDIO_END_AFTER_FINALISED_S // 60} min after Finalised")
+                self._stop_audio(cache_path, terminal=True)
+                return
+            if now - start >= self._AUDIO_MAX_S:
+                logger.info(
+                    f"Stopping audio for {cache_path.name}: max-duration backstop "
+                    f"({self._AUDIO_MAX_S // 3600} h, no Finalised seen)")
                 self._stop_audio(cache_path, terminal=True)
                 return
 
@@ -758,29 +745,6 @@ class LiveCaptureService:
                     f"SignalR data stalled ({age:.0f}s, no messages/Heartbeats) "
                     f"— forcing reconnect")
                 signalr_client.force_reconnect()
-
-    def _audio_tail_is_silent(self, cache_path: Path) -> bool:
-        """True iff the LAST 60 s of commentary.aac contain no
-        non-silent frames (silencedetect -50 dB / 60 s threshold)."""
-        af = cache_path / "commentary.aac"
-        if not af.exists() or af.stat().st_size < 1024:
-            return False
-        try:
-            # Probe just the tail to keep this cheap. Take last 90 s.
-            res = subprocess.run(
-                [
-                    "ffmpeg", "-nostdin", "-v", "error",
-                    "-sseof", "-90", "-i", str(af),
-                    "-af", "silencedetect=noise=-50dB:d=60",
-                    "-f", "null", "-",
-                ],
-                capture_output=True, text=True, timeout=30,
-            )
-            # silencedetect emits "silence_start: 0" (or similar) when
-            # the tail is one long silence; absent → audio present.
-            return "silence_start" in (res.stderr or "")
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            return False  # Don't false-trigger on probe failure.
 
     def _trim_trailing_silence(self, cache_path: Path) -> None:
         """For every commentary*.aac in the session dir, find the last
