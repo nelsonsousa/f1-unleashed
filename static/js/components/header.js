@@ -76,8 +76,8 @@
     const _lapOffset = {};
 
     // SYNC TO click → seek playback to the marker stored on the button.
-    window.syncSeek = function (dir) {
-        const btn = document.getElementById(dir === 'prev' ? 'syncPrevBtn' : 'syncNextBtn');
+    window.syncSeek = function () {
+        const btn = document.getElementById('syncBtn');
         if (btn && btn._syncOffset != null && typeof seekToOffset === 'function') {
             seekToOffset(btn._syncOffset);
         }
@@ -211,66 +211,53 @@
         const m = Math.floor(sec / 60), s = sec % 60;
         return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
     }
-    function applySyncBtn(btn, label, offset) {
-        if (!btn) return;
-        const ok = label != null && offset != null && offset >= 0;
-        btn.textContent = label != null ? label : '--';
-        btn.disabled = !ok;
-        btn._syncOffset = ok ? offset : null;
-    }
-
     function updateSyncButtons() {
-        const prevBtn = document.getElementById('syncPrevBtn');
-        const nextBtn = document.getElementById('syncNextBtn');
-        if (!prevBtn || !nextBtn || !messageBus.clockTime || !messageBus.startTime) return;
+        const btn = document.getElementById('syncBtn');
+        const modeEl = document.getElementById('syncToMode');
+        if (!btn || !messageBus.clockTime || !messageBus.startTime) return;
 
         const sType = (window.SESSION_CONFIG && window.SESSION_CONFIG.sessionType) || '';
         const isRaceLike = (sType === 'race' || sType === 'sprint');
         const startMs = messageBus.startTime.getTime();
         const curOffset = messageBus.getCurrentOffset();   // seconds
 
-        let prevLabel = null, prevOff = null, nextLabel = null, nextOff = null;
-        let titleText = 'SYNC TO CLOCK';
+        // One marker: the PREVIOUS sync event — the most recent boundary at/before
+        // the playhead. No forward sync (a future marker can't be synced to).
+        let mode = 'CLOCK', label = null, offset = null;
 
         if (isRaceLike && state.raceStarted && state.raceCurrentLap) {
-            titleText = 'SYNC TO LAP';
-            // Race: markers = lap starts. prev = current lap; next = next lap
-            // (next only seekable once its start has been observed).
-            const cl = state.raceCurrentLap;
-            prevLabel = `Lap ${cl}`;
-            prevOff = _lapOffset[cl] != null ? _lapOffset[cl] / 1000 : null;
-            nextLabel = `Lap ${cl + 1}`;
-            nextOff = _lapOffset[cl + 1] != null ? _lapOffset[cl + 1] / 1000 : null;
+            mode = 'LAP';
+            const cl = state.raceCurrentLap;   // start of the current lap
+            label = `Lap ${cl}`;
+            offset = _lapOffset[cl] != null ? _lapOffset[cl] / 1000 : null;
         } else if (state.clockStatus === 'play' && state.firstNonZeroSeen
                    && state.sessionTimeMs != null) {
-            titleText = 'SYNC TO SESSION';
-            // P/Q (or practice) running: markers = session-clock whole minutes.
-            // The clock counts DOWN, so "previous" = more remaining (earlier).
+            // P/Q running: the session-clock whole minute just crossed (the clock
+            // counts DOWN, so that's slightly MORE remaining than now).
+            mode = 'SESSION';
             let remMs = state.sessionTimeMs;
             if (state.sessionTimeAnchorMs != null) {
                 remMs = state.sessionTimeMs - (curOffset * 1000 - state.sessionTimeAnchorMs);
             }
             const remSec = Math.max(0, remMs / 1000);
-            const onBoundary = Math.round(remSec) % 60 === 0;
-            const prevSec = onBoundary ? Math.round(remSec) + 60 : Math.ceil(remSec / 60) * 60;
-            const nextSec = onBoundary ? Math.round(remSec) - 60 : Math.floor(remSec / 60) * 60;
-            prevLabel = fmtMMSS(prevSec);
-            prevOff = curOffset + (remSec - prevSec);
-            if (nextSec >= 0) { nextLabel = fmtMMSS(nextSec); nextOff = curOffset + (remSec - nextSec); }
+            const markSec = Math.ceil(remSec / 60) * 60;    // boundary just crossed
+            label = fmtMMSS(markSec);
+            offset = curOffset + (remSec - markSec);         // ≤ curOffset
         } else {
-            // Pre/post session: markers = wall-clock (track) whole minutes.
-            const wallMs = messageBus.clockTime.getTime();
-            const prevWall = Math.floor(wallMs / 60000) * 60000;
-            const nextWall = prevWall + 60000;
-            const off = state.gmtOffset || 0;
-            prevLabel = fmtHHMM(prevWall + off); prevOff = (prevWall - startMs) / 1000;
-            nextLabel = fmtHHMM(nextWall + off); nextOff = (nextWall - startMs) / 1000;
+            // Pre/post session: the wall-clock whole minute just crossed.
+            mode = 'CLOCK';
+            const floorMs = Math.floor(messageBus.clockTime.getTime() / 60000) * 60000;
+            label = fmtHHMM(floorMs + (state.gmtOffset || 0));
+            offset = (floorMs - startMs) / 1000;
         }
 
-        applySyncBtn(prevBtn, prevLabel, prevOff);
-        applySyncBtn(nextBtn, nextLabel, nextOff);
-        const lbl = document.getElementById('syncToLabel');
-        if (lbl) lbl.textContent = titleText;
+        if (modeEl) modeEl.textContent = mode;
+        // Enabled only when the marker is a valid PAST position (0 ≤ offset ≤
+        // playhead). Beyond the playhead (future) or pre-session → disabled+grey.
+        const ok = label != null && offset != null && offset >= 0 && offset <= curOffset + 0.5;
+        btn.textContent = label != null ? label : '--';
+        btn.disabled = !ok;
+        btn._syncOffset = ok ? offset : null;
     }
 
     function updateClocks() {

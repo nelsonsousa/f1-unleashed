@@ -20,14 +20,15 @@
     </div>
 
     <div class="sync-controls" id="syncControls">
-        <!-- SYNC TO: jump playback to the previous / next marker. Markers are
-             wall-clock minutes (pre/post-session), session-clock minutes (P/Q
-             running), or lap starts (race). Computed in header.js. -->
-        <div class="clock-label" id="syncToLabel">SYNC TO</div>
-        <div class="sync-to-btns">
-            <button class="btn btn-sync" id="syncPrevBtn" onclick="syncSeek('prev')" title="Jump back to this marker">--</button>
-            <button class="btn btn-sync" id="syncNextBtn" onclick="syncSeek('next')" title="Jump forward to this marker">--</button>
+        <!-- SYNC TO: one button that jumps playback BACK to the previous marker
+             (the most recent boundary at/before the playhead). Markers are
+             wall-clock minutes / session-clock minutes / lap starts. Computed in
+             header.js; disabled+greyed when the marker is beyond the playhead. -->
+        <div class="sync-to-title">
+            <span class="clock-label">SYNC TO</span>
+            <span class="clock-label" id="syncToMode">CLOCK</span>
         </div>
+        <button class="btn btn-sync" id="syncBtn" onclick="syncSeek()" title="Jump back to the previous marker">--</button>
     </div>
 
     <div class="audio-controls" id="audioControls">
