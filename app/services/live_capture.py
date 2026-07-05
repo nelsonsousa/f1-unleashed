@@ -245,14 +245,14 @@ class LiveCaptureService:
             self._radio_static_path = None
             self._radio_seen = set()
             self._radio_pending = []
-            # Audio is a standalone broadcast on a fixed URL — start it now (the
-            # capture begins pre-session), independent of AudioStreams/SignalR.
+            # Audio is a standalone broadcast on a fixed URL. SignalR connects
+            # ~40 min before a race but commentary only starts ~5-6 min before the
+            # scheduled time, so we DON'T start ffmpeg now — it's scheduled for
+            # (scheduled session start − 10 min) once SessionInfo gives the time,
+            # skipping 30+ min of pre-session silence on disk.
             self._capture_session_type = _norm_session_type(capture.get("session_type") or "")
-            stype = self._capture_session_type
-            if stype and not settings.get(f"audio.{stype}", True):
-                logger.info(f"Audio capture disabled for {stype} (settings)")
-            else:
-                self._start_audio(self._RDIO_AUDIO_URL, cache_path)
+            self._audio_scheduled = False
+            self._audio_start_task = None
             audio_watchdog = asyncio.create_task(
                 self._audio_session_end_watchdog(cache_path)
             )
@@ -318,6 +318,7 @@ class LiveCaptureService:
                         # Team radio (card 8): static Path → download new clips.
                         if topic == "SessionInfo":
                             self._capture_radio_static_path(message.get("data"), cache_path)
+                            self._schedule_audio_start(message.get("data"), cache_path)
                         elif topic == "TeamRadio":
                             self._handle_team_radio(message.get("data"), cache_path)
 
@@ -348,6 +349,11 @@ class LiveCaptureService:
             # Cancel the audio watchdog before we hard-stop audio in the
             # finally block so it doesn't race the cleanup.
             try:
+                if self._audio_start_task:
+                    self._audio_start_task.cancel()
+            except (NameError, AttributeError):
+                pass
+            try:
                 audio_watchdog.cancel()
             except NameError:
                 pass
@@ -359,7 +365,7 @@ class LiveCaptureService:
                 signalr_stall_watchdog.cancel()
             except NameError:
                 pass
-            self._stop_audio(cache_path, terminal=True)
+            self._stop_audio(cache_path)
             # Audio is anchored solely by PdtTracker (byte-0 PROGRAM-DATE-TIME);
             # no end-of-capture re-anchor.
             if signalr_client:
@@ -633,12 +639,69 @@ class LiveCaptureService:
             logger.warning(f"Failed to compute HLS start time: {e}")
             return None
 
+    @staticmethod
+    def _scheduled_start_utc(session_info: dict):
+        """Naive-UTC scheduled session start from SessionInfo StartDate (local) +
+        GmtOffset (e.g. StartDate=2026-07-04T16:00:00, GmtOffset=01:00:00 → 15:00
+        UTC). None if the fields are missing/unparseable."""
+        sd = session_info.get("StartDate")
+        off = session_info.get("GmtOffset")
+        if not sd or not off:
+            return None
+        try:
+            start_local = datetime.fromisoformat(sd).replace(tzinfo=None)
+            off = off.strip()
+            sign = -1 if off.startswith("-") else 1
+            h, m, s = (off.lstrip("+-").split(":") + ["0", "0", "0"])[:3]
+            offset = sign * timedelta(hours=int(h), minutes=int(m), seconds=int(float(s)))
+            return start_local - offset
+        except (ValueError, TypeError):
+            return None
+
+    def _schedule_audio_start(self, data, cache_path: Path) -> None:
+        """Schedule the audio ffmpeg to start at (scheduled session start − 10 min),
+        from SessionInfo. SignalR connects ~40 min before a race but commentary
+        only starts ~5-6 min before the scheduled time, so this skips 30+ min of
+        pre-session silence. Idempotent — only the first usable SessionInfo acts."""
+        if self._audio_scheduled or not isinstance(data, dict):
+            return
+        stype = self._capture_session_type
+        if stype and not settings.get(f"audio.{stype}", True):
+            self._audio_scheduled = True
+            logger.info(f"Audio capture disabled for {stype} (settings)")
+            return
+        start_utc = self._scheduled_start_utc(data)
+        self._audio_scheduled = True
+        if start_utc is None:
+            logger.info("No SessionInfo StartDate/GmtOffset — starting audio now")
+            self._start_audio(self._RDIO_AUDIO_URL, cache_path)
+            return
+        lead_at = start_utc - timedelta(minutes=10)
+        delay = (lead_at - datetime.utcnow()).total_seconds()
+        if delay <= 0:
+            logger.info(f"Audio start {lead_at.isoformat()}Z already passed — starting now")
+            self._start_audio(self._RDIO_AUDIO_URL, cache_path)
+            return
+        logger.info(f"Scheduling audio start for {lead_at.isoformat()}Z "
+                    f"(session {start_utc.isoformat()}Z − 10 min, in {delay / 60:.1f} min)")
+        self._audio_start_task = asyncio.create_task(
+            self._delayed_audio_start(delay, cache_path))
+
+    async def _delayed_audio_start(self, delay: float, cache_path: Path) -> None:
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        if not self._finalised_seen:
+            self._start_audio(self._RDIO_AUDIO_URL, cache_path)
+
     async def _audio_session_end_watchdog(self, cache_path: Path) -> None:
-        """Stop audio on a timer: 10 min after SessionStatus=Finalised, or a hard
-        max-duration backstop if Finalised never arrives (the feed died before
-        emitting it). A terminal SignalR disconnect / cancel still stops audio via
-        the capture loop's finally. The terminal stop trims trailing + leading
-        silence and re-pins the byte-0 PDT anchor."""
+        """Stop audio on a timer: 10 min after SessionStatus=Finalised. If
+        Finalised is never seen (feed died before emitting it), the capture stays
+        up until the live monitor sees the session is no longer live and stops the
+        capture (→ the loop's finally stops audio); a hard max-duration backstop
+        is the last resort. The captured file is NOT trimmed — the ±10 min bounds
+        keep the silence small, and the byte-0 PDT anchor handles alignment."""
         start = time.monotonic()
         while True:
             try:
@@ -655,13 +718,13 @@ class LiveCaptureService:
                 logger.info(
                     f"Stopping audio for {cache_path.name}: "
                     f"{self._AUDIO_END_AFTER_FINALISED_S // 60} min after Finalised")
-                self._stop_audio(cache_path, terminal=True)
+                self._stop_audio(cache_path)
                 return
             if now - start >= self._AUDIO_MAX_S:
                 logger.info(
                     f"Stopping audio for {cache_path.name}: max-duration backstop "
                     f"({self._AUDIO_MAX_S // 3600} h, no Finalised seen)")
-                self._stop_audio(cache_path, terminal=True)
+                self._stop_audio(cache_path)
                 return
 
     async def _audio_stale_watchdog(self, cache_path: Path) -> None:
@@ -746,166 +809,6 @@ class LiveCaptureService:
                     f"— forcing reconnect")
                 signalr_client.force_reconnect()
 
-    def _trim_trailing_silence(self, cache_path: Path) -> None:
-        """For every commentary*.aac in the session dir, find the last
-        non-silent moment and re-mux the file ending 60 s after it
-        (so we keep a 1-min trailing pad). No-op when trailing silence
-        is shorter than the 60 s pad."""
-        for af in sorted(cache_path.glob("commentary*.aac")):
-            try:
-                # Get file duration.
-                dur_out = subprocess.check_output(
-                    ["ffprobe", "-v", "error",
-                     "-show_entries", "format=duration",
-                     "-of", "default=noprint_wrappers=1:nokey=1", str(af)],
-                    text=True, timeout=30,
-                ).strip()
-                duration = float(dur_out)
-            except (subprocess.CalledProcessError, ValueError, subprocess.TimeoutExpired):
-                logger.warning(f"trim: could not probe duration for {af.name}")
-                continue
-
-            try:
-                # Find every silence_end timestamp (= moment audio
-                # resumes). The LAST one is the start of the final
-                # audible region; trailing silence runs from there +
-                # (segment length captured by silencedetect).
-                res = subprocess.run(
-                    ["ffmpeg", "-nostdin", "-v", "info",
-                     "-i", str(af),
-                     "-af", "silencedetect=noise=-50dB:d=2",
-                     "-f", "null", "-"],
-                    capture_output=True, text=True, timeout=300,
-                )
-            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-                continue
-
-            # Parse "silence_start: NNN.NNN" lines from stderr.
-            last_silence_start = None
-            for line in (res.stderr or "").splitlines():
-                if "silence_start:" in line:
-                    try:
-                        last_silence_start = float(
-                            line.split("silence_start:")[1].split()[0]
-                        )
-                    except (ValueError, IndexError):
-                        pass
-
-            if last_silence_start is None:
-                continue  # No silence detected — nothing to trim.
-
-            # If the trailing silence runs to the end of the file AND
-            # is longer than 60 s, trim to silence_start + 60 s.
-            trailing = duration - last_silence_start
-            if trailing <= 60:
-                continue  # Less than 60 s — leave as is.
-
-            target = last_silence_start + 60
-            tmp = af.with_suffix(".aac.trim")
-            try:
-                subprocess.run(
-                    ["ffmpeg", "-nostdin", "-v", "error", "-y",
-                     "-i", str(af),
-                     "-t", f"{target:.3f}",
-                     "-c", "copy", "-f", "adts", str(tmp)],
-                    check=True, timeout=300,
-                )
-                tmp.replace(af)
-                logger.info(
-                    f"trim: {af.name} {duration:.1f}s -> {target:.1f}s "
-                    f"(removed {trailing - 60:.1f}s of trailing silence)"
-                )
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
-                    FileNotFoundError, OSError) as e:
-                logger.warning(f"trim: ffmpeg trim of {af.name} failed: {e}")
-                if tmp.exists():
-                    tmp.unlink()
-
-    # Only trim leading silence longer than this — the "audio starts later than
-    # the data stream" gap. Shorter leads aren't worth a re-mux + anchor re-pin.
-    _AUDIO_LEAD_TRIM_MIN_S = 10.0
-
-    def _leading_silence_seconds(self, af: Path) -> Optional[float]:
-        """Seconds of silence at the START of the file (0 → first audio), via
-        silencedetect. None if it doesn't open with silence, or on probe error."""
-        try:
-            res = subprocess.run(
-                ["ffmpeg", "-nostdin", "-v", "info", "-i", str(af),
-                 "-af", "silencedetect=noise=-50dB:d=1", "-f", "null", "-"],
-                capture_output=True, text=True, timeout=300,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            return None
-        events = []
-        for line in (res.stderr or "").splitlines():
-            for key in ("silence_start:", "silence_end:"):
-                if key in line:
-                    try:
-                        events.append((key[8], float(line.split(key)[1].split()[0])))
-                    except (ValueError, IndexError):
-                        pass
-                    break
-        if not events:
-            return None
-        # Opened silent → first event is a silence_end (no preceding start), or a
-        # silence_start at ~0 whose matching silence_end is the lead length.
-        if events[0][0] == "e":
-            return events[0][1]
-        if events[0][0] == "s" and events[0][1] <= 1.0:
-            for kind, val in events[1:]:
-                if kind == "e":
-                    return val
-        return None
-
-    def _trim_leading_silence(self, cache_path: Path) -> None:
-        """Trim leading silence from the FIRST captured segment and advance its
-        audio_info start_utc by the trimmed amount, re-pinning the byte-0 PDT
-        anchor. Commentary starts well after the data stream, so the earliest
-        file opens with a long silent lead. `-c copy` (no re-encode), and because
-        we know exactly how much we cut, the anchor re-pin is precise."""
-        rotated = sorted(cache_path.glob("commentary.[0-9][0-9][0-9].aac"))
-        if rotated:
-            af = rotated[0]
-            info = cache_path / f"audio_info.{af.name.split('.')[1]}.json"
-        else:
-            af = cache_path / "commentary.aac"
-            info = cache_path / "audio_info.json"
-        if not af.exists() or af.stat().st_size < 1024:
-            return
-        lead = self._leading_silence_seconds(af)
-        if lead is None or lead < self._AUDIO_LEAD_TRIM_MIN_S:
-            return
-        tmp = af.with_suffix(".aac.lead")
-        try:
-            subprocess.run(
-                ["ffmpeg", "-nostdin", "-v", "error", "-y",
-                 "-i", str(af), "-ss", f"{lead:.3f}", "-c", "copy",
-                 "-f", "adts", str(tmp)],
-                check=True, timeout=300,
-            )
-            tmp.replace(af)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
-                FileNotFoundError, OSError) as e:
-            logger.warning(f"lead-trim: ffmpeg trim of {af.name} failed: {e}")
-            if tmp.exists():
-                tmp.unlink()
-            return
-        # Re-pin the byte-0 anchor: start_utc advances by the trimmed lead.
-        if info.exists():
-            try:
-                meta = json.loads(info.read_text())
-                old = meta.get("start_utc", "")
-                base = datetime.fromisoformat(old.replace("Z", "+00:00"))
-                new = base + timedelta(seconds=lead)
-                meta["start_utc"] = (new.strftime("%Y-%m-%dT%H:%M:%S.")
-                                     + f"{new.microsecond // 1000:03d}Z")
-                info.write_text(json.dumps(meta, indent=2))
-                logger.info(
-                    f"lead-trim: {af.name} removed {lead:.1f}s leading silence; "
-                    f"re-pinned start_utc {old} -> {meta['start_utc']}")
-            except (ValueError, OSError, AttributeError) as e:
-                logger.warning(f"lead-trim: failed to re-pin {info.name}: {e}")
-
     @staticmethod
     def _prune_empty_segment(cache_path: Path) -> None:
         """Delete a 0-byte trailing commentary.aac (and its sidecars) left when
@@ -929,20 +832,12 @@ class LiveCaptureService:
                 logger.warning(f"Failed to prune empty audio sidecar {name}: {e}")
         logger.info(f"Pruned empty audio segment (0-byte commentary.aac) in {cache_path.name}")
 
-    def _stop_audio(self, cache_path: Path, terminal: bool = False) -> None:
+    def _stop_audio(self, cache_path: Path) -> None:
         """Stop ffmpeg and log file size.
 
         SIGINT first (lets ffmpeg flush its current segment cleanly), then
         SIGKILL after 5 s if it's still alive, with a final 5 s wait so
         we don't leave a zombie if SIGKILL is also somehow pending.
-
-        terminal=True marks the FINAL stop of the session (the session-end
-        cleanup or the broadcast-over silence watchdog) — NOT a mid-session
-        reconnect rotation. Only a terminal stop trims silence (trailing pad to
-        60 s + the long leading gap, re-pinning the byte-0 anchor); a rotation
-        must not, since that segment isn't the session's final audio. Previously
-        the trim ran only on the watchdog path, so a stop via session-end left
-        the audio untrimmed (card 4rz9EWSL).
         """
         # Stop the PDT side-car first so it doesn't keep ffprobing the
         # file while ffmpeg is in the middle of flushing.
@@ -983,13 +878,6 @@ class LiveCaptureService:
             logger.info(f"Audio recording saved: {audio_file} ({size_mb:.1f} MB)")
 
         self._prune_empty_segment(cache_path)
-
-        # Terminal stop → trim silence off the session's final audio. Trailing
-        # first (pad to 60 s), then leading (drop the pre-commentary gap + re-pin
-        # the byte-0 PDT anchor). A reconnect rotation passes terminal=False.
-        if terminal:
-            self._trim_trailing_silence(cache_path)
-            self._trim_leading_silence(cache_path)
 
     def get_status(self, session_id: str) -> dict:
         """Get capture status."""
