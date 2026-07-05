@@ -969,6 +969,15 @@ class SessionEngine:
         try:
             while self._running and self._clock and self._clock.state == ClockState.PLAYING:
                 self._clock.tick()
+                # Never let the playhead outrun the available-data edge
+                # (self._duration — the live/build edge, or full length on replay).
+                # At fast speed a caught-up playhead would otherwise race past the
+                # slowly-growing edge: the scrubber pins at 100% and stops tracking,
+                # and newly-arriving messages (incl. heartbeats) land BEHIND
+                # last_offset so they're never delivered — until a manual seek
+                # (cards 1Ad7z8uu scrubber / Xqw1feac stream light).
+                if self._clock.offset_seconds > self._duration:
+                    self._clock.seek_to_offset(self._duration)
                 target_offset_ms = int(self._clock.offset_seconds * 1000)
 
                 # Fetch display messages between last_offset and target_offset
