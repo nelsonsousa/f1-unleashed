@@ -332,6 +332,12 @@
     color: #d4d4d4;
     min-width: 0;
 }
+/* Race lap counter coloured by laps-down (card YqchNVrn): green = same lap as
+   leader, white = 1 lap behind on the counter (gap still a time), yellow = a
+   full lap or more down (gap shows laps). */
+.lap-count.lap-count-green  { color: #00ff88; }
+.lap-count.lap-count-white  { color: #ffffff; }
+.lap-count.lap-count-yellow { color: #ffcc00; }
 
 .interval {
     text-align: right;
