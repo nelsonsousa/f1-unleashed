@@ -163,41 +163,47 @@
  * clicking a button seeks playback there (see header.js updateSyncButtons). */
 .sync-controls {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
-    justify-content: center;
-    gap: 3px;
+    gap: 8px;
     flex: 0 0 auto;
-    padding: 2px 8px;
+    padding: 0 8px;
     margin-right: 8px;
     border: 1px solid rgba(255, 255, 255, 0.6);
     border-radius: 6px;
     height: 38px;
     box-sizing: border-box;
 }
-.sync-to-btns {
+/* "SYNC TO" / mode stacked on two lines, left of the button. */
+.sync-to-title {
     display: flex;
-    gap: 4px;
+    flex-direction: column;
+    line-height: 1.15;
+    text-align: left;
 }
 /* .btn.btn-sync (not just .btn-sync) — the base .btn rule is defined later in
    this file, so at equal specificity it would override a bare .btn-sync. */
 .btn.btn-sync {
-    font-size: 11px;
+    font-size: 16px;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     font-family: 'Monaco', 'Consolas', monospace;
     line-height: 1;
     height: auto;
-    padding: 1px 4px;
-    min-width: 36px;
+    padding: 4px 8px;
+    min-width: 58px;
     background: rgba(0, 0, 0, 0.4);
     color: #d4d4d4;
     border: 1px solid rgba(255, 255, 255, 0.3);
-    border-radius: 3px;
+    border-radius: 4px;
     cursor: pointer;
 }
-.btn.btn-sync:hover:not(:disabled) { background: rgba(255, 255, 255, 0.15); }
-.btn.btn-sync:disabled { opacity: 0.4; cursor: default; }
+.btn.btn-sync:hover:not(:disabled) {
+    background: #e10600;
+    border-color: #e10600;
+    color: #fff;
+}
+.btn.btn-sync:disabled { opacity: 0.35; cursor: default; }
 .btn-tv-signal,
 .btn-sync {
     display: inline-flex;
