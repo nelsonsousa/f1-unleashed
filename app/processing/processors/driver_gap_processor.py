@@ -74,13 +74,23 @@ def _secs(s: Any) -> Optional[float]:
 
 
 def _stats_timediff(stats: Any, key: str) -> Optional[str]:
-    """Last non-empty `key` across the Stats array (quali gap fields)."""
+    """Last non-empty `key` across the Stats array (quali gap fields).
+
+    A blank value is NOT the same as a missing one: F1 sends an EMPTY
+    TimeDiffToFastest when a driver takes P1, which means "clear the gap" — so
+    return "" when the key is PRESENT but empty, and None only when it's ABSENT
+    (no update). (card 3ODYNuKJ)"""
     entries = stats.values() if isinstance(stats, dict) else stats
     val = None
+    present = False
     for e in entries:
-        if isinstance(e, dict) and e.get(key):
-            val = e[key]
-    return val
+        if isinstance(e, dict) and key in e:
+            present = True
+            if e[key]:
+                val = e[key]
+    if val is not None:
+        return val
+    return "" if present else None
 
 
 class DriverGapProcessor(Processor):
@@ -264,7 +274,13 @@ class DriverGapProcessor(Processor):
                 continue
             in_zone = (cutoff_pos is not None
                        and self._pos.get(num, 0) > cutoff_pos)
-            if in_zone:
+            if self._pos.get(num) == 1:
+                # P1 is the fastest — no gap to itself. Belt-and-braces alongside
+                # the _stats_timediff blank-vs-missing fix: also clears the gap the
+                # instant a driver takes P1 (the Position update can arrive a
+                # message before the empty TimeDiffToFastest). (card 3ODYNuKJ)
+                gap = ""
+            elif in_zone:
                 bms = self._best_ms.get(num)
                 gap = (_fmt_gap(bms - cutoff_best_ms)
                        if bms is not None and cutoff_best_ms is not None else "")
