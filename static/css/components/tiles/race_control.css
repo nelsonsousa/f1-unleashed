@@ -107,10 +107,11 @@
     color: #4488ff;
 }
 
-/* Penalty messages (race only) — orange to stand out. */
+/* Penalty ("penalty awarded") messages (race only) — RED to stand out
+   (card R8fUBHPd, was orange). */
 .race-control-msg.rc-orange,
 .race-control-msg.rc-orange .race-control-text {
-    color: #ff9933;
+    color: #ff4040;
 }
 
 /* Predicted-rank rows — rendered inline as race-control-msg's so they
