@@ -1106,10 +1106,15 @@
             const l = state.timing[k].lap || 0;
             if (l > leaderLap) leaderLap = l;
         }
+        // Leader / anyone on the lead lap → green. Check this BEFORE the gap
+        // string: the LEADER's own GapToLeader is "LAP N", which must NOT be
+        // mistaken for a lapped driver's "+1 LAP".
+        if (!n || !leaderLap || n >= leaderLap) return ' lap-count-green';
+        // Behind on the counter: lapped (gap shows "LAP") → yellow; otherwise
+        // still within a lap of the leader → white.
         const gap = ((state.driverData[num] || {}).gap || '').toUpperCase();
-        if (gap.includes('L')) return ' lap-count-yellow';
-        if (n && leaderLap && n < leaderLap) return ' lap-count-white';
-        return ' lap-count-green';
+        if (gap.includes('LAP')) return ' lap-count-yellow';
+        return ' lap-count-white';
     }
 
     function lapCountCell(num) {
