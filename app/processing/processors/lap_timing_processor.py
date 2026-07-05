@@ -323,6 +323,11 @@ class LapTimingProcessor(Processor):
     def _emit(self, num: str, clock_time: datetime) -> None:
         laps = self._laps.get(num, {})
         timed = [l for l, v in laps.items() if v.get("time")]
+        # Quali: the "last lap" is the last lap of the CURRENT part, so at a new
+        # part the cell blanks (server-driven) until a lap is set instead of
+        # showing the previous part's lap. (Race: _part is None → all laps.)
+        if self._part is not None:
+            timed = [l for l in timed if self._lap_part.get(num, {}).get(l) == self._part]
         last = max(timed) if timed else None
         best = self._best.get(num)
         overall = self._session_best.get(num)

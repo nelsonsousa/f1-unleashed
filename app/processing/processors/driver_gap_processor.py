@@ -215,6 +215,13 @@ class DriverGapProcessor(Processor):
                 self._cutoff_time_ms = ms; changed = True
         if "SessionPart" in data and data["SessionPart"] != self._session_part:
             self._session_part = data["SessionPart"]; changed = True
+            # New part → clear each still-in driver's carried gap + best so the
+            # gap column blanks (server-driven) until they set a lap in the new
+            # part. Eliminated keep their frozen bubble gap (see _elim_gap).
+            for n in list(self._seen):
+                if not self._knocked.get(n):
+                    self._gap_p1[n] = ""
+                    self._best_ms.pop(n, None)
 
         for num, d in lines.items():
             if not isinstance(d, dict):
