@@ -179,12 +179,15 @@
     display: flex;
     gap: 4px;
 }
-.btn-sync {
+/* .btn.btn-sync (not just .btn-sync) — the base .btn rule is defined later in
+   this file, so at equal specificity it would override a bare .btn-sync. */
+.btn.btn-sync {
     font-size: 11px;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     font-family: 'Monaco', 'Consolas', monospace;
     line-height: 1;
+    height: auto;
     padding: 1px 4px;
     min-width: 36px;
     background: rgba(0, 0, 0, 0.4);
@@ -193,8 +196,8 @@
     border-radius: 3px;
     cursor: pointer;
 }
-.btn-sync:hover:not(:disabled) { background: rgba(255, 255, 255, 0.15); }
-.btn-sync:disabled { opacity: 0.4; cursor: default; }
+.btn.btn-sync:hover:not(:disabled) { background: rgba(255, 255, 255, 0.15); }
+.btn.btn-sync:disabled { opacity: 0.4; cursor: default; }
 .btn-tv-signal,
 .btn-sync {
     display: inline-flex;
