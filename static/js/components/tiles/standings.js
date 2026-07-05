@@ -827,11 +827,9 @@
                 // Race: colour by pace vs the leader's reference lap (paceColour).
                 const pc = (state.driverData[num] || {}).paceColour;
                 cls = pc ? `lap-pace-${pc}` : 'lap-pace-white';
-            } else if (IS_QUALI) {
-                // Quali: the last lap is NOT colour-coded (only the best lap is).
-                cls = 'lap-plain';
             } else {
-                // Practice: standard purple(fastest)/green(PB)/yellow.
+                // Quali + Practice: standard timing colours as they arrive —
+                // overall-fastest purple, personal-best green, else yellow.
                 const lastMs = parseLapMs(last);
                 if (state.overallBestLapMs != null && lastMs != null
                         && lastMs === state.overallBestLapMs) cls = 'lap-purple';
@@ -905,14 +903,14 @@
             const v = s.value || '';
             let cls = 'sector-empty';
             if (v) {
-                if (IS_QUALI) {
-                    cls = 'sector-plain';
-                } else if (IS_RACE) {
+                if (IS_RACE) {
                     const ms = parseSectorMs(v);
                     if (ms != null && fastest[i] != null && ms === fastest[i]) cls = 'sector-purple';
                     else cls = (ms != null && fastest[i] != null
                                 ? bandClass(ms - fastest[i], false) : null) || 'sector-yellow';
                 } else {
+                    // Quali + Practice: standard timing colours from the data —
+                    // overall-fastest purple, personal-best green, else yellow.
                     if (s.overallFastest) cls = 'sector-purple';
                     else if (s.personalFastest) cls = 'sector-green';
                     else cls = 'sector-yellow';
