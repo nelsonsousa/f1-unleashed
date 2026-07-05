@@ -246,6 +246,14 @@ class LapTimingProcessor(Processor):
         c = self._completed(self._nol.get(num))
         laps = self._laps.get(num, {})
         if c >= 1 and laps.get(c, {}).get("time") is None:
+            # P/Q: lap 1 is the OUT lap. A flying-lap time frequently arrives just
+            # BEFORE NoL increments (so _completed lags a lap); filling the timeless
+            # out lap with it mis-assigns the best to an OUT lap, which the client
+            # then hides. Pend it so the imminent advance assigns it to the real
+            # (flying) lap. (card P2A8g5O8)
+            if not self._is_race and c == 1:
+                self._pending[num] = ll
+                return False
             self._set_time(num, c, ll, clock_time)  # the just-completed lap was still timeless
             return True
         # the prev lap already has a time -> this is the in-progress lap; hold it
