@@ -231,8 +231,14 @@
 .gap.gap-empty { color: var(--text-muted); }
 
 /* Race gap trend vs the previous value (±0.1 s deadzone stays default/white). */
-.gap.gap-trend-green { color: #00ff88; }
-.gap.gap-trend-yellow { color: #ffd700; }
+/* Lap-over-lap gap-to-leader trend, 7 colours (t46cHyov). Cool = catching. */
+.gap.gap-trend-purple { color: #cc66ff; }
+.gap.gap-trend-blue   { color: #33ccff; }
+.gap.gap-trend-green  { color: #00ff88; }
+.gap.gap-trend-white  { color: #ffffff; }
+.gap.gap-trend-yellow { color: #ffcc00; }
+.gap.gap-trend-orange { color: #ff9933; }
+.gap.gap-trend-red    { color: #ff5555; }
 
 .gap.p1-lap {
     color: #ffcc00;
@@ -358,8 +364,15 @@
 }
 
 /* Race interval trend vs the previous value (±0.1 s deadzone stays default). */
-.interval.int-trend-green { color: #00ff88; }
-.interval.int-trend-yellow { color: #ffd700; }
+/* Interval battle trend, 7 colours (t46cHyov). Closing green→blue→purple,
+   opening red→orange→yellow. */
+.interval.int-trend-purple { color: #cc66ff; }
+.interval.int-trend-blue   { color: #33ccff; }
+.interval.int-trend-green  { color: #00ff88; }
+.interval.int-trend-white  { color: #ffffff; }
+.interval.int-trend-yellow { color: #ffcc00; }
+.interval.int-trend-orange { color: #ff9933; }
+.interval.int-trend-red    { color: #ff5555; }
 
 /* Penalties cell (race) */
 .pens {
