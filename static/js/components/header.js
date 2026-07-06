@@ -725,6 +725,23 @@
             return;
         }
 
+        // Reconnect (server/capture restart): the audio element and its byte-level
+        // fetch survive — the concat file extends seamlessly and the MSE poll loop
+        // retries through the outage. Only the SEGMENT MAP changes, so refresh it
+        // in place (a new segment lands at its own PDT anchor) and keep playing.
+        // Preserve the user's manual delay (offsetSeconds) + the live muxer length.
+        // Single vs multi is the same code path — the map is authoritative. (hwu52Zqy)
+        if (state.audio.element) {
+            if (audioInfo.start_utc) {
+                state.audio.startUtc = new Date(audioInfo.start_utc.replace('Z', '+00:00'));
+            }
+            state.audio.segments = (audioInfo.segments || [])
+                .filter(s => s.start_utc && s.duration > 0)
+                .map(s => ({ startMs: new Date(s.start_utc.replace('Z', '+00:00')).getTime(),
+                             duration: s.duration }));
+            return;
+        }
+
         // Single endpoint — server decides whether to tail-follow (capture
         // in progress) or serve the static file with range support.
         const audioUrl = `/api/v1/livetiming/audio/${encodeURIComponent(sessionName)}`;
