@@ -57,7 +57,10 @@
         <!-- Manual audio delay (known issue: the broadcast PDT anchor is
              sometimes offset). Seconds as ss.SSS; +later / −earlier. Applied on
              Enter or focus-out. -->
-        <span class="audio-delay-label audio-delay-label-spaced">Delay</span>
+        <div class="audio-delay-title">
+            <span class="clock-label">AUDIO</span>
+            <span class="clock-label">DELAY</span>
+        </div>
         <input type="text" inputmode="decimal" class="audio-offset-input" id="audioDelayInput"
                value="0.000" title="Audio delay (ss.SSS) — positive plays commentary later, negative earlier"
                onchange="applyAudioDelay(this.value)">

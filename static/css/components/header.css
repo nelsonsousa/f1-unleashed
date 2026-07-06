@@ -301,6 +301,14 @@
  * aren't crowded together — visually separates audio playback control
  * from the delay adjustment. */
 .audio-delay-label-spaced { margin-left: 16px; }
+/* Two-line AUDIO / DELAY label stack, matching the SYNC TO title (82rHOM2K). */
+.audio-delay-title {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.15;
+    text-align: left;
+    margin-left: 16px;
+}
 
 /* Volume slider — slim horizontal range between mute and audio-play. */
 .volume-slider {
