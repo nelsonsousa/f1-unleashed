@@ -33,6 +33,11 @@ let liveCheckInterval = null;
 document.addEventListener('DOMContentLoaded', async () => {
     await checkAuthStatus();
     await checkForLiveSession();
+    // Poll continuously so the countdown auto-switches to "Watch live" the moment
+    // a session goes live (and back when it ends) without a manual refresh. Was
+    // only started once a session was ALREADY live, so a page loaded during the
+    // countdown never updated. Idempotent. (GY4Ro9mk)
+    startLiveCheck();
     await setupYearDropdown();
     await refreshCache();
     loadVersionInfo();   // non-blocking — version is informational
