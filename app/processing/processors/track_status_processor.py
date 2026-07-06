@@ -113,9 +113,17 @@ class TrackStatusProcessor(Processor):
         for m in items:
             if not isinstance(m, dict):
                 continue
-            if m.get("Category") == "SafetyCar" and m.get("Status") == "IN THIS LAP":
-                if self._status == "sc":
-                    self._set("sc", "SC IN THIS LAP", clock_time)
+            if m.get("Category") != "SafetyCar" or self._status != "sc":
+                continue
+            status = m.get("Status")
+            if status == "IN THIS LAP":
+                self._set("sc", "SC IN THIS LAP", clock_time)
+            elif status == "DEPLOYED" and m.get("Mode") == "SAFETY CAR":
+                # SC extended: "IN THIS LAP" → "DEPLOYED" again. F1 does NOT re-send
+                # TrackStatus (code stays 4 SCDeployed), so re-arm from the RCM.
+                # Mode-guarded to SC only (leaves VSC alone); dedup makes the
+                # initial-deploy RCM a no-op. (FI4QUOaJ)
+                self._set("sc", "SC DEPLOYED", clock_time)
 
     def _set(self, status: str, message: str, clock_time: datetime) -> None:
         if status == self._status and message == self._message:
