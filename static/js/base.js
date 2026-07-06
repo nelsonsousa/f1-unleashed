@@ -358,15 +358,13 @@ document.addEventListener('keydown', (e) => {
     if (e.key === ' ') {
         e.preventDefault();
         togglePlayPause();
-    // Arrow keys: ±10 s skip on streams that are PLAYING. Paused
-    // streams are not affected. Data is the only stream that uses the
-    // global seek; audio piggy-backs through audioScrubberSeek.
+    // Arrow keys: ±10 s skip. Works whether playing OR paused — a paused
+    // seek just repositions the playhead. Data uses the global seek; audio
+    // piggy-backs through skipAudioRelative.
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
         const delta = e.key === 'ArrowLeft' ? -10 : 10;
-        if (messageBus.isPlaying) {
-            seekToOffset(Math.max(0, messageBus.getCurrentOffset() + delta));
-        }
+        seekToOffset(Math.max(0, messageBus.getCurrentOffset() + delta));
         if (typeof window.skipAudioRelative === 'function') {
             window.skipAudioRelative(delta);
         }
