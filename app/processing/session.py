@@ -412,6 +412,8 @@ class SessionEngine:
                 "speed": self._clock.speed if self._clock else 1.0,
                 "offset": self._clock.offset_seconds if self._clock else 0.0,
                 "finished": self._terminal,
+                "dataEdge": (self._data_edge_ms() or 0) / 1000.0,
+                "audioEdge": self._audio_end_offset(),
                 "scanProgress": 100.0 if self._preprocess_done.is_set() else 0.0,
                 "cacheBytes": self._cache_bytes(),
                 "events": events,
@@ -909,6 +911,27 @@ class SessionEngine:
             return None
         return (edge_pdt - self._start_time).total_seconds()
 
+    def _audio_end_offset(self) -> Optional[float]:
+        """End of available AUDIO as a data-clock offset (seconds): the live
+        broadcast edge while capturing, else the end of the audio content (last
+        segment's start + its duration) for a completed/replay file. None when
+        the session has no audio. For the buffer-headroom readout (FE6vYOX9)."""
+        live = self._audio_edge_offset()
+        if live is not None:
+            return live
+        info = self._audio_info
+        if not info or not self._start_time:
+            return None
+        segs = info.get("segments") or []
+        if not segs:
+            return None
+        last = segs[-1]
+        start = _parse_timestamp(last.get("start_utc", ""))
+        dur = last.get("duration")
+        if start is None or dur is None:
+            return None
+        return (start - self._start_time).total_seconds() + float(dur)
+
     def _session_ended(self) -> bool:
         """True once the feed's terminal state has been ingested — the definitive
         'the whole broadcast is over' signal. It's the trackStatus that
@@ -997,6 +1020,13 @@ class SessionEngine:
                     new_dur = edge_ms / 1000.0
                     if new_dur > self._duration:
                         self._duration = new_dur
+                # Buffer headroom (FE6vYOX9): raw data + audio edges (~1/s, not
+                # per tick) so the client shows hh:MM:ss available ahead of the
+                # playhead. Runs for live + replay-still-building.
+                await self._broadcast({"topic": "bufferEdges", "data": {
+                    "dataEdge": (self._data_edge_ms() or 0) / 1000.0,
+                    "audioEdge": self._audio_end_offset(),
+                }})
                 # Server-authoritative feed liveness for the stream light —
                 # decoupled from the audio-capped playhead (card Xqw1feac).
                 if self._live:

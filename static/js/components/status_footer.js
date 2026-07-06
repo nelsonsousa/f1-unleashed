@@ -29,6 +29,8 @@
     let isLive = false;     // live vs replay (from session:loaded)
     let streamAlive = true; // server: raw data feed advancing (live stream light)
     let audioBitrate = null;// kbps from audioInfo (null = no audio stream at all)
+    let dataEdge = 0;       // s: processed-data leading edge (session offset)
+    let audioEdge = null;   // s: audio content edge/end (offset); null = no audio
 
     function fmtBytes(b) {
         if (!b) return '—';
@@ -43,6 +45,12 @@
         return kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB/s` : `${kb.toFixed(kb < 10 ? 1 : 0)} KB/s`;
     }
     const light = (el, cls) => { if (el) el.className = 'sf-light ' + cls; };
+    function fmtHMS(sec) {
+        sec = Math.max(0, Math.floor(sec));
+        const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+        const p = (n) => String(n).padStart(2, '0');
+        return h > 0 ? `${h}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`;
+    }
 
     messageBus.on('session:loaded', (d) => {
         const live = !!(d && d.isLive);
@@ -51,6 +59,8 @@
         $('sfModeDot').className = 'sf-dot ' + (live ? 'live' : 'replay');
         $('sfCache').textContent = fmtBytes(d && d.cacheBytes);
         audioBitrate = (d && d.audioInfo && d.audioInfo.bitrateKbps) || null;
+        dataEdge = (d && d.dataEdge) || 0;
+        audioEdge = (d && d.audioEdge != null) ? d.audioEdge : null;
         $('sfAudio').textContent = audioBitrate ? `${audioBitrate} kbps` : '—';
         light($('sfAudioLight'), audioBitrate ? 'green' : 'grey');
         document.querySelectorAll('.sf-live-only').forEach((el) => el.classList.toggle('hidden', !live));
@@ -91,6 +101,12 @@
     // Server-authoritative live feed liveness (raw data edge, not the audio-capped
     // playhead) — drives the stream light for LIVE sessions (card Xqw1feac).
     messageBus.on('streamLive', (d) => { streamAlive = !!(d && d.alive); });
+    // Buffer headroom edges (data + audio), ~1/s from the server (FE6vYOX9).
+    messageBus.on('bufferEdges', (d) => {
+        if (!d) return;
+        dataEdge = d.dataEdge || 0;
+        audioEdge = (d.audioEdge != null) ? d.audioEdge : null;
+    });
     // Server-authoritative terminal-end flag (on state:status / state:full via base.js).
     messageBus.on('playback:status', (d) => {
         const was = finished;
@@ -122,6 +138,12 @@
         windowCount = 0;
 
         $('sfMsgs').textContent = total.toLocaleString();
+
+        // Buffer headroom: how much data / audio is available ahead of the
+        // playhead (edge − current offset), hh:MM:ss (FE6vYOX9).
+        const offNow = messageBus.getCurrentOffset();
+        $('sfDataBuf').textContent = fmtHMS(dataEdge - offNow);
+        $('sfAudioBuf').textContent = audioEdge != null ? fmtHMS(audioEdge - offNow) : '—';
 
         // Audio bitrate: the segment at the playhead, or 0 outside the audio
         // window (no content there — clockToAudioSec null). Card 4N7VgVlf.
