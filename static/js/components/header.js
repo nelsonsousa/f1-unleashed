@@ -1372,8 +1372,14 @@
         if (!data) return;
         if (data.currentLap != null) {
             state.raceCurrentLap = data.currentLap;
-            if (offset_ms != null && _lapOffset[data.currentLap] == null) {
-                _lapOffset[data.currentLap] = offset_ms;   // lap-start offset (SYNC TO)
+            // Record each lap's start offset (SYNC TO). Skip Lap 1: it has no
+            // real LapCount delta — the feed emits currentLap=1 as a pre-race
+            // keyframe ~an hour early (offset ~0), which would wrongly pin Lap 1
+            // to the session start. Lap 1's start = lights-out, set in
+            // handleSessionInfo. (86BYppiU)
+            if (offset_ms != null && data.currentLap >= 2
+                    && _lapOffset[data.currentLap] == null) {
+                _lapOffset[data.currentLap] = offset_ms;
             }
         }
         if (data.totalLaps != null) state.raceTotalLaps = data.totalLaps;
