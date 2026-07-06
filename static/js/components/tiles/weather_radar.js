@@ -306,9 +306,19 @@
     // Captured live (Open-Meteo minutely_15) and indexed by the playback clock.
     // Shows In 15'/30'/60'; if the condition is unchanged across the window,
     // collapses to current + 60'. Rain probability shown for wet slots.
+    let _lastForecastFetchMs = 0;
     async function fetchForecast() {
-        if (state.forecastFetched) return;
+        // Replay: the file already holds every snapshot, so one fetch is enough.
+        // Live: the capture keeps appending (~every 10 min), so re-fetch every few
+        // minutes to pick up snapshots covering the advancing clock — otherwise the
+        // one-shot early fetch (e.g. right after a mid-session restart) goes stale
+        // and the slot lookup runs off its ~2 h horizon, so the 15'/30'/60' icons
+        // vanish leaving only "Now". (a4QfXvwZ)
+        const nowMs = messageBus.clockTime ? messageBus.clockTime.getTime() : 0;
+        if (state.forecastFetched
+            && !(messageBus.isLive && nowMs - _lastForecastFetchMs > 5 * 60000)) return;
         state.forecastFetched = true;
+        _lastForecastFetchMs = nowMs;
         const sess = new URLSearchParams(window.location.search).get('session');
         if (!sess) return;
         try {
@@ -321,11 +331,19 @@
 
     function _snapshotAt(clockMs) {
         const snaps = state.forecastSnapshots;
-        let best = null;
+        if (!snaps || !snaps.length) return null;
+        // Prefer the most-recently-captured snapshot that still covers the clock +
+        // 60-min horizon; fall back to the latest captured at/before the clock (or
+        // the first) so an off-horizon stale snapshot doesn't blank the slots. (a4QfXvwZ)
+        const horizon = clockMs + 60 * 60000;
+        let covering = null, latest = null;
         for (const s of snaps) {
-            if (Date.parse(s.captured) <= clockMs) best = s; else break;
+            if (Date.parse(s.captured) > clockMs) break;
+            latest = s;
+            const t = s.time;
+            if (t && t.length && Date.parse(t[t.length - 1] + 'Z') >= horizon) covering = s;
         }
-        return best || snaps[0];
+        return covering || latest || snaps[0];
     }
 
     // A weather-icon row: Now (current condition) + 15'/30'/60' forecast. If the
