@@ -994,6 +994,15 @@
     }
     window.f1audioSyncDrift = audioSyncDrift;
 
+    // Status footer (card 4N7VgVlf): is there audio CONTENT at the current
+    // playhead? clockToAudioSec returns null in inter-segment gaps and outside
+    // the capture window, so the footer can show the real bitrate vs 0.
+    window.f1audioAvailableNow = function () {
+        if (!state.audio.element || !state.audio.isReady || !state.audio.startUtc
+                || !messageBus.clockTime) return false;
+        return clockToAudioSec(messageBus.clockTime.getTime()) !== null;
+    };
+
     function reloadAudioAtOffset(targetSec) {
         const audio = state.audio.element;
         if (!audio) return;
