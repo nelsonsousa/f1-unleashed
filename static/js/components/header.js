@@ -88,7 +88,7 @@
     // Session Info
     // =========================================================================
 
-    function handleSessionInfo(data, offset_ms) {
+    function handleSessionInfo(data) {
         if (!data || typeof data !== 'object') return;
         // Only gmtOffset is still consumed here (drives the clock display).
         // The event title and session badge are now server-computed and
@@ -106,12 +106,6 @@
         // Lights out → switch the race/sprint badge to the live lap counter.
         if (data.sessionStatus === 'Started' && !state.raceStarted) {
             state.raceStarted = true;
-            // Lap 1 STARTS at lights-out (SessionStatus=Started), not at the
-            // pre-race CurrentLap=1 keyframe the feed emits ~an hour early (there
-            // is no real LapCount delta for Lap 1 — Lap 2 is the first). Pin the
-            // Lap-1 sync marker here, overriding that stale pre-race offset.
-            // (86BYppiU — Lap 1 sync)
-            if (offset_ms != null) _lapOffset[1] = offset_ms;
             renderSessionBadge();
         }
     }
@@ -234,19 +228,34 @@
         const startMs = messageBus.startTime.getTime();
         const curOffset = messageBus.getCurrentOffset();   // seconds
 
-        // One marker: the PREVIOUS sync event — the most recent boundary at/before
-        // the playhead. No forward sync (a future marker can't be synced to).
-        let mode = 'CLOCK', label = null, offset = null;
+        // The sync marker. Normally the PREVIOUS boundary at/before the playhead;
+        // the race "Lap 1" marker is the exception — it targets lights-out and may
+        // be AHEAD of the playhead (forward sync to a TV that's ahead). (86BYppiU)
+        let mode = 'CLOCK', label = null, offset = null, allowForward = false;
 
-        if (isRaceLike && !state.raceStarted && state.scheduledStartMs != null
-                && messageBus.clockTime.getTime() >= state.scheduledStartMs + 60000) {
-            // Race pre-start: from scheduled-start + 1 min until lights-out the
-            // sync target is Lap 1. Its offset is only known once lights-out
-            // fires (there's no LapCount delta for Lap 1), so the button shows
-            // "Lap 1" but stays pending/disabled through this window. (86BYppiU)
+        // Lights-out offset = the first GREEN track-status event (= the moment
+        // SessionStatus becomes Started). It's in state.events from connect on a
+        // replay, so Lap 1 is known even before the playhead reaches it — no
+        // reliance on the pre-race LapCount keyframe.
+        let lightsOutSec = null;
+        if (isRaceLike && state.events) {
+            const green = state.events.find((ev) => typeof ev.offset_ms === 'number'
+                && String(typeof ev.data === 'string' ? ev.data
+                          : (ev.data && ev.data.event) || '').toUpperCase() === 'GREEN');
+            if (green) lightsOutSec = green.offset_ms / 1000;
+        }
+        const preRaceLap1 = isRaceLike && !state.raceStarted && state.scheduledStartMs != null
+            && messageBus.clockTime.getTime() >= state.scheduledStartMs + 60000;
+        const racingLap1 = isRaceLike && state.raceStarted
+            && (state.raceCurrentLap == null || state.raceCurrentLap <= 1);
+
+        if (preRaceLap1 || racingLap1) {
+            // Race Lap 1: jump to lights-out. Forward-seekable — it may be ahead
+            // of the playhead (the pre-race window, or a TV ahead of the data).
             mode = 'LAP';
             label = 'Lap 1';
-            offset = _lapOffset[1] != null ? _lapOffset[1] / 1000 : null;
+            offset = lightsOutSec;
+            allowForward = true;
         } else if (isRaceLike && state.raceStarted && state.raceCurrentLap) {
             mode = 'LAP';
             const cl = state.raceCurrentLap;   // start of the current lap
@@ -274,9 +283,11 @@
         }
 
         if (modeEl) modeEl.textContent = mode;
-        // Enabled only when the marker is a valid PAST position (0 ≤ offset ≤
-        // playhead). Beyond the playhead (future) or pre-session → disabled+grey.
-        const ok = label != null && offset != null && offset >= 0 && offset <= curOffset + 0.5;
+        // Enabled when the marker is a valid offset. Normally it must be at/before
+        // the playhead (a past boundary); the Lap 1 marker may be AHEAD (forward
+        // sync — the seek clamps to the data edge server-side).
+        const maxOffset = allowForward ? Infinity : curOffset + 0.5;
+        const ok = label != null && offset != null && offset >= 0 && offset <= maxOffset;
         btn.textContent = label != null ? label : '--';
         btn.disabled = !ok;
         btn._syncOffset = ok ? offset : null;
