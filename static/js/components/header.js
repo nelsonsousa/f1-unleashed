@@ -87,7 +87,7 @@
     // Session Info
     // =========================================================================
 
-    function handleSessionInfo(data) {
+    function handleSessionInfo(data, offset_ms) {
         if (!data || typeof data !== 'object') return;
         // Only gmtOffset is still consumed here (drives the clock display).
         // The event title and session badge are now server-computed and
@@ -99,6 +99,12 @@
         // Lights out → switch the race/sprint badge to the live lap counter.
         if (data.sessionStatus === 'Started' && !state.raceStarted) {
             state.raceStarted = true;
+            // Lap 1 STARTS at lights-out (SessionStatus=Started), not at the
+            // pre-race CurrentLap=1 keyframe the feed emits ~an hour early (there
+            // is no real LapCount delta for Lap 1 — Lap 2 is the first). Pin the
+            // Lap-1 sync marker here, overriding that stale pre-race offset.
+            // (86BYppiU — Lap 1 sync)
+            if (offset_ms != null) _lapOffset[1] = offset_ms;
             renderSessionBadge();
         }
     }
