@@ -1142,7 +1142,7 @@
     function intervalCell(num) {
         const e = state.driverData[num] || {};
         // 7-colour battle trend (server-computed): closing green→blue→purple,
-        // opening red→orange→yellow, white out of range. (t46cHyov)
+        // opening (any band) yellow, white out of range. (t46cHyov)
         const t = e.intTrend ? ` int-trend-${e.intTrend}` : '';
         return `<span class="interval${t}">${e.interval || ''}</span>`;
     }
