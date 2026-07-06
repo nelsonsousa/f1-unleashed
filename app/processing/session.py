@@ -98,6 +98,7 @@ class SessionEngine:
 
         # Playback state
         self._last_offset_ms = 0
+        self._ended = False   # cached: feed's terminal SessionStatus=Ends seen
         self._preprocess_done = asyncio.Event()
         # Set once the offset-0 baseline (driverList, trackGeometry,
         # trackCircuit, sessionInfo) is committed to the DB. add_client waits
@@ -408,6 +409,7 @@ class SessionEngine:
                 "isPlaying": self._clock.state == ClockState.PLAYING if self._clock else False,
                 "speed": self._clock.speed if self._clock else 1.0,
                 "offset": self._clock.offset_seconds if self._clock else 0.0,
+                "finished": self._session_ended(),
                 "scanProgress": 100.0 if self._preprocess_done.is_set() else 0.0,
                 "cacheBytes": self._cache_bytes(),
                 "events": events,
@@ -903,6 +905,30 @@ class SessionEngine:
             return None
         return (edge_pdt - self._start_time).total_seconds()
 
+    def _session_ended(self) -> bool:
+        """True once the feed's terminal state has been ingested — the definitive
+        'the whole broadcast is over' signal. It's the trackStatus that
+        TrackStatusProcessor emits for SessionStatus=Ends (message "SESSION
+        ENDED"), which follows the chequered flag + Finalised, so it does NOT cut
+        off the podium/interview wind-down. (Raw SessionStatus isn't persisted to
+        the DB — only the derived trackStatus is.) Queried over the whole history
+        because the Ends state sits at the raw edge, beyond the buffered playhead,
+        and would otherwise never be reached during playback. Cached. Used to give
+        a live session a terminal PAUSED state instead of polling a frozen edge
+        forever (which made the client audio loop — card 9QRPuaVC)."""
+        if self._ended:
+            return True
+        if not self._db:
+            return False
+        try:
+            for d in self._db.get_topic_history("trackStatus", 1 << 62):
+                if isinstance(d, dict) and d.get("message") == "SESSION ENDED":
+                    self._ended = True
+                    return True
+        except Exception:
+            return False
+        return False
+
     def _capped_edge_ms(self) -> Optional[int]:
         """The playback live edge (ms), health-gated against both feeds.
 
@@ -1023,6 +1049,16 @@ class SessionEngine:
                         edge_ms = self._capped_edge_ms()
                         if edge_ms and edge_ms > duration_ms:
                             self._duration = edge_ms / 1000.0
+                        elif self._live and self._session_ended():
+                            # Live, edge frozen, AND the feed's terminal
+                            # SessionStatus=Ends is in the data → the broadcast is
+                            # truly over. Transition to a paused terminal state so
+                            # the client stops cleanly (isPlaying=false pauses the
+                            # audio element — no ~1s snap-back loop, card 9QRPuaVC).
+                            # A plain reconnect stall does NOT end here (no Ends).
+                            self._clock.pause()
+                            await self._broadcast_status()
+                            break
                         else:
                             # Nothing new at the capped edge yet — slow polling
                             await asyncio.sleep(0.5)
@@ -1072,6 +1108,7 @@ class SessionEngine:
                 "speed": self._clock.speed if self._clock else 1.0,
                 "offset": self._clock.offset_seconds if self._clock else 0.0,
                 "duration": self._duration,
+                "finished": self._ended,   # feed's terminal SessionStatus=Ends reached
             },
         })
 
