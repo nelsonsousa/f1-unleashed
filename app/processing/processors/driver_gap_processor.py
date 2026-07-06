@@ -93,6 +93,42 @@ def _stats_timediff(stats: Any, key: str) -> Optional[str]:
     return "" if present else None
 
 
+# ── Race gap/int trend colours (card t46cHyov) ─────────────────────────────
+# Validated on the Silverstone race data. GAP-to-leader is compared LAP-OVER-LAP
+# at the S/F crossing — a sub-lap window is swamped by the ±0.15 s intra-lap
+# wiggle (cars trading time through corners). INTERVAL uses a per-sample band ×
+# direction state machine, only while < 1 s, with hysteresis so a car parked on a
+# band edge doesn't flicker. Closing cools; opening warms.
+
+def _gap_delta_colour(delta: float) -> str:
+    """Lap-over-lap change in gap-to-leader → colour. Decreasing (catching the
+    leader) is cool; increasing (dropping back) is warm."""
+    if delta <= -1.0:  return "purple"
+    if delta <= -0.5:  return "blue"
+    if delta <= -0.25: return "green"
+    if delta < 0.25:   return "white"
+    if delta < 0.5:    return "yellow"
+    if delta < 1.0:    return "orange"
+    return "red"
+
+
+_INT_BND = (0.25, 0.5, 1.0)     # band edges; band 0=<.25  1=.25-.5  2=.5-1  3=>1
+_INT_HYST = 0.15                # must move this far past an edge to switch band
+_INT_CLOSE = {0: "purple", 1: "blue", 2: "green"}    # entered a band by closing
+_INT_OPEN = {0: "yellow", 1: "orange", 2: "red"}     # entered a band by opening
+
+
+def _int_band(iv: float, cur: Optional[int]) -> int:
+    if cur is None:
+        return 3 if iv > 1.0 else 2 if iv >= 0.5 else 1 if iv >= 0.25 else 0
+    b = cur
+    while b < 3 and iv > _INT_BND[b] + _INT_HYST:
+        b += 1
+    while b > 0 and iv < _INT_BND[b - 1] - _INT_HYST:
+        b -= 1
+    return b
+
+
 class DriverGapProcessor(Processor):
     """Per-driver gap column (P1 / cutoff) and race interval."""
 
@@ -114,11 +150,17 @@ class DriverGapProcessor(Processor):
         # emit dedup
         self._last_gap: dict[str, dict] = {}
         self._last_int: dict[str, Any] = {}
-        # race gap/int trend: NoL per driver (lap-2 gate) + recent numeric history
-        # (compared 3 updates back so near-constant gaps still register a trend).
+        # race gap/int trend (card t46cHyov).
         self._laps: dict[str, int] = {}
-        self._gap_hist: dict[str, list] = {}
-        self._int_hist: dict[str, list] = {}
+        self._race_pos: dict[str, int] = {}
+        # gap trend: lap-over-lap Δ of gap-to-leader at the S/F crossing.
+        self._gap_latest: dict[str, float] = {}    # continuous gap-to-leader (s)
+        self._gap_at_lap: dict[str, float] = {}    # gap captured at the last crossing
+        self._gap_trend: dict[str, str] = {}       # held colour between crossings
+        # int trend: per-sample band × direction state machine (< 1 s only).
+        self._int_band: dict[str, Optional[int]] = {}
+        self._int_trend: dict[str, str] = {}
+        self._int_pos: dict[str, Optional[int]] = {}
 
     def subscribe(self) -> None:
         self._bus.on("TimingData", self._handle)
@@ -143,52 +185,84 @@ class DriverGapProcessor(Processor):
             self._last_gap[num] = payload
             self._bus.emit(f"driverGap:{num}", payload, clock_time)
 
-    def _trend(self, cur_s: Optional[float], hist_map: dict, num: str, nol: int) -> str:
-        """Colour vs the value 3 updates ago (near-constant gaps still register a
-        trend) with a ±0.1 s deadzone: green if it shrank by >0.1 s, yellow if it
-        grew by >0.1 s. "" (white) for non-numeric values, the first few updates,
-        and the whole of lap 1 (NoL < 1 ⇒ currentLap 1). History only accrues for
-        numeric values."""
-        if cur_s is None:
-            return ""
-        h = hist_map.setdefault(num, [])
-        prev = h[-3] if len(h) >= 3 else None        # value 3 updates ago
-        trend = ""
-        if prev is not None and nol >= 1:            # NoL>=1 ⇒ on lap 2+
-            d = cur_s - prev
-            if d < -0.1:
-                trend = "green"
-            elif d > 0.1:
-                trend = "yellow"
-        h.append(cur_s)
-        if len(h) > 8:
-            del h[0]
-        return trend
-
     # ── Race ──
     def _handle_race(self, lines: dict, clock_time: datetime) -> None:
         for num, d in lines.items():
             if not isinstance(d, dict):
                 continue
-            if "NumberOfLaps" in d:
+            if "Position" in d:
                 try:
-                    self._laps[num] = int(d["NumberOfLaps"])
+                    self._race_pos[num] = int(d["Position"])
                 except (TypeError, ValueError):
                     pass
-            nol = self._laps.get(num, 0)
+            # Latest gap-to-leader first, so a crossing captures the S/F-line value.
+            g = None
             if "GapToLeader" in d:
                 g = d["GapToLeader"]
-                trend = self._trend(_secs(g), self._gap_hist, num, nol)
-                self._emit_gap(num, g, False, clock_time, trend)
+                gs = _secs(g)
+                if gs is not None:
+                    self._gap_latest[num] = gs
+            # S/F crossing → recompute the LAP-OVER-LAP gap trend.
+            if "NumberOfLaps" in d:
+                try:
+                    newlap = int(d["NumberOfLaps"])
+                except (TypeError, ValueError):
+                    newlap = None
+                if newlap is not None:
+                    old = self._laps.get(num)
+                    self._laps[num] = newlap
+                    if old is not None and newlap > old:
+                        self._update_gap_trend(num, newlap)
+            if g is not None:
+                self._emit_gap(num, g, False, clock_time, self._gap_trend.get(num, ""))
             if "IntervalToPositionAhead" in d:
                 v = d["IntervalToPositionAhead"]
                 if isinstance(v, dict):
                     v = v.get("Value", "")
-                trend = self._trend(_secs(v), self._int_hist, num, nol)
+                trend = self._int_state(num, _secs(v), self._race_pos.get(num))
                 payload = {"interval": v, "trend": trend}
                 if payload != self._last_int.get(num):
                     self._last_int[num] = payload
                     self._bus.emit(f"driverInt:{num}", payload, clock_time)
+
+    def _update_gap_trend(self, num: str, newlap: int) -> None:
+        """Gap-to-leader change vs the previous S/F crossing → 7-colour trend.
+        Ignores the first two laps (start chaos); needs a prior crossing value."""
+        cur = self._gap_latest.get(num)
+        prev = self._gap_at_lap.get(num)
+        if cur is not None and prev is not None and newlap >= 3:
+            self._gap_trend[num] = _gap_delta_colour(cur - prev)
+        else:
+            self._gap_trend[num] = ""
+        if cur is not None:
+            self._gap_at_lap[num] = cur
+
+    def _int_state(self, num: str, iv: Optional[float], pos: Optional[int]) -> str:
+        """Interval-to-car-ahead trend: band × direction, < 1 s only. Closing
+        cools (green→blue→purple); opening warms (red→orange→yellow); a position
+        switch flips the passed car to yellow. Hysteresis prevents edge flicker."""
+        if iv is None:                        # lapped / non-numeric → out of battle
+            self._int_band[num] = None
+            self._int_trend[num] = ""
+            self._int_pos[num] = pos
+            return ""
+        prev_b = self._int_band.get(num)
+        nb = _int_band(iv, prev_b)
+        prev_pos = self._int_pos.get(num)
+        col = self._int_trend.get(num, "")
+        if nb == 3:
+            col = "white"
+        elif prev_pos is not None and pos is not None and pos > prev_pos:
+            col = _INT_OPEN[nb]               # got passed → opening from the switch
+        elif prev_b is None or prev_b == 3:
+            col = _INT_CLOSE[nb]              # entered the < 1 s battle = closing
+        elif nb != prev_b:
+            col = _INT_CLOSE[nb] if nb < prev_b else _INT_OPEN[nb]
+        # else: band unchanged → hold the colour
+        self._int_band[num] = nb
+        self._int_trend[num] = col
+        self._int_pos[num] = pos
+        return col
 
     # ── Practice ── (TimeDiffToFastest is a direct per-line field, no Stats)
     def _handle_practice(self, lines: dict, clock_time: datetime) -> None:

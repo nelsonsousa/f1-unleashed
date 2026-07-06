@@ -1133,15 +1133,17 @@
             return `<span class="gap p1-lap">L${state.currentLap || ''}</span>`;
         }
         const e = state.driverData[num] || {};
-        const t = e.gapTrend === 'green' ? ' gap-trend-green'
-                : e.gapTrend === 'yellow' ? ' gap-trend-yellow' : '';
+        // 7-colour lap-over-lap trend (server-computed): purple/blue/green (catching)
+        // white (flat) yellow/orange/red (dropping back). (t46cHyov)
+        const t = e.gapTrend ? ` gap-trend-${e.gapTrend}` : '';
         return `<span class="gap${t}">${e.gap || ''}</span>`;
     }
 
     function intervalCell(num) {
         const e = state.driverData[num] || {};
-        const t = e.intTrend === 'green' ? ' int-trend-green'
-                : e.intTrend === 'yellow' ? ' int-trend-yellow' : '';
+        // 7-colour battle trend (server-computed): closing green→blue→purple,
+        // opening red→orange→yellow, white out of range. (t46cHyov)
+        const t = e.intTrend ? ` int-trend-${e.intTrend}` : '';
         return `<span class="interval${t}">${e.interval || ''}</span>`;
     }
 
