@@ -108,7 +108,7 @@
 
 /* Blink twice on a status change to draw the eye, then settle (HBAKIcye). */
 .track-status.ts-blink {
-    animation: ts-blink 0.4s ease-in-out 2;
+    animation: ts-blink 0.7s ease-in-out 2;
 }
 @keyframes ts-blink {
     0%, 100% { opacity: 1; }
