@@ -329,6 +329,13 @@
         } catch (e) { /* ignore */ }
     }
 
+    // Parse a snapshot's `captured` stamp, tolerating already-written files where
+    // it's malformed with BOTH an offset and 'Z' (e.g. "…+00:00Z"): strip the
+    // redundant trailing Z so Date.parse doesn't return NaN. (a4QfXvwZ)
+    function _parseCaptured(s) {
+        return Date.parse(String(s || '').replace(/([+-]\d{2}:\d{2})Z$/, '$1'));
+    }
+
     function _snapshotAt(clockMs) {
         const snaps = state.forecastSnapshots;
         if (!snaps || !snaps.length) return null;
@@ -338,7 +345,7 @@
         const horizon = clockMs + 60 * 60000;
         let covering = null, latest = null;
         for (const s of snaps) {
-            if (Date.parse(s.captured) > clockMs) break;
+            if (_parseCaptured(s.captured) > clockMs) break;
             latest = s;
             const t = s.time;
             if (t && t.length && Date.parse(t[t.length - 1] + 'Z') >= horizon) covering = s;
