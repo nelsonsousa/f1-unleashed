@@ -67,6 +67,7 @@
 .sf-hbox.h-yellow { background: rgba(255, 204, 0, 0.18); color: #ffcc00; }
 .sf-hbox.h-orange { background: rgba(255, 149, 0, 0.20); color: #ff9f0a; }
 .sf-hbox.h-red    { background: rgba(255, 59, 48, 0.22); color: #ff4d42; }
+.sf-hbox.h-off    { background: rgba(255, 255, 255, 0.06); color: #7a828c; }  /* session ended — neutral */
 
 @keyframes sf-pulse {
     0%, 100% { opacity: 1; }

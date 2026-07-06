@@ -24,7 +24,8 @@
     let lastHeartbeatMs = null;
 
     let total = 0, windowCount = 0;
-    let health = null;   // latest dataHealth payload from the server
+    let health = null;      // latest dataHealth payload from the server
+    let finished = false;   // server: playback parked at the terminal session end
 
     function fmtBytes(b) {
         if (!b) return '—';
@@ -62,6 +63,14 @@
         else el.removeAttribute('title');
     }
     function renderHealth() {
+        if (finished) {
+            // Session ended — a settled state, not a fault. Neutral, never red.
+            ['sfhTiming', 'sfhTel', 'sfhPos'].forEach((id) => {
+                const el = $(id);
+                if (el) { el.className = 'sf-hbox h-off'; el.removeAttribute('title'); }
+            });
+            return;
+        }
         // TIMING is all-or-nothing (green/red): red = the whole feed has stopped.
         const tEl = $('sfhTiming');
         if (tEl) {
@@ -73,11 +82,17 @@
         setBox($('sfhPos'), health && health.position, 'Position stale');
     }
     messageBus.on('dataHealth', (d) => { health = d; renderHealth(); });
-    messageBus.on('state:reset', () => { health = null; lastHeartbeatMs = null; renderHealth(); });
+    messageBus.on('state:reset', () => { health = null; lastHeartbeatMs = null; finished = false; renderHealth(); });
     messageBus.on('heartbeat', () => { lastHeartbeatMs = performance.now(); });
+    // Server-authoritative terminal-end flag (on state:status / state:full via base.js).
+    messageBus.on('playback:status', (d) => {
+        const was = finished;
+        finished = !!(d && d.finished);
+        if (finished !== was) renderHealth();
+    });
 
     messageBus.on('status:rates', (d) => {
-        if (!d) return;
+        if (!d || finished) return;   // parked at end → the 1 s tick shows '—'
         $('sfDlDataVal').textContent = fmtRate(d.dataBps);
         $('sfDlAudioVal').textContent = fmtRate(d.audioBps);
     });
@@ -97,14 +112,29 @@
         windowCount = 0;
 
         $('sfMsgs').textContent = total.toLocaleString();
+
+        const streamLight = $('sfStreamLight');
+        if (finished) {
+            // Session ended: no live feed to rate or monitor. Settled state —
+            // '—' speeds + a neutral light, never an alarming 0 / red.
+            $('sfRate').textContent = '—';
+            light(streamLight, 'grey');
+            if (streamLight) streamLight.title = 'Session ended';
+            const dd = $('sfDlDataVal'), da = $('sfDlAudioVal');
+            if (dd) dd.textContent = '—';
+            if (da) da.textContent = '—';
+            return;
+        }
+
         $('sfRate').textContent = `${rate.toFixed(rate < 10 ? 1 : 0)} msg/s`;
 
         // Stream light: data-feed liveness by heartbeat recency (not msg/s).
         const playing = messageBus.isPlaying;
         const hbAge = lastHeartbeatMs === null ? null : (now - lastHeartbeatMs) / 1000;
-        if (!playing || hbAge === null) light($('sfStreamLight'), 'grey');
-        else if (hbAge <= HB_YELLOW_S) light($('sfStreamLight'), 'green');
-        else if (hbAge <= HB_RED_S) light($('sfStreamLight'), 'yellow');
-        else light($('sfStreamLight'), 'red');
+        if (!playing || hbAge === null) light(streamLight, 'grey');
+        else if (hbAge <= HB_YELLOW_S) light(streamLight, 'green');
+        else if (hbAge <= HB_RED_S) light(streamLight, 'yellow');
+        else light(streamLight, 'red');
+        if (streamLight) streamLight.removeAttribute('title');
     }, 1000);
 })();

@@ -98,7 +98,8 @@ class SessionEngine:
 
         # Playback state
         self._last_offset_ms = 0
-        self._ended = False   # cached: feed's terminal SessionStatus=Ends seen
+        self._ended = False     # cached: feed's terminal SessionStatus=Ends seen
+        self._terminal = False  # playback parked at the terminal end (→ finished)
         self._preprocess_done = asyncio.Event()
         # Set once the offset-0 baseline (driverList, trackGeometry,
         # trackCircuit, sessionInfo) is committed to the DB. add_client waits
@@ -409,7 +410,7 @@ class SessionEngine:
                 "isPlaying": self._clock.state == ClockState.PLAYING if self._clock else False,
                 "speed": self._clock.speed if self._clock else 1.0,
                 "offset": self._clock.offset_seconds if self._clock else 0.0,
-                "finished": self._session_ended(),
+                "finished": self._terminal,
                 "scanProgress": 100.0 if self._preprocess_done.is_set() else 0.0,
                 "cacheBytes": self._cache_bytes(),
                 "events": events,
@@ -529,6 +530,7 @@ class SessionEngine:
         """Start or resume playback."""
         if not self._clock:
             return
+        self._terminal = False
         self._clock.play()
         if not self._playback_task or self._playback_task.done():
             self._playback_task = asyncio.create_task(self._playback_loop())
@@ -570,6 +572,7 @@ class SessionEngine:
         offset_ms = int(offset_seconds * 1000)
 
         # Seek the clock
+        self._terminal = False
         self._clock.seek_to_offset(offset_seconds)
 
         # Query latest display message per topic at target offset
@@ -1056,6 +1059,7 @@ class SessionEngine:
                             # the client stops cleanly (isPlaying=false pauses the
                             # audio element — no ~1s snap-back loop, card 9QRPuaVC).
                             # A plain reconnect stall does NOT end here (no Ends).
+                            self._terminal = True
                             self._clock.pause()
                             await self._broadcast_status()
                             break
@@ -1064,6 +1068,8 @@ class SessionEngine:
                             await asyncio.sleep(0.5)
                             continue
                     else:
+                        # Replay reached its end (build complete) — terminal.
+                        self._terminal = True
                         self._clock.pause()
                         await self._broadcast_status()
                         break
@@ -1108,7 +1114,7 @@ class SessionEngine:
                 "speed": self._clock.speed if self._clock else 1.0,
                 "offset": self._clock.offset_seconds if self._clock else 0.0,
                 "duration": self._duration,
-                "finished": self._ended,   # feed's terminal SessionStatus=Ends reached
+                "finished": self._terminal,   # playback parked at the terminal end
             },
         })
 
