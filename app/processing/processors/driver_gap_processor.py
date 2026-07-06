@@ -113,7 +113,7 @@ def _gap_delta_colour(delta: float) -> str:
 
 
 _INT_BND = (0.25, 0.5, 1.0)     # band edges; band 0=<.25  1=.25-.5  2=.5-1  3=>1
-_INT_HYST = 0.10                # must move this far past an edge to switch band
+_INT_HYST = 0.0                 # no hysteresis — at these tiny gaps every band cross counts
 _INT_CLOSE = {0: "purple", 1: "blue", 2: "green"}    # entered a band by closing
 _INT_OPEN = {0: "yellow", 1: "orange", 2: "red"}     # entered a band by opening
 _WARM = frozenset(_INT_OPEN.values())
