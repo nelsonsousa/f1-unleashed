@@ -700,12 +700,15 @@
             const ms = parseLapMs(txt);
             const isFastest = ms != null && ms === state.overallBestLapMs;
             if (IS_RACE) {
-                // Race: only the fastest is purple; everyone else by pace colour.
+                // Best lap is coloured by its delta to the FASTEST OVERALL lap —
+                // ONLY the holder is purple — NOT the last-lap-vs-leader pace
+                // colour. The pace colour let every driver faster than the leader
+                // show lap-pace-purple (multi-purple, 1ZG1NSCI) and went white on
+                // in/out laps (qKVcxF9n); best lap is a fixed value, so it bands
+                // stably vs the overall best. (last lap keeps the pace colour.)
                 if (isFastest) cls = 'lap-purple';
-                else {
-                    const pc = (state.driverData[num] || {}).paceColour;
-                    cls = pc ? `lap-pace-${pc}` : 'lap-pace-white';
-                }
+                else cls = (ms != null && state.overallBestLapMs != null
+                            ? bandClass(ms - state.overallBestLapMs, false) : null) || 'lap-pace-white';
             } else if (IS_QUALI) {
                 // Quali: eliminated → white; fastest → purple; elimination-zone
                 // (gapIsRed) → red; else Δ-to-P1 bands capped at orange (no red).
