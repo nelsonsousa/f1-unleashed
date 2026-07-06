@@ -113,11 +113,11 @@ def _gap_delta_colour(delta: float) -> str:
 
 
 _INT_BND = (0.25, 0.5, 1.0)     # band edges; band 0=<.25  1=.25-.5  2=.5-1  3=>1
-_INT_HYST = 0.15                # must move this far past an edge to switch band
+_INT_HYST = 0.10                # must move this far past an edge to switch band
 _INT_CLOSE = {0: "purple", 1: "blue", 2: "green"}    # entered a band by closing
 _INT_OPEN = {0: "yellow", 1: "orange", 2: "red"}     # entered a band by opening
 _WARM = frozenset(_INT_OPEN.values())
-_INT_SETTLE = 4     # >this many samples held on a warm colour → cool to the band
+_INT_SETTLE = 2     # after this many consecutive warm samples → cool to the band
 
 
 def _int_band(iv: float, cur: Optional[int]) -> int:
@@ -257,21 +257,23 @@ class DriverGapProcessor(Processor):
         if nb == 3:
             col = "white"; self._int_hold[num] = 0
         elif prev_pos is not None and pos is not None and pos > prev_pos:
-            col = _INT_OPEN[nb]; self._int_hold[num] = 0   # passed → opening
+            col = _INT_OPEN[nb]; self._int_hold[num] = 1   # passed → opening (warm #1)
         elif prev_b is None or prev_b == 3:
             col = _INT_CLOSE[nb]; self._int_hold[num] = 0  # entered the battle = closing
         elif nb != prev_b:
-            col = _INT_CLOSE[nb] if nb < prev_b else _INT_OPEN[nb]
-            self._int_hold[num] = 0
-        else:
-            # Band unchanged → hold. But once a car has SETTLED on a warm (opening)
-            # colour for more than _INT_SETTLE samples it's no longer dropping back,
-            # so cool it to the band's closing colour. (user refinement)
-            h = self._int_hold.get(num, 0) + 1
+            if nb < prev_b:
+                col = _INT_CLOSE[nb]; self._int_hold[num] = 0
+            else:
+                col = _INT_OPEN[nb]; self._int_hold[num] = 1   # opening (warm #1)
+        elif col in _WARM:
+            # Held on a warm (opening) band: after _INT_SETTLE consecutive warm
+            # samples the car has settled at this gap — cool it to the band's
+            # closing colour. (user refinement)
+            h = self._int_hold.get(num, 1) + 1
             self._int_hold[num] = h
-            if h > _INT_SETTLE and col in _WARM:
+            if h > _INT_SETTLE:
                 col = _INT_CLOSE[nb]
-                self._int_hold[num] = 0
+        # else: held on a cool band → hold the colour
         self._int_band[num] = nb
         self._int_trend[num] = col
         self._int_pos[num] = pos
