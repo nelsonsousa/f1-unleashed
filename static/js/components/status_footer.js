@@ -128,8 +128,10 @@
         if (audioBitrate != null) {
             const audioOn = typeof window.f1audioAvailableNow === 'function'
                 && window.f1audioAvailableNow();
+            // No audio content at the playhead (before/gap/after the file) is
+            // benign → 0 kbps + neutral grey, matching the header light going off.
             $('sfAudio').textContent = audioOn ? `${audioBitrate} kbps` : '0 kbps';
-            light($('sfAudioLight'), audioOn ? 'green' : 'red');
+            light($('sfAudioLight'), audioOn ? 'green' : 'grey');
         }
 
         const streamLight = $('sfStreamLight');
