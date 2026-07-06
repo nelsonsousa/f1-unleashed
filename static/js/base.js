@@ -358,12 +358,6 @@ document.addEventListener('keydown', (e) => {
     if (e.key === ' ') {
         e.preventDefault();
         togglePlayPause();
-    // P: toggle AUDIO only — independent of data play state.
-    } else if (e.key === 'p' || e.key === 'P') {
-        e.preventDefault();
-        if (typeof window.toggleAudioPlay === 'function') {
-            window.toggleAudioPlay();
-        }
     // Arrow keys: ±10 s skip on streams that are PLAYING. Paused
     // streams are not affected. Data is the only stream that uses the
     // global seek; audio piggy-backs through audioScrubberSeek.
