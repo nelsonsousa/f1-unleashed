@@ -391,20 +391,32 @@
         finished: 'white',
     };
 
+    // Suppress the change-blink during a restore/seek re-emit (not a live
+    // transition), same pattern as _radioRestoring below. (HBAKIcye)
+    let _tsRestoring = false;
     function handleTrackStatus(data) {
         if (!data || typeof data !== 'object') return;
 
         const color = TRACK_STATUS_COLOR[data.status] || 'white';
         const text = data.message || '--';
+        const changed = (text !== state.trackStatusText || color !== state.trackStatusColor);
 
         state.trackStatusText = text;
         state.trackStatusColor = color;
 
         const el = document.getElementById('trackStatus');
         const textEl = document.getElementById('trackStatusText');
-        if (el) el.className = `track-status ${color}`;
+        if (el) el.className = `track-status ${color}`;   // resets classes (clears ts-blink)
         if (textEl) textEl.textContent = text;
+        // Blink twice on a genuine status change to draw the eye. Skip the
+        // restore/seek re-emit so a replay seek doesn't flash. (HBAKIcye)
+        if (el && changed && !_tsRestoring) {
+            void el.offsetWidth;            // reflow so re-adding restarts the animation
+            el.classList.add('ts-blink');
+        }
     }
+    messageBus.on('state:reset', () => { _tsRestoring = true; });
+    messageBus.on('state:seek-complete', () => { _tsRestoring = false; });
 
     // =========================================================================
     // Playback Controls
