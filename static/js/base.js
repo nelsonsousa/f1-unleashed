@@ -54,6 +54,7 @@ const messageBus = {
 
     // Playback state
     isPlaying: false,
+    finished: false,   // server: feed's terminal SessionStatus=Ends reached
     speed: 1,
 
     // Seek state
@@ -205,9 +206,11 @@ const messageBus = {
                 // Set initial playback state
                 this.isPlaying = data.isPlaying || false;
                 this.speed = data.speed || 1;
+                this.finished = !!data.finished;
                 this.emit('playback:status', {
                     status: this.isPlaying ? 'playing' : 'paused',
                     isPlaying: this.isPlaying,
+                    finished: this.finished,
                 });
 
                 // Set initial clock position
@@ -256,9 +259,11 @@ const messageBus = {
             } else if (topic === 'state:status') {
                 this.isPlaying = data.isPlaying;
                 this.speed = data.speed || 1;
+                this.finished = !!data.finished;
                 this.emit('playback:status', {
                     status: data.isPlaying ? 'playing' : 'paused',
                     isPlaying: data.isPlaying,
+                    finished: this.finished,
                 });
 
             } else if (topic === 'state:stream-progress') {
