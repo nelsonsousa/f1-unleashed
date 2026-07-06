@@ -750,6 +750,7 @@
         // pen styles via beginPath()/stroke().
         let inRun = false;
         let lastValid = null;  // {x, y} of the last valid sample drawn
+        let lastPct = null;    // previous sample's distance % — to detect lap wrap
 
         for (const s of samples) {
             const outage = isOutageSample(s);
@@ -764,9 +765,19 @@
             const x = pctToX(s[0], margin.left, plotW);
             const val = s[valIdx];
             const y = margin.top + (1 - (val - yMin) / range) * plotH;
+            // Lap rollover: distance % resets ~100 → ~0 at the S/F line. Break the
+            // trace here (pen up, NO bridge) so a live multi-lap trace doesn't
+            // streak straight across the plot from ~100% back to ~0%. A single
+            // completed lap climbs 0→100 monotonically, so this never fires there.
+            // (eg7seHVk)
+            const wrap = lastPct !== null && lastPct - s[0] > 50;
+            if (wrap && inRun) {
+                ctx.stroke();
+                inRun = false;
+            }
             if (!inRun) {
-                // Bridge across the gap if we have a previous valid point.
-                if (lastValid) {
+                // Bridge across an outage gap — but NOT across a lap wrap.
+                if (lastValid && !wrap) {
                     ctx.strokeStyle = color;
                     ctx.lineWidth = 1;
                     ctx.setLineDash(bridgeDash);
@@ -786,6 +797,7 @@
                 ctx.lineTo(x, y);
             }
             lastValid = { x, y };
+            lastPct = s[0];
         }
         if (inRun) ctx.stroke();
         ctx.restore();
