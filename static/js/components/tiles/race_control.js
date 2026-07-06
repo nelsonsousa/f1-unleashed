@@ -235,8 +235,10 @@
     function radioRow(clip) {
         const who = escapeHtml(clip.tla || clip.num || '');
         const f = escapeHtml(clip.file);
-        // Order: audio icon · driver TLA · "Team radio" · play · stop.
+        // Order: time · audio icon · driver TLA · "Team radio" · play · stop.
+        // Timestamp matches the RCM rows (clip broadcast Utc → track-local). (938qwRAp)
         return `<div class="race-control-msg rc-radio">` +
+            `<span class="race-control-time">${toLocalTimeStr(clip.utc)}</span>` +
             `<span class="rc-radio-icon">${RADIO_ICON_SVG}</span>` +
             `<span class="rc-radio-tla">${who}</span>` +
             `<span class="race-control-text">Team radio</span>` +
