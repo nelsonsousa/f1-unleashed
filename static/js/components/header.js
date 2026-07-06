@@ -902,7 +902,7 @@
             }
             cum += dur;
         }
-        return cum - off;                                  // past the last segment → clamp to end
+        return null;                                       // past the last segment → no audio here
     }
 
     // Reload audio at the offset that matches the current data clock.
@@ -1204,27 +1204,18 @@
             cls = '';   // paused on purpose (user or data) → no light
         } else if (!audio || !state.audio.isReady || !state.audio.startUtc
                    || !messageBus.clockTime) {
-            cls = 'red';   // should be playing but the stream isn't available/ready
+            cls = 'red';   // should be playing but the audio stream is missing / not ready
+        } else if (clockToAudioSec(messageBus.clockTime.getTime()) === null) {
+            // No audio CONTENT at this position — before the audio window, an
+            // inter-segment gap, or past the end of the file. Benign (not a
+            // failure) → no light (HCx1JC3f + end-of-file refinement).
+            cls = '';
+        } else if (audio.paused || audio.seeking || audio.readyState < 3 /*HAVE_FUTURE_DATA*/) {
+            cls = 'yellow';   // wants to play, loading/seeking/not started → not synced yet
         } else {
-            const canSeekL = audio.seekable && audio.seekable.length > 0
-                && audio.seekable.end(audio.seekable.length - 1) > 0;
-            const targetSec = (messageBus.clockTime.getTime()
-                               - state.audio.startUtc.getTime()) / 1000
-                              - (state.audio.offsetSeconds || 0);
-            const dur = isFinite(audio.duration) && audio.duration > 0
-                ? audio.duration : audioPlayableDuration();
-            // Out of range = no audio content at this position (past-end red only
-            // for SEEKABLE replay, where audio.duration is the full file; live
-            // chunked streams are "in range" until the session ends).
-            if (targetSec < 0 || (canSeekL && dur > 0 && targetSec > dur)) {
-                cls = 'red';
-            } else if (audio.paused || audio.seeking || audio.readyState < 3 /*HAVE_FUTURE_DATA*/) {
-                cls = 'yellow';   // wants to play, loading/seeking/not started → not synced yet
-            } else {
-                const drift = audioSyncDrift();
-                const inSync = drift !== null && Math.abs(drift) <= SYNC_DRIFT_S;
-                cls = inSync ? 'green' : 'yellow';   // playing: green if synced, else drifted
-            }
+            const drift = audioSyncDrift();
+            const inSync = drift !== null && Math.abs(drift) <= SYNC_DRIFT_S;
+            cls = inSync ? 'green' : 'yellow';   // playing: green if synced, else drifted
         }
         if (light.dataset.cls !== cls) {
             light.classList.remove('green', 'yellow', 'red');
