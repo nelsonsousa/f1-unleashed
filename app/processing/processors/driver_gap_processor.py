@@ -98,24 +98,24 @@ def _stats_timediff(stats: Any, key: str) -> Optional[str]:
 # at the S/F crossing — a sub-lap window is swamped by the ±0.15 s intra-lap
 # wiggle (cars trading time through corners). INTERVAL uses a per-sample band ×
 # direction state machine, only while < 1 s, with hysteresis so a car parked on a
-# band edge doesn't flicker. Closing cools; opening warms.
+# band edge doesn't flicker. Closing scales cool (green→blue→purple); ANY opening
+# is a single yellow (the magnitude of a loss isn't colour-coded).
 
 def _gap_delta_colour(delta: float) -> str:
-    """Lap-over-lap change in gap-to-leader → colour. Decreasing (catching the
-    leader) is cool; increasing (dropping back) is warm."""
+    """Lap-over-lap change in gap-to-leader → colour. DECREASING (catching the
+    leader) is scaled cool; ANY increase (dropping back) is yellow (magnitude of
+    a loss isn't colour-coded)."""
     if delta <= -1.0:  return "purple"
     if delta <= -0.5:  return "blue"
     if delta <= -0.25: return "green"
     if delta < 0.25:   return "white"
-    if delta < 0.5:    return "yellow"
-    if delta < 1.0:    return "orange"
-    return "red"
+    return "yellow"
 
 
 _INT_BND = (0.25, 0.5, 1.0)     # band edges; band 0=<.25  1=.25-.5  2=.5-1  3=>1
 _INT_HYST = 0.0                 # no hysteresis — at these tiny gaps every band cross counts
-_INT_CLOSE = {0: "purple", 1: "blue", 2: "green"}    # entered a band by closing
-_INT_OPEN = {0: "yellow", 1: "orange", 2: "red"}     # entered a band by opening
+_INT_CLOSE = {0: "purple", 1: "blue", 2: "green"}    # closing scales cool by band
+_INT_OPEN = {0: "yellow", 1: "yellow", 2: "yellow"}  # opening = yellow (any band)
 _WARM = frozenset(_INT_OPEN.values())
 _INT_SETTLE = 2     # after this many consecutive warm samples → cool to the band
 
@@ -242,7 +242,7 @@ class DriverGapProcessor(Processor):
 
     def _int_state(self, num: str, iv: Optional[float], pos: Optional[int]) -> str:
         """Interval-to-car-ahead trend: band × direction, < 1 s only. Closing
-        cools (green→blue→purple); opening warms (red→orange→yellow); a position
+        cools (green→blue→purple); opening (any band) is yellow; a position
         switch flips the passed car to yellow. Hysteresis prevents edge flicker."""
         if iv is None:                        # lapped / non-numeric → out of battle
             self._int_band[num] = None
