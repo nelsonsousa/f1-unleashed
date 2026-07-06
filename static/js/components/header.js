@@ -1178,14 +1178,25 @@
     // updateClocks. Green = audio actually playing AND has data ready;
     // yellow = seeking or buffering; red = outside the audio window
     // (no startUtc, target before audio start, or past audio end).
+    // Audio status light (card HCx1JC3f), user-defined semantics:
+    //   GREEN   — audio exists, playing, AND in sync (|drift| ≤ SYNC_DRIFT_S).
+    //   YELLOW  — audio exists, playing/loading, but NOT in sync yet
+    //             (drifted, or buffering/seeking/starting).
+    //   RED     — audio should be playing but is unavailable / out of range / corrupt.
+    //   (off)   — playback is deliberately paused (user or data) — not a failure.
+    const SYNC_DRIFT_S = 5;   // |audio − data clock| within this = in sync
     function updateAudioStatusLight() {
         const light = document.getElementById('audioStatusLight');
         if (!light) return;
         const audio = state.audio.element;
         let cls = '';
-        if (!audio || !state.audio.isReady || !state.audio.startUtc) {
-            cls = 'red';
-        } else if (messageBus.clockTime) {
+
+        if (!audioShouldPlay()) {
+            cls = '';   // paused on purpose (user or data) → no light
+        } else if (!audio || !state.audio.isReady || !state.audio.startUtc
+                   || !messageBus.clockTime) {
+            cls = 'red';   // should be playing but the stream isn't available/ready
+        } else {
             const canSeekL = audio.seekable && audio.seekable.length > 0
                 && audio.seekable.end(audio.seekable.length - 1) > 0;
             const targetSec = (messageBus.clockTime.getTime()
@@ -1193,22 +1204,17 @@
                               - (state.audio.offsetSeconds || 0);
             const dur = isFinite(audio.duration) && audio.duration > 0
                 ? audio.duration : audioPlayableDuration();
-            // Past-end-of-file red only applies to SEEKABLE replay
-            // streams where audio.duration = full file length. For
-            // non-seekable (= live chunked), audio.duration is the
-            // CURRENT fetch's length (= much smaller than session
-            // targetSec), so the comparison would always trip red.
-            // Live is "in range" by definition until the session ends.
+            // Out of range = no audio content at this position (past-end red only
+            // for SEEKABLE replay, where audio.duration is the full file; live
+            // chunked streams are "in range" until the session ends).
             if (targetSec < 0 || (canSeekL && dur > 0 && targetSec > dur)) {
                 cls = 'red';
-            } else if (audio.seeking || audio.readyState < 3 /*HAVE_FUTURE_DATA*/) {
-                cls = 'yellow';
-            } else if (audioShouldPlay() && !audio.paused) {
-                cls = 'green';
-            } else if (audioShouldPlay() && audio.paused) {
-                cls = 'yellow';  // wants to play but isn't yet
+            } else if (audio.paused || audio.seeking || audio.readyState < 3 /*HAVE_FUTURE_DATA*/) {
+                cls = 'yellow';   // wants to play, loading/seeking/not started → not synced yet
             } else {
-                cls = '';  // user-paused: no light
+                const drift = audioSyncDrift();
+                const inSync = drift !== null && Math.abs(drift) <= SYNC_DRIFT_S;
+                cls = inSync ? 'green' : 'yellow';   // playing: green if synced, else drifted
             }
         }
         if (light.dataset.cls !== cls) {
