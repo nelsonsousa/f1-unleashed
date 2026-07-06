@@ -390,13 +390,14 @@
             }
         }
 
-        // Always show all four slots when forecast data is available — even
-        // when the forecast matches the current condition (reversal of the
-        // earlier collapse-when-unchanged behaviour, card RGCfGhUz).
+        // Show whatever forecast slots resolve — NOT all-or-nothing. The old
+        // `f15 && f30 && f60` gate hid EVERY icon the moment the +60' slot ran
+        // past a snapshot's 2 h horizon, which read as "forecast only near the
+        // start". Now each available slot shows independently, throughout. (a4QfXvwZ)
         let slots = [['Now', now]];
-        if (f15 && f30 && f60) {
-            slots.push(["15'", f15], ["30'", f30], ["60'", f60]);
-        }
+        if (f15) slots.push(["15'", f15]);
+        if (f30) slots.push(["30'", f30]);
+        if (f60) slots.push(["60'", f60]);
 
         const rows = slots.map(([when, s]) =>
             `<div class="wf-slot" title="${s.label}">` +
