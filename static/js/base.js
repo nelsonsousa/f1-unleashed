@@ -163,6 +163,9 @@ const messageBus = {
 
         const ws = new WebSocket(wsUrl);
         this._ws = ws;
+        this._sessionName = sessionName;
+
+        ws.onopen = () => { this._reconnectAttempts = 0; };
 
         ws.onmessage = (event) => {
             const msg = JSON.parse(event.data);
@@ -295,6 +298,22 @@ const messageBus = {
 
         ws.onclose = () => {
             console.log('WebSocket closed');
+            if (this._ws === ws) this._ws = null;
+            // Auto-reconnect after an unexpected drop (server/capture restart).
+            // Reconnecting re-pulls state:full → session:loaded, refreshing the
+            // audio segment map so a mid-capture restart doesn't strand a stale
+            // single-segment map on a still-open client (hwu52Zqy). reset() opts
+            // out via _intentionalClose.
+            if (this._intentionalClose) { this._intentionalClose = false; return; }
+            if (this._reconnectTimer) return;
+            const n = this._reconnectAttempts || 0;
+            const delay = Math.min(1000 * Math.pow(2, n), 8000);   // 1,2,4,8,8… s
+            this._reconnectAttempts = n + 1;
+            this.emit('session:reconnecting', { attempt: n + 1 });
+            this._reconnectTimer = setTimeout(() => {
+                this._reconnectTimer = null;
+                this.connect(this._sessionName);
+            }, delay);
         };
 
         ws.onerror = (error) => {
@@ -311,6 +330,8 @@ const messageBus = {
 
     // Clear all state
     reset() {
+        this._intentionalClose = true;
+        if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
         if (this._ws) {
             this._ws.close();
             this._ws = null;
