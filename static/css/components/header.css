@@ -96,6 +96,15 @@
     border: 1px solid var(--text-secondary);
 }
 
+/* Blink twice on a status change to draw the eye, then settle (HBAKIcye). */
+.track-status.ts-blink {
+    animation: ts-blink 0.4s ease-in-out 2;
+}
+@keyframes ts-blink {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.2; }
+}
+
 /* Clock Display */
 .clocks {
     display: flex;
@@ -119,7 +128,7 @@
 
 .clock-label {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-secondary);   /* was --text-muted — too faint to read (QQ2vPy4e) */
     text-transform: uppercase;
     letter-spacing: 1px;
 }
@@ -571,6 +580,26 @@
 
 .btn-go-live.at-live:hover {
     background: #e10600;
+}
+
+/* Control-bar buttons: uniform height so play/pause matches Speed/LIVE (0kyhyv9Y). */
+.btn-play, .btn-speed, .btn-go-live {
+    height: 30px;
+    padding-top: 0;
+    padding-bottom: 0;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+/* Speed + LIVE: thin border + red hover, matching the Sync button. */
+.btn-speed, .btn-go-live {
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+.btn-speed:hover, .btn-go-live:not(.at-live):hover {
+    background: #e10600;
+    border-color: #e10600;
+    color: #fff;
 }
 
 /* Scrubber */
