@@ -358,6 +358,15 @@ document.addEventListener('keydown', (e) => {
     if (e.key === ' ') {
         e.preventDefault();
         togglePlayPause();
+    // Enter: jump to the SYNC TO marker (previous sync event shown on the
+    // button) and resume playback (if paused).
+    } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const btn = document.getElementById('syncBtn');
+        if (btn && btn._syncOffset != null) {
+            seekToOffset(btn._syncOffset);
+            messageBus.send({ cmd: 'play' });
+        }
     // Arrow keys: ±10 s skip. Works whether playing OR paused — a paused
     // seek just repositions the playhead. Data uses the global seek; audio
     // piggy-backs through skipAudioRelative.
@@ -368,6 +377,20 @@ document.addEventListener('keydown', (e) => {
         if (typeof window.skipAudioRelative === 'function') {
             window.skipAudioRelative(delta);
         }
+    // + / = : nudge forward 0.5 s (manual sync fine-tune). Modifier-free only,
+    // so Cmd/Ctrl + still zooms the browser.
+    } else if ((e.key === '+' || e.key === '=') && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        seekToOffset(messageBus.getCurrentOffset() + 0.5);
+        if (typeof window.skipAudioRelative === 'function') {
+            window.skipAudioRelative(0.5);
+        }
+    // - : pause 0.1 s then resume — nudges the stream 0.1 s later vs real time
+    // (fine-tune). Modifier-free only, so Cmd/Ctrl - still zooms out.
+    } else if (e.key === '-' && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        messageBus.send({ cmd: 'pause' });
+        setTimeout(() => messageBus.send({ cmd: 'play' }), 100);
     // M: mute toggle (handy without reaching for the mute button).
     } else if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();
