@@ -31,11 +31,19 @@
     min-width: 0;
 }
 
+/* Neutral bordered pill, sized + framed to match the track-status widget so the
+   two read as a matching pair (emgy6Lmo). */
 .session-badge {
     font-size: 15px;
-    padding: 2px 8px;
-    background: var(--accent);
-    border-radius: 2px;
+    height: 38px;
+    padding: 0 10px;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--text-secondary);
+    border-radius: 4px;
+    color: var(--text-primary);
     font-weight: 600;
     text-transform: uppercase;
     white-space: nowrap;
@@ -47,7 +55,9 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 4px 8px;
+    padding: 0 8px;
+    height: 38px;              /* match the clocks/audio/controls boxes (emgy6Lmo) */
+    box-sizing: border-box;
     border-radius: 4px;
     font-size: 14px;
     font-weight: 600;
