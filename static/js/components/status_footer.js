@@ -98,7 +98,10 @@
     });
 
     messageBus.on('status:rates', (d) => {
-        if (!d || finished) return;   // parked at end → the 1 s tick shows '—'
+        if (!d) return;
+        // Cache size grows through the session — refresh it live (card imRSQecj).
+        if (d.cacheBytes != null) $('sfCache').textContent = fmtBytes(d.cacheBytes);
+        if (finished) return;   // parked at end → the 1 s tick shows '—' speeds
         $('sfDlDataVal').textContent = fmtRate(d.dataBps);
         $('sfDlAudioVal').textContent = fmtRate(d.audioBps);
     });

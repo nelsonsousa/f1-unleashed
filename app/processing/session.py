@@ -1194,7 +1194,8 @@ class SessionEngine:
             try:
                 await self._broadcast({
                     "topic": "status:rates",
-                    "data": {"dataBps": d_bps, "audioBps": a_bps},
+                    "data": {"dataBps": d_bps, "audioBps": a_bps,
+                             "cacheBytes": self._cache_bytes()},
                 })
             except Exception:
                 pass
