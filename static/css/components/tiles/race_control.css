@@ -55,7 +55,7 @@
     flex-shrink: 0;
 }
 /* "Team radio" label takes the slack so the play/stop controls sit at the right. */
-.race-control-msg.rc-radio .race-control-text { color: var(--text-muted); flex: 1; }
+.race-control-msg.rc-radio .race-control-text { color: var(--text-secondary); flex: 1; }
 .rc-radio-play,
 .rc-radio-stop {
     background: none;
