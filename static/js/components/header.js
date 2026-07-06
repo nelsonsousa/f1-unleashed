@@ -26,6 +26,7 @@
         raceCurrentLap: null,
         raceTotalLaps: null,
         raceStarted: false,
+        scheduledStartMs: null,// scheduled session start (UTC ms) — SYNC TO Lap 1 window
         gmtOffset: null,       // parsed timedelta in ms
         gmtOffsetStr: null,    // raw string e.g. "11:00:00"
         qualifyingPart: 0,
@@ -95,6 +96,12 @@
         if (data.gmtOffset) {
             state.gmtOffsetStr = data.gmtOffset;
             state.gmtOffset = parseGmtOffset(data.gmtOffset);
+        }
+        // Scheduled session start (track-local StartDate → UTC via gmtOffset).
+        // Drives the SYNC TO "Lap 1 from scheduled-start + 1 min" window (86BYppiU).
+        if (data.startDate && state.gmtOffset != null) {
+            const t = Date.parse(data.startDate.replace(/Z$/, '') + 'Z');
+            if (!isNaN(t)) state.scheduledStartMs = t - state.gmtOffset;
         }
         // Lights out → switch the race/sprint badge to the live lap counter.
         if (data.sessionStatus === 'Started' && !state.raceStarted) {
@@ -231,7 +238,16 @@
         // the playhead. No forward sync (a future marker can't be synced to).
         let mode = 'CLOCK', label = null, offset = null;
 
-        if (isRaceLike && state.raceStarted && state.raceCurrentLap) {
+        if (isRaceLike && !state.raceStarted && state.scheduledStartMs != null
+                && messageBus.clockTime.getTime() >= state.scheduledStartMs + 60000) {
+            // Race pre-start: from scheduled-start + 1 min until lights-out the
+            // sync target is Lap 1. Its offset is only known once lights-out
+            // fires (there's no LapCount delta for Lap 1), so the button shows
+            // "Lap 1" but stays pending/disabled through this window. (86BYppiU)
+            mode = 'LAP';
+            label = 'Lap 1';
+            offset = _lapOffset[1] != null ? _lapOffset[1] / 1000 : null;
+        } else if (isRaceLike && state.raceStarted && state.raceCurrentLap) {
             mode = 'LAP';
             const cl = state.raceCurrentLap;   // start of the current lap
             label = `Lap ${cl}`;
