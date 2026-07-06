@@ -6,10 +6,10 @@ Captures timing data to disk (JSONL) and audio commentary (AAC).
 Does NOT handle streaming to clients — that's SessionEngine's job.
 
 Audio lifecycle: commentary is a standalone broadcast on a fixed rdio HLS URL,
-so it's captured directly on a timer — started with the capture (pre-session),
-stopped 10 min after SessionStatus=Finalised (or a max-duration backstop, or
-when the capture ends). ffmpeg is only ever restarted if the download goes
-stale; there is no AudioStreams / reconnect-driven (re)start.
+so it's captured directly — started 10 min before the scheduled start, stopped
+on SessionStatus=Ends (the single terminal event; a max-duration backstop and
+the capture-teardown are last resorts). ffmpeg is only ever restarted if the
+download goes stale; there is no AudioStreams / reconnect-driven (re)start.
 """
 
 import asyncio
@@ -109,13 +109,12 @@ class LiveCaptureService:
     _SIGNALR_STALL_S = 60       # no message (incl. Heartbeat) this long → force reconnect
 
     # Commentary audio is a standalone broadcast on a FIXED HLS URL (verified
-    # constant across every session), so it's captured directly on a timer —
-    # decoupled from AudioStreams / SignalR reconnects. Start with the capture
-    # (which begins pre-session), stop 10 min after SessionStatus=Finalised, and
-    # only ever restart ffmpeg if the download goes stale.
+    # constant across every session), so it's captured directly — decoupled from
+    # AudioStreams / SignalR reconnects. Start 10 min before the scheduled start,
+    # STOP on SessionStatus=Ends (the single terminal event), and only ever
+    # restart ffmpeg if the download goes stale.
     _RDIO_AUDIO_URL = "https://rdio.formula1.com/rdio-prod/livetimingts/hls.m3u8"
-    _AUDIO_END_AFTER_FINALISED_S = 600   # stop audio 10 min after Finalised
-    _AUDIO_MAX_S = 6 * 3600              # hard backstop if Finalised never arrives
+    _AUDIO_MAX_S = 6 * 3600              # hard backstop only if Ends never arrives
 
     def __init__(self, cache_dir: Optional[str] = None):
         # Default to the OS-appropriate cache location (card 25).
@@ -240,8 +239,8 @@ class LiveCaptureService:
             #   3. fallback: 30 min since last non-heartbeat message.
             self._last_non_heartbeat_ts = time.monotonic()
             self._session_end_seen = False
-            self._finalised_seen = False
-            self._finalised_monotonic = None   # set when SessionStatus=Finalised arrives
+            self._finalised_seen = False       # no-restart guard (Finalised → Ends window)
+            self._ends_seen = False            # SessionStatus=Ends → stop audio (once)
             self._radio_static_path = None
             self._radio_seen = set()
             self._radio_pending = []
@@ -292,17 +291,26 @@ class LiveCaptureService:
                         # Hard session-end signal from F1.
                         if topic == "_SessionEnd":
                             self._session_end_seen = True
-                        # SessionStatus=Finalised arms the audio-end silence
-                        # monitor: we keep recording through the whole broadcast
-                        # and only stop once it's Finalised AND then goes silent
-                        # for 60 s (card "Trim blank audio").
+                        # Finalised → no-restart guard only: we keep recording
+                        # through the wind-down (podium/interviews) but must not
+                        # let the stale-watchdog restart ffmpeg. Audio stops on
+                        # SessionStatus=Ends below, not on a timer.
                         if (not self._finalised_seen and topic == "SessionStatus"
                                 and isinstance(message.get("data"), dict)
                                 and message["data"].get("Status") == "Finalised"):
                             self._finalised_seen = True
-                            self._finalised_monotonic = time.monotonic()
                             logger.info(
-                                "SessionStatus=Finalised — audio will stop in 10 min")
+                                "SessionStatus=Finalised — audio will stop on SessionStatus=Ends")
+                        # Ends → the single terminal event (fires once, after the
+                        # last part; unlike Finished, which repeats per quali
+                        # part). Stop audio now. Guarded + idempotent so a
+                        # reconnect snapshot re-sending Ends doesn't re-trigger.
+                        if (not self._ends_seen and topic == "SessionStatus"
+                                and isinstance(message.get("data"), dict)
+                                and message["data"].get("Status") == "Ends"):
+                            self._ends_seen = True
+                            logger.info("SessionStatus=Ends — stopping audio capture")
+                            self._stop_audio(cache_path)
 
                         # Start the DB preprocessor once live.jsonl exists
                         # (the SignalR client writes it on first data).
@@ -696,12 +704,11 @@ class LiveCaptureService:
             self._start_audio(self._RDIO_AUDIO_URL, cache_path)
 
     async def _audio_session_end_watchdog(self, cache_path: Path) -> None:
-        """Stop audio on a timer: 10 min after SessionStatus=Finalised. If
-        Finalised is never seen (feed died before emitting it), the capture stays
-        up until the live monitor sees the session is no longer live and stops the
-        capture (→ the loop's finally stops audio); a hard max-duration backstop
-        is the last resort. The captured file is NOT trimmed — the ±10 min bounds
-        keep the silence small, and the byte-0 PDT anchor handles alignment."""
+        """Hard max-duration backstop ONLY. Audio normally stops on
+        SessionStatus=Ends (see the capture loop). This is the last resort for a
+        pathological case: Ends never arrives (feed died) yet the capture is
+        still up. Normally the SignalR-stall watchdog / live monitor tears the
+        capture down first (→ the loop's finally stops audio)."""
         start = time.monotonic()
         while True:
             try:
@@ -712,18 +719,10 @@ class LiveCaptureService:
             if not self._audio_process or self._audio_process.poll() is not None:
                 return  # Audio already stopped — nothing left to do.
 
-            now = time.monotonic()
-            if (self._finalised_monotonic is not None
-                    and now - self._finalised_monotonic >= self._AUDIO_END_AFTER_FINALISED_S):
-                logger.info(
-                    f"Stopping audio for {cache_path.name}: "
-                    f"{self._AUDIO_END_AFTER_FINALISED_S // 60} min after Finalised")
-                self._stop_audio(cache_path)
-                return
-            if now - start >= self._AUDIO_MAX_S:
+            if time.monotonic() - start >= self._AUDIO_MAX_S:
                 logger.info(
                     f"Stopping audio for {cache_path.name}: max-duration backstop "
-                    f"({self._AUDIO_MAX_S // 3600} h, no Finalised seen)")
+                    f"({self._AUDIO_MAX_S // 3600} h, no SessionStatus=Ends seen)")
                 self._stop_audio(cache_path)
                 return
 
