@@ -18,21 +18,26 @@ safety-car states from TrackStatus and the "safety car in this lap" RCM:
     Finalised -> finished  "SESSION FINISHED"
     Ends      -> finished  "SESSION ENDED"
 
-  TrackStatus.Message (guarded — see below):
-    SCDeployed  -> sc   "SC DEPLOYED"   (only if status in green/sc/vsc)
-    VSCDeployed -> vsc  "VSC DEPLOYED"  (only if status in green/sc/vsc)
-    VSCEnding   -> vsc  "VSC ENDING"    (only if status == vsc)
-    AllClear    -> green "GREEN FLAG"   (only if status in sc/vsc; else ignored)
+  TrackStatus.Message (safety-car overlay — applies only while RACING):
+    SCDeployed  -> sc    "SC DEPLOYED"
+    VSCDeployed -> vsc   "VSC DEPLOYED"
+    VSCEnding   -> vsc   "VSC ENDING"
+    AllClear    -> green "GREEN FLAG"   (lifts an sc/vsc caution)
 
-  RaceControlMessages (SafetyCar / "IN THIS LAP"):
-    -> sc "SC IN THIS LAP"  (only if status == sc)
+  RaceControlMessages (Category=SafetyCar, Mode="SAFETY CAR"):
+    Status=DEPLOYED     -> sc "SC DEPLOYED"
+    Status=IN THIS LAP  -> sc "SC IN THIS LAP"
 
-Guards mean a RED (SessionStatus=Aborted) is never cleared by a TrackStatus
-AllClear — only the next SessionStatus=Started restores green.
+The safety-car states overlay a RACING session (status in green/sc/vsc) and may
+follow one another in ANY order — there is no fixed progression, so the SC can go
+IN THIS LAP -> DEPLOYED again when it's extended (FI4QUOaJ). They do NOT override
+the authoritative SessionStatus red/finished/inactive, and AllClear only lifts an
+sc/vsc caution — so a RED (SessionStatus=Aborted) is cleared only by the next
+SessionStatus=Started.
 
 Client colours: green->green, red->red, sc/vsc->yellow, inactive/finished->
-clear. The scrubber marker fires only when that colour changes, so the
-yellow->yellow transitions (SC->VSC, VSC ENDING, SC IN THIS LAP) add no marker.
+clear. The scrubber marker fires only when that colour changes, so consecutive
+yellows (SC<->VSC, VSC ENDING, SC IN THIS LAP/DEPLOYED) add no extra marker.
 """
 
 from datetime import datetime
@@ -86,19 +91,18 @@ class TrackStatusProcessor(Processor):
     def _handle_track_status(self, data: Any, clock_time: datetime) -> None:
         if not isinstance(data, dict):
             return
+        # Safety-car overlay applies only while racing (green/sc/vsc); within that
+        # there's no fixed progression — any caution can follow any other.
         msg = data.get("Message")
-        if msg == "SCDeployed":
-            if self._status in ("green", "sc", "vsc"):
-                self._set("sc", "SC DEPLOYED", clock_time)
-        elif msg == "VSCDeployed":
-            if self._status in ("green", "sc", "vsc"):
-                self._set("vsc", "VSC DEPLOYED", clock_time)
-        elif msg == "VSCEnding":
-            if self._status == "vsc":
-                self._set("vsc", "VSC ENDING", clock_time)
-        elif msg == "AllClear":
-            if self._status in ("sc", "vsc"):
-                self._set("green", "GREEN FLAG", clock_time)
+        racing = self._status in ("green", "sc", "vsc")
+        if msg == "SCDeployed" and racing:
+            self._set("sc", "SC DEPLOYED", clock_time)
+        elif msg == "VSCDeployed" and racing:
+            self._set("vsc", "VSC DEPLOYED", clock_time)
+        elif msg == "VSCEnding" and racing:
+            self._set("vsc", "VSC ENDING", clock_time)
+        elif msg == "AllClear" and self._status in ("sc", "vsc"):
+            self._set("green", "GREEN FLAG", clock_time)
 
     def _handle_rcm(self, data: Any, clock_time: datetime) -> None:
         if not isinstance(data, dict):
@@ -110,20 +114,22 @@ class TrackStatusProcessor(Processor):
             items = messages
         else:
             return
+        # SC state from RCM (Category=SafetyCar, Mode="SAFETY CAR"): DEPLOYED and
+        # IN THIS LAP set their state directly, in EITHER order — F1 does NOT
+        # re-send TrackStatus when the SC is extended (code stays 4), so the
+        # "IN THIS LAP → DEPLOYED again" re-arm only arrives here (FI4QUOaJ). VSC
+        # (Mode="VSC") is driven by TrackStatus, so it's ignored here; overlays
+        # racing only, and dedup makes a repeat message a no-op.
         for m in items:
-            if not isinstance(m, dict):
+            if not isinstance(m, dict) or m.get("Category") != "SafetyCar":
                 continue
-            if m.get("Category") != "SafetyCar" or self._status != "sc":
+            if m.get("Mode") != "SAFETY CAR" or self._status not in ("green", "sc", "vsc"):
                 continue
             status = m.get("Status")
-            if status == "IN THIS LAP":
-                self._set("sc", "SC IN THIS LAP", clock_time)
-            elif status == "DEPLOYED" and m.get("Mode") == "SAFETY CAR":
-                # SC extended: "IN THIS LAP" → "DEPLOYED" again. F1 does NOT re-send
-                # TrackStatus (code stays 4 SCDeployed), so re-arm from the RCM.
-                # Mode-guarded to SC only (leaves VSC alone); dedup makes the
-                # initial-deploy RCM a no-op. (FI4QUOaJ)
+            if status == "DEPLOYED":
                 self._set("sc", "SC DEPLOYED", clock_time)
+            elif status == "IN THIS LAP":
+                self._set("sc", "SC IN THIS LAP", clock_time)
 
     def _set(self, status: str, message: str, clock_time: datetime) -> None:
         if status == self._status and message == self._message:
