@@ -642,13 +642,18 @@ function renderSessionPopoverHtml(year, ev) {
         // running (live capture in progress), "Replay" if cached,
         // "Download" otherwise.
         const isLive = isSessionLive(ev, s);
+        // Future = scheduled but not started yet, not cached, not live — nothing
+        // to download, so fade the row + disable its button (fyxmiVKo).
+        const future = !!(sd && sd > new Date() && !cached && !isLive);
         const action = isLive
             ? `<a class="ses-btn live" href="${liveHrefFor(year, ev, s, sessionType, entry)}" target="_self">Watch live</a>`
             : cached
                 ? `<a class="ses-btn open" href="${openUrl}" target="_self">Replay</a>`
-                : `<button class="ses-btn download" onclick="downloadSession(${year}, '${escapeAttr(ev.name)}', '${escapeAttr(s.name)}', this)">Download</button>`;
+                : future
+                    ? `<button class="ses-btn download" disabled title="Session hasn't started yet">Download</button>`
+                    : `<button class="ses-btn download" onclick="downloadSession(${year}, '${escapeAttr(ev.name)}', '${escapeAttr(s.name)}', this)">Download</button>`;
         cards += `
-            <div class="session-card${cached ? ' cached' : ''}">
+            <div class="session-card${cached ? ' cached' : ''}${future ? ' future' : ''}">
                 <div class="ses-name">${escapeHtml(s.name)}</div>
                 <div class="ses-when">${escapeHtml(dlabel)}</div>
                 ${renderSessionStatusIcons(entry, year, ev, s)}
@@ -656,10 +661,28 @@ function renderSessionPopoverHtml(year, ev) {
             </div>
         `;
     }
-    const allCached = eventAllCached(ev);
-    const downloadAllBtn = allCached
-        ? `<button class="ses-btn download-all done" disabled title="All sessions cached">Download all</button>`
-        : `<button class="ses-btn download-all" onclick="downloadAllSessions(${year}, '${escapeAttr(ev.name)}', this)">Download all</button>`;
+    // "Download all" over PAST (finished, non-live) sessions only — never the
+    // in-progress live session, never the not-yet-happened future ones. Three
+    // states by how many of those are on disk (CHQlhpkq):
+    //   none cached → "Download all"; some → "Download missing"; all → "Re-download all".
+    const now = new Date();
+    const pastSessions = (ev.sessions || []).filter(s => {
+        const sd = s.date_utc ? new Date(s.date_utc + 'Z') : null;
+        return sd && sd <= now && !isSessionLive(ev, s);
+    });
+    const pastCachedN = pastSessions.filter(s => sessionIsCached(ev, s.name)).length;
+    const dlAll = (label, extra, title) =>
+        `<button class="ses-btn download-all" onclick="downloadAllSessions(${year}, '${escapeAttr(ev.name)}', this${extra})" title="${title}">${label}</button>`;
+    let downloadAllBtn;
+    if (pastSessions.length === 0) {
+        downloadAllBtn = `<button class="ses-btn download-all" disabled title="No finished sessions yet">Download all</button>`;
+    } else if (pastCachedN === pastSessions.length) {
+        downloadAllBtn = dlAll('Re-download all', ', true', 'Re-download all timing data');
+    } else if (pastCachedN > 0) {
+        downloadAllBtn = dlAll('Download missing', '', 'Download the sessions not yet on disk');
+    } else {
+        downloadAllBtn = dlAll('Download all', '', 'Download all sessions');
+    }
     cards += `
         <div class="session-card actions">
             ${downloadAllBtn}
@@ -695,16 +718,18 @@ function renderSessionStatusIcons(entry, year, ev, s) {
         ? `<button class="ses-redl" title="Re-download timing data" onclick="redownloadSession(${year}, '${escapeAttr(ev.name)}', '${escapeAttr(s.name)}', this)">&#8595;</button>`
         : '';
 
+    // Three status icons side-by-side (jsonl / audio / weather); the re-download
+    // button sits BELOW the jsonl icon in its column (8oHiZeIW).
     return `
         <div class="ses-icons">
-            <div class="ses-ico-row">
+            <div class="ses-ico-col">
                 <span class="ses-ico ${statusClass(dataS)}" title="${escapeAttr(tip('Timing data', dataS))}">${fileSvg}</span>
                 ${dlBtn}
             </div>
-            <div class="ses-ico-row">
+            <div class="ses-ico-col">
                 <span class="ses-ico ${statusClass(audioS)}" title="${escapeAttr(tip('Audio', audioS))}">${audioSvg}</span>
             </div>
-            <div class="ses-ico-row">
+            <div class="ses-ico-col">
                 <span class="ses-ico ${statusClass(wxS)}" title="${escapeAttr(tip('Weather data', wxS))}">${wxSvg}</span>
             </div>
         </div>
@@ -831,13 +856,17 @@ window.redownloadSession = async function(year, eventName, sessionName, btn) {
     }
 };
 
-window.downloadAllSessions = async function(year, eventName, btn) {
+window.downloadAllSessions = async function(year, eventName, btn, force) {
     btn.disabled = true;
     btn.textContent = 'Downloading…';
     const ev = currentEvents.find(e => e.name === eventName);
     if (!ev) { btn.disabled = false; btn.textContent = 'Download all'; return; }
+    const now = new Date();
     for (const s of (ev.sessions || [])) {
-        if (sessionIsCached(ev, s.name)) continue;
+        const sd = s.date_utc ? new Date(s.date_utc + 'Z') : null;
+        if (sd && sd > now) continue;                        // future — nothing to grab yet
+        if (isSessionLive(ev, s)) continue;                  // never bulk-download the live one
+        if (!force && sessionIsCached(ev, s.name)) continue; // "Download missing" skips cached
         try {
             await fetch(`${API_BASE}/livetiming/fetch`, {
                 method: 'POST',
@@ -845,6 +874,7 @@ window.downloadAllSessions = async function(year, eventName, btn) {
                 body: JSON.stringify({
                     year, meeting_name: eventName,
                     session_type: s.name,   // specific session name (not the generic type)
+                    force: !!force,         // "Re-download all" re-fetches cached sessions too
                 }),
             });
         } catch (e) { console.error(e); }

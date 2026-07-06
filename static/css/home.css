@@ -487,18 +487,20 @@ header {
 .session-card .ses-name { font-size: 1.05rem; }
 .session-card .ses-when { font-size: 0.9rem; }
 
-/* Status icons: data / audio / weather stacked, each colour-coded by health
-   (grey/red/yellow/green). Data row may carry a re-download button. */
+/* Status icons: jsonl / audio / weather SIDE BY SIDE, each colour-coded by health
+   (grey/red/yellow/green). The jsonl column carries a re-download button below it. */
 .ses-icons {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 12px;
     margin: 4px 0 6px 0;
 }
-.ses-ico-row {
+.ses-ico-col {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
 }
 .ses-ico {
     display: inline-flex;
@@ -563,6 +565,9 @@ header {
     font-weight: 400;
 }
 .session-card.cached { border-color: rgba(34, 197, 94, 0.5); }
+/* Future (not-yet-started) session — faded + non-actionable, like future events (fyxmiVKo). */
+.session-card.future { opacity: 0.55; }
+.session-card.future .ses-btn.download:disabled { cursor: not-allowed; }
 .session-card .ses-name { font-weight: 600; font-size: 0.9rem; }
 .session-card .ses-when { font-size: 0.75rem; color: var(--text-secondary); }
 .session-card .ses-btn {
