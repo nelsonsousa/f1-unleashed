@@ -281,17 +281,22 @@ class FiaStewardsProcessor(Processor):
 
         if "PENALTY SERVED" in upper:
             cars_set = set(cars)
-            # Penalty-served clears any awarded-penalty indicator that
-            # involves any of the named cars + the same reason.
-            changed |= self._remove_matching(
-                lambda i: i.get("kind") in ("dt", "sg")
-                or (isinstance(i.get("kind"), str)
-                    and i["kind"].endswith("s")
-                    and i["kind"][:-1].isdigit())
-                if i.get("reason") == reason
-                and bool(set(i.get("driverNums") or []) & cars_set)
-                else False
-            )
+            # Clear the matching awarded penalty by CAR + KIND (Ns / dt / sg),
+            # parsed from the served message — NOT by reason. The served RCM often
+            # omits or rewords the reason (ALB's 10 s served carried none), so the
+            # old reason-equality check left the badge stuck. (0PMnBjhE)
+            served_kind: Optional[str] = None
+            if m := self._TIME_PEN_RX.search(upper):
+                served_kind = f"{m.group(1)}s"
+            elif "DRIVE THROUGH" in upper:
+                served_kind = "dt"
+            elif "STOP-AND-GO" in upper or "STOP AND GO" in upper:
+                served_kind = "sg"
+            if served_kind is not None:
+                changed |= self._remove_matching(
+                    lambda i: i.get("kind") == served_kind
+                    and bool(set(i.get("driverNums") or []) & cars_set)
+                )
             if changed:
                 self._emit(clock_time)
             return
