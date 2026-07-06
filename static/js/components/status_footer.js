@@ -26,6 +26,8 @@
     let total = 0, windowCount = 0;
     let health = null;      // latest dataHealth payload from the server
     let finished = false;   // server: playback parked at the terminal session end
+    let isLive = false;     // live vs replay (from session:loaded)
+    let streamAlive = true; // server: raw data feed advancing (live stream light)
 
     function fmtBytes(b) {
         if (!b) return '—';
@@ -43,6 +45,7 @@
 
     messageBus.on('session:loaded', (d) => {
         const live = !!(d && d.isLive);
+        isLive = live;
         $('sfMode').textContent = live ? 'LIVE' : 'REPLAY';
         $('sfModeDot').className = 'sf-dot ' + (live ? 'live' : 'replay');
         $('sfCache').textContent = fmtBytes(d && d.cacheBytes);
@@ -84,6 +87,9 @@
     messageBus.on('dataHealth', (d) => { health = d; renderHealth(); });
     messageBus.on('state:reset', () => { health = null; lastHeartbeatMs = null; finished = false; renderHealth(); });
     messageBus.on('heartbeat', () => { lastHeartbeatMs = performance.now(); });
+    // Server-authoritative live feed liveness (raw data edge, not the audio-capped
+    // playhead) — drives the stream light for LIVE sessions (card Xqw1feac).
+    messageBus.on('streamLive', (d) => { streamAlive = !!(d && d.alive); });
     // Server-authoritative terminal-end flag (on state:status / state:full via base.js).
     messageBus.on('playback:status', (d) => {
         const was = finished;
@@ -128,13 +134,20 @@
 
         $('sfRate').textContent = `${rate.toFixed(rate < 10 ? 1 : 0)} msg/s`;
 
-        // Stream light: data-feed liveness by heartbeat recency (not msg/s).
-        const playing = messageBus.isPlaying;
-        const hbAge = lastHeartbeatMs === null ? null : (now - lastHeartbeatMs) / 1000;
-        if (!playing || hbAge === null) light(streamLight, 'grey');
-        else if (hbAge <= HB_YELLOW_S) light(streamLight, 'green');
-        else if (hbAge <= HB_RED_S) light(streamLight, 'yellow');
-        else light(streamLight, 'red');
+        if (isLive) {
+            // LIVE: server-authoritative feed liveness (raw data edge — heartbeats
+            // keep it fresh). NOT client heartbeat-recency, which lags behind the
+            // audio-capped playhead and went false-red post-session (card Xqw1feac).
+            light(streamLight, streamAlive ? 'green' : 'red');
+        } else {
+            // REPLAY: playback liveness by delivered-heartbeat recency.
+            const playing = messageBus.isPlaying;
+            const hbAge = lastHeartbeatMs === null ? null : (now - lastHeartbeatMs) / 1000;
+            if (!playing || hbAge === null) light(streamLight, 'grey');
+            else if (hbAge <= HB_YELLOW_S) light(streamLight, 'green');
+            else if (hbAge <= HB_RED_S) light(streamLight, 'yellow');
+            else light(streamLight, 'red');
+        }
         if (streamLight) streamLight.removeAttribute('title');
     }, 1000);
 })();

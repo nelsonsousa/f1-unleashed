@@ -100,6 +100,7 @@ class SessionEngine:
         self._last_offset_ms = 0
         self._ended = False     # cached: feed's terminal SessionStatus=Ends seen
         self._terminal = False  # playback parked at the terminal end (→ finished)
+        self._data_live = True  # live: raw data edge advanced recently (stream light)
         self._preprocess_done = asyncio.Event()
         # Set once the offset-0 baseline (driverList, trackGeometry,
         # trackCircuit, sessionInfo) is committed to the DB. add_client waits
@@ -954,6 +955,10 @@ class SessionEngine:
         data_healthy = (data_ms is not None
                         and (now_mono - getattr(self, "_last_data_advance", now_mono))
                         <= DATA_EDGE_STALE_S)
+        # Feed liveness for the stream light — the RAW data edge (heartbeats are
+        # data, so they keep it fresh), NOT the audio-capped playhead (card
+        # Xqw1feac). Set here since this runs every second via _track_duration.
+        self._data_live = data_healthy
 
         audio_edge_s = self._audio_edge_offset()   # None when audio stalled/absent
         audio_ms = int(audio_edge_s * 1000) if audio_edge_s is not None else None
@@ -987,11 +992,16 @@ class SessionEngine:
                     return
                 if not self._db:
                     continue
-                edge_ms = self._capped_edge_ms()
+                edge_ms = self._capped_edge_ms()   # also refreshes self._data_live
                 if edge_ms:
                     new_dur = edge_ms / 1000.0
                     if new_dur > self._duration:
                         self._duration = new_dur
+                # Server-authoritative feed liveness for the stream light —
+                # decoupled from the audio-capped playhead (card Xqw1feac).
+                if self._live:
+                    await self._broadcast({"topic": "streamLive",
+                                           "data": {"alive": self._data_live}})
         except asyncio.CancelledError:
             raise
 
