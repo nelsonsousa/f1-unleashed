@@ -28,6 +28,7 @@
     let finished = false;   // server: playback parked at the terminal session end
     let isLive = false;     // live vs replay (from session:loaded)
     let streamAlive = true; // server: raw data feed advancing (live stream light)
+    let audioBitrate = null;// kbps from audioInfo (null = no audio stream at all)
 
     function fmtBytes(b) {
         if (!b) return '—';
@@ -49,9 +50,9 @@
         $('sfMode').textContent = live ? 'LIVE' : 'REPLAY';
         $('sfModeDot').className = 'sf-dot ' + (live ? 'live' : 'replay');
         $('sfCache').textContent = fmtBytes(d && d.cacheBytes);
-        const br = d && d.audioInfo && d.audioInfo.bitrateKbps;
-        $('sfAudio').textContent = br ? `${br} kbps` : '—';
-        light($('sfAudioLight'), br ? 'green' : 'grey');
+        audioBitrate = (d && d.audioInfo && d.audioInfo.bitrateKbps) || null;
+        $('sfAudio').textContent = audioBitrate ? `${audioBitrate} kbps` : '—';
+        light($('sfAudioLight'), audioBitrate ? 'green' : 'grey');
         document.querySelectorAll('.sf-live-only').forEach((el) => el.classList.toggle('hidden', !live));
     });
 
@@ -121,6 +122,15 @@
         windowCount = 0;
 
         $('sfMsgs').textContent = total.toLocaleString();
+
+        // Audio bitrate: the segment at the playhead, or 0 outside the audio
+        // window (no content there — clockToAudioSec null). Card 4N7VgVlf.
+        if (audioBitrate != null) {
+            const audioOn = typeof window.f1audioAvailableNow === 'function'
+                && window.f1audioAvailableNow();
+            $('sfAudio').textContent = audioOn ? `${audioBitrate} kbps` : '0 kbps';
+            light($('sfAudioLight'), audioOn ? 'green' : 'red');
+        }
 
         const streamLight = $('sfStreamLight');
         if (finished) {
