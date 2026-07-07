@@ -1174,9 +1174,9 @@
             cols += gapOrLapForRaceP1(num, idx + 1);
             cols += '<span class="col-spacer"></span>';
             cols += intervalCell(num);
-            cols += `<span class="segments">${segmentBarsCell(num)}</span>`;
-            cols += sectorCells(num);
             cols += lastLapCell(num);
+            cols += sectorCells(num);
+            cols += `<span class="segments">${segmentBarsCell(num)}</span>`;
             cols += bestLapCell(num);
             // Spacer column — visually separates best-lap from the
             // tyre history (matches the spacing between lap-time and
@@ -1242,11 +1242,11 @@
                 '<span>Gap</span>' +
                 '<span></span>' + /* gap-int-spacer */
                 '<span>Int</span>' +
-                '<span>Mini-sectors</span>' +
+                '<span>Lap time</span>' +
                 '<span>S1</span>' +
                 '<span>S2</span>' +
                 '<span>S3</span>' +
-                '<span>Lap time</span>' +
+                '<span>Mini-sectors</span>' +
                 '<span>Best lap</span>' +
                 '<span class="col-spacer"></span>' +
                 '<span>Tyres</span>' +
