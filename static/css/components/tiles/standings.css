@@ -270,6 +270,10 @@
 .sector-yellow { color: #ffcc00; }
 .sector-green { color: #00ff88; }
 .sector-purple { color: #cc66ff; }
+.sector-blue { color: #33ccff; }
+.sector-orange { color: #ff9933; }
+.sector-red { color: #ff5555; }
+.sector-white { color: #ffffff; }
 
 /* Mini-segments — bars 80% of the driver-colour stripe height (24px×0.8 ≈ 19px),
  * centred vertically inside the row, with breathing room on both sides
