@@ -1174,7 +1174,9 @@
             cols += gapOrLapForRaceP1(num, idx + 1);
             cols += '<span class="col-spacer"></span>';
             cols += intervalCell(num);
+            cols += '<span class="col-spacer"></span>';   // int ↔ last-lap gap
             cols += lastLapCell(num);
+            cols += '<span class="col-spacer"></span>';   // last-lap ↔ sectors gap
             cols += sectorCells(num);
             cols += `<span class="segments">${segmentBarsCell(num)}</span>`;
             cols += bestLapCell(num);
@@ -1198,8 +1200,10 @@
             const stt = statusCell(num);
             cols += `<span class="status ${stt.cls}">${stt.text}</span>`;
             cols += bestLapCell(num);
+            cols += '<span class="col-spacer"></span>';   // best-lap ↔ gap gap
             cols += gapCell(num);
             cols += lastLapCell(num);
+            cols += '<span class="col-spacer"></span>';   // last-lap ↔ sectors gap
             cols += sectorCells(num);
             cols += `<span class="segments">${segmentBarsCell(num)}</span>`;
             cols += `<span class="tyres">${tyreCell(num, false)}</span>`;
@@ -1242,7 +1246,9 @@
                 '<span>Gap</span>' +
                 '<span></span>' + /* gap-int-spacer */
                 '<span>Int</span>' +
+                '<span></span>' + /* int-lap-spacer */
                 '<span>Lap time</span>' +
+                '<span></span>' + /* lap-sec-spacer */
                 '<span>S1</span>' +
                 '<span>S2</span>' +
                 '<span>S3</span>' +
@@ -1280,8 +1286,10 @@
             '<div class="driver-header">' +
             idHdr +
             '<span>Best lap</span>' +
+            '<span></span>' + /* best-gap spacer */
             '<span>Gap</span>' +
             '<span>Lap time</span>' +
+            '<span></span>' + /* lap-sec spacer */
             '<span>S1</span>' +
             '<span>S2</span>' +
             '<span>S3</span>' +
