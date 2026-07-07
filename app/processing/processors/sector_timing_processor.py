@@ -99,25 +99,23 @@ class SectorTimingProcessor(Processor):
         keying them off _display_lap left a whole first sector on the PREVIOUS lap's
         class. (user 2026-07-07)"""
         st = self._status.get(num)
-        if st in ("RET", "STOP", "DSQ", "ELIMINATED"):
-            return ("blank", "blank")                 # retired / eliminated → clear both
+        if st in ("DSQ", "ELIMINATED"):
+            return ("blank", "blank")                 # out of contention → clear both
+        if st in ("RET", "STOP"):
+            return ("white", "white")                 # retired / stopped → dimmed white
         sector_mode, _ = self._suppresses(num, self._display_lap.get(num))
         _, mini_mode = self._suppresses(num, self._mini_display_lap.get(num))
         return (sector_mode, mini_mode)
 
     def _suppresses(self, num: str, lap: Any):
-        """(sector_mode, mini_mode) for the classification of `lap`. Slow / out /
-        post-chequered laps → 'white' (shown dimmed, not cleared); in-laps → 'blank'.
-        The post-chequered slow-down lap is classified SLOW, so this covers FINISHED
-        too: the finishing lap keeps its class, the slow-down lap is SLOW."""
+        """(sector_mode, mini_mode) for the classification of `lap`. Every
+        non-representative lap — out / in / cool-down / post-chequered — shows dimmed
+        white (not cleared). The post-chequered slow-down lap is classified SLOW, so
+        this covers FINISHED too: the finishing lap keeps its class, the slow-down
+        lap is SLOW."""
         dcls = self._cls_lap.get(num, {}).get(lap)
-        if dcls == "CHECKERED":
-            return ("white", "white")                 # post-chequered slow-down lap (all sessions)
-        if not self._is_race:
-            if dcls == "PIT":
-                return ("blank", "blank")             # in-lap → clear
-            if dcls in ("OUT", "SLOW"):
-                return ("white", "white")             # out / cool-down → dimmed white
+        if dcls in ("OUT", "PIT", "SLOW", "CHECKERED"):
+            return ("white", "white")                 # out / in / cool-down / post-flag → dimmed white
         return (None, None)
 
     def _handle_part(self, data: Any, clock_time: datetime) -> None:

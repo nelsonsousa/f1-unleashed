@@ -153,13 +153,14 @@ class PQPaceProcessor(Processor):
         # any lap; FINISHED is NOT here — the finishing (last competitive) lap keeps
         # its time and only the slow-down lap after the flag blanks, which the
         # out/in/slow classification below already handles. (ybTVoVep / user)
-        if self._status.get(num) in ("RET", "STOP", "DSQ", "ELIMINATED"):
-            return "blank"                          # retired / eliminated → cleared
+        st = self._status.get(num)
+        if st in ("DSQ", "ELIMINATED"):
+            return "blank"                          # out of contention → cleared
+        if st in ("RET", "STOP"):
+            return "white"                          # retired / stopped → dimmed white
         cls = self._cls.get(num, {}).get(last["lap"])
-        if cls == "PIT":
-            return "blank"                          # in-lap → cleared (matches blank mini)
-        if cls in ("OUT", "SLOW", "CHECKERED"):
-            return "white"                          # slow / out / post-flag → shown dimmed (matches white mini)
+        if cls in ("OUT", "PIT", "SLOW", "CHECKERED"):
+            return "white"                          # out / in / slow / post-flag → dimmed white (matches white mini)
         if self._ref_ms is None:
             return "white"
         ms = last["ms"]
