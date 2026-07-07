@@ -60,6 +60,7 @@ class SectorTimingProcessor(Processor):
         # emit so the layout is fixed-length and the client render is
         # width-invariant (no jitter as segments arrive within a lap).
         self._seg_counts: list[int] = [0, 0, 0]
+        self._emitted_lap: dict[str, Any] = {}    # dedup for driverSectorLap
 
     def subscribe(self) -> None:
         self._bus.on("TimingData", self._handle)
@@ -199,6 +200,14 @@ class SectorTimingProcessor(Processor):
                 self._emit(num, clock_time)
 
     def _emit(self, num: str, clock_time: datetime) -> None:
+        # Publish the lap the shown sector TIMES belong to (the display lap) so
+        # downstream same-lap references (race sector/lap colours) key off it, not
+        # currentLap — which runs one ahead of the sticky sectors at the S/F
+        # boundary. (card FlZTMf2u)
+        dl = self._display_lap.get(num)
+        if self._emitted_lap.get(num) != dl:
+            self._emitted_lap[num] = dl
+            self._bus.emit(f"driverSectorLap:{num}", dl, clock_time)
         sec = self._sectors[num]
         sector_mode, mini_mode = self._suppress_mode(num)
         if sector_mode == "blank":
