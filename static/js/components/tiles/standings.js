@@ -688,12 +688,8 @@
     function bestLapCell(num) {
         const e = state.driverData[num] || {};
         const t = state.timing[num] || {};
-        // Don't surface an out/in/stopped lap as a "best lap" (can happen
-        // when it's the only completed lap and F1 flags it personal-best).
-        const bt = lapTypeAt(num, e.bestLapNum);
-        if (bt === 'OUT' || bt === 'PIT' || bt === 'STOP') {
-            return `<span class="lap-time lap-empty">--:--.---</span>`;
-        }
+        // (Out/in/stopped-lap best suppression removed — client renders the
+        // server's bestLap as-is; suppression moves server-side. ybTVoVep)
         const txt = e.bestLap || t.bestLapTime || '';
         let cls = 'lap-empty';
         if (txt) {
@@ -777,14 +773,8 @@
     }
 
     function lastLapCell(num) {
-        if (isRetired(num)) {
-            return `<span class="lap-time lap-last lap-empty">--:--.---</span>`;
-        }
-        // Quali: an eliminated driver keeps their best lap but the last-lap cell
-        // is cleared — they're done running in the part they were knocked out of.
-        if (!IS_RACE && state.eliminated && state.eliminated.has(num)) {
-            return `<span class="lap-time lap-last lap-empty">--:--.---</span>`;
-        }
+        // (Retired + eliminated blanking removed — client renders the server's
+        // last-lap as-is; suppression moves server-side. ybTVoVep)
         // Spec depends on session type:
         //   - PRACTICE / QUALIFYING: show the actual lap time including
         //     in-pit and out laps (card 81); cool-down (SLOW) falls back to
@@ -857,7 +847,7 @@
     }
 
     function sectorCells(num) {
-        if (isRetired(num)) return emptySectorCells();
+        // (Retired blanking removed — client renders server sectors as-is. ybTVoVep)
         // Race: always show the most recent sectors, including IN/OUT
         // laps (= every lap matters for race-engineer view). P/Q: only
         // show prev FAST sectors, hide PIT/OUT/IN/COOL.
@@ -922,26 +912,14 @@
     }
 
     function segmentBarsCell(num) {
-        if (isRetired(num)) return emptySegmentsHtml();
-        // Driver has taken the chequered flag — they're done; mini-
-        // sector activity no longer applies. Race + Q both: once
-        // they've crossed S/F under chequered, blank the bars.
-        if (isFinished(num)) {
-            return emptySegmentsHtml();
-        }
-        // Mini-sectors render coloured only for the live fast lap. On a
-        // cool / out / abort lap (or before any data arrives) we draw all
-        // bars uncoloured so the row doesn't pretend the driver is on a
-        // push. Layout still draws the same number of bars so column
-        // widths stay aligned. Race-mode bypass: ALWAYS show colours in
-        // race (= every lap is a race lap from the engineer's view).
-        const showColours = IS_RACE || !isSlowLapClass(num);
+        // (Retired/finished blanking + slow-lap uncolour removed — client renders
+        // the server's segment data as-is; suppression moves server-side. ybTVoVep)
         const t = state.timing[num] || {};
-        let sectors = showColours ? (t.sectors || []) : [];
+        let sectors = t.sectors || [];
         // Race-mode merge: same as sectorCells — fall back to the
         // previous lap's segment list per-slot so S2/S3 mini-sector
         // bars don't blank out at every new-lap reset.
-        if (IS_RACE && showColours) {
+        if (IS_RACE) {
             const prevAny = state.prevLap[num];
             if (prevAny && prevAny.sectors) {
                 sectors = [0, 1, 2].map((i) => {
