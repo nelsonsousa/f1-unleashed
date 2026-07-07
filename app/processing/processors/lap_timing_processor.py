@@ -94,6 +94,7 @@ class LapTimingProcessor(Processor):
         self._sticky_ll: dict[str, dict] = {}
         self._part_fastest_ms: Optional[int] = None          # current-part global fastest → purple; reset per part
         self._best_colour: dict[str, Optional[str]] = {}     # num -> last emitted best-lap colour (atcmh1cL dedup)
+        self._frozen_best: dict[str, dict] = {}              # outgoing-part bests, for boundary-knocked drivers
         self._current_race_lap: Optional[int] = None
         self._total_race_laps: Optional[int] = None
 
@@ -114,6 +115,11 @@ class LapTimingProcessor(Processor):
         if part is None or part == self._part:
             return
         self._part = part
+        # Snapshot the outgoing part's bests: a driver knocked out AT this boundary
+        # (KnockedOut arrives in the same message, AFTER this reset) has their best
+        # restored from here (the deletion-corrected _best, not the stale
+        # _session_best) so it stays shown white (item 7).
+        self._frozen_best = dict(self._best)
         # Eliminated drivers keep the best lap from the part they were knocked
         # out in (it stays visible); everyone still in has their displayed best
         # cleared for the new part (card US3eJeKz).
@@ -162,6 +168,7 @@ class LapTimingProcessor(Processor):
         # first-lap PB flag — the lap then reads as un-flagged and its best is lost
         # (and with it overallBestLap, which the SLOW classifier needs).
         pos_changed = False
+        newly_knocked = []
         for num, d in lines.items():
             if isinstance(d, dict):
                 self._capture_flags(num, d)
@@ -169,6 +176,8 @@ class LapTimingProcessor(Processor):
                     kv = bool(d["KnockedOut"])
                     if kv != self._knocked.get(num):
                         pos_changed = True   # zone membership shifts
+                        if kv:
+                            newly_knocked.append(num)
                     self._knocked[num] = kv
                 if "Position" in d:
                     try:
@@ -187,9 +196,18 @@ class LapTimingProcessor(Processor):
         for num in changed:
             self._emit(num, clock_time)
         # Quali zone-red on the best lap depends on positions/KnockedOut — recolour
-        # the field when they shift a driver in/out of the drop zone.
+        # the field when they shift a driver in/out of the drop zone. Newly-knocked
+        # drivers are excluded from the recompute (frozen), so emit their white
+        # explicitly (item 7).
         if pos_changed and self._is_quali:
             self._recompute_best_colours(clock_time)
+            for num in newly_knocked:
+                # Knocked out AT the part boundary → the part reset (fires first, in
+                # the same message) cleared their best; restore the snapshot so it
+                # stays shown white (item 7).
+                if num not in self._best and num in self._frozen_best:
+                    self._best[num] = dict(self._frozen_best[num])
+                self._emit_best_colour(num, clock_time)
 
     def _capture_flags(self, num: str, d: dict) -> None:
         """Update the per-driver sticky PersonalFastest/OverallFastest state. The
@@ -371,7 +389,13 @@ class LapTimingProcessor(Processor):
 
     def _compute_best_colour(self, num: str) -> Optional[str]:
         b = self._best.get(num)
-        if not b or self._part_fastest_ms is None:
+        if not b:
+            return None
+        # Quali: eliminated (knocked-out) drivers → white (item 7), regardless of
+        # the reference — their frozen best stays shown but neutral.
+        if self._is_quali and self._knocked.get(num):
+            return "white"
+        if self._part_fastest_ms is None:
             return None
         # Quali: RED is reserved for the elimination zone (regardless of lap time);
         # the Δ scale caps at orange. Practice/race: no zone, full scale incl. red.
