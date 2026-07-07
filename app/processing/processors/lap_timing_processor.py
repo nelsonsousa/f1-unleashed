@@ -73,7 +73,9 @@ class LapTimingProcessor(Processor):
     def __init__(self, bus: SessionMessageBus, session_type: str):
         super().__init__(bus, session_type)
         self._is_race = session_type == "race"   # "race" covers race + sprint
+        self._is_quali = session_type == "qualifying"
         self._started = False
+        self._pos: dict[str, int] = {}                       # num -> Position (quali zone-red)
         self._nol: dict[str, int] = {}                       # num -> current NoL
         self._laps: dict[str, dict[int, dict]] = {}          # num -> {lap -> {time,pb,ob,part}}
         self._lap_part: dict[str, dict[int, Any]] = {}       # num -> {lap -> qualifying part it STARTED in}
@@ -159,11 +161,23 @@ class LapTimingProcessor(Processor):
         # then only re-sends it on change, so gating this until _started drops the
         # first-lap PB flag — the lap then reads as un-flagged and its best is lost
         # (and with it overallBestLap, which the SLOW classifier needs).
+        pos_changed = False
         for num, d in lines.items():
             if isinstance(d, dict):
                 self._capture_flags(num, d)
                 if "KnockedOut" in d:
-                    self._knocked[num] = bool(d["KnockedOut"])
+                    kv = bool(d["KnockedOut"])
+                    if kv != self._knocked.get(num):
+                        pos_changed = True   # zone membership shifts
+                    self._knocked[num] = kv
+                if "Position" in d:
+                    try:
+                        p = int(d["Position"])
+                    except (TypeError, ValueError):
+                        p = None
+                    if p is not None and p != self._pos.get(num):
+                        self._pos[num] = p
+                        pos_changed = True
         if not self._started:    # laps only count once the session has started
             return
         changed = set()
@@ -172,6 +186,10 @@ class LapTimingProcessor(Processor):
                 changed.add(num)
         for num in changed:
             self._emit(num, clock_time)
+        # Quali zone-red on the best lap depends on positions/KnockedOut — recolour
+        # the field when they shift a driver in/out of the drop zone.
+        if pos_changed and self._is_quali:
+            self._recompute_best_colours(clock_time)
 
     def _capture_flags(self, num: str, d: dict) -> None:
         """Update the per-driver sticky PersonalFastest/OverallFastest state. The
@@ -327,8 +345,9 @@ class LapTimingProcessor(Processor):
             self._session_best[num] = {"lap": lap, "time": time, "ms": ms}
 
     # ── Best-lap colour (atcmh1cL) ──
-    def _best_lap_colour(self, delta_ms: int) -> str:
-        """Δ (driver best − current fastest-overall, ms) → colour band."""
+    def _best_lap_colour(self, delta_ms: int, cap_orange: bool = False) -> str:
+        """Δ (driver best − current fastest-overall, ms) → colour band. In quali
+        RED is reserved for the elimination zone, so the scale caps at orange."""
         s = delta_ms / 1000.0
         if s < 0.2:
             return "blue"
@@ -336,17 +355,32 @@ class LapTimingProcessor(Processor):
             return "green"
         if s < 1.0:
             return "yellow"
-        if s < 2.0:
+        if cap_orange or s < 2.0:
             return "orange"
         return "red"
+
+    def _in_zone(self, num: str) -> bool:
+        """Driver is in the knockout drop zone (positional, not yet eliminated).
+        Mirrors driver_gap's cutoff rule — top 16 advance from Q1, top 10 from Q2;
+        no zone in Q3. (Keep in sync with DriverGapProcessor._cutoff_position.)"""
+        cut = 16 if self._part == 1 else 10 if self._part == 2 else None
+        if cut is None or self._knocked.get(num):
+            return False
+        p = self._pos.get(num)
+        return p is not None and p > cut
 
     def _compute_best_colour(self, num: str) -> Optional[str]:
         b = self._best.get(num)
         if not b or self._part_fastest_ms is None:
             return None
+        # Quali: RED is reserved for the elimination zone (regardless of lap time);
+        # the Δ scale caps at orange. Practice/race: no zone, full scale incl. red.
+        if self._is_quali and self._in_zone(num):
+            return "red"
         if b["ms"] <= self._part_fastest_ms:
             return "purple"        # holds the current fastest-overall lap
-        return self._best_lap_colour(b["ms"] - self._part_fastest_ms)
+        return self._best_lap_colour(b["ms"] - self._part_fastest_ms,
+                                     cap_orange=self._is_quali)
 
     def _emit_best_colour(self, num: str, clock_time: datetime) -> None:
         colour = self._compute_best_colour(num)
