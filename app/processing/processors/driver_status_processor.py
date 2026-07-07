@@ -94,7 +94,7 @@ class DriverStatusProcessor(Processor):
         if f.get("inPit"):
             return "PIT"
         if self._finished.get(num):
-            return "FINISHED"
+            return "CHECKERED"   # a new lap started under the chequered flag (below PIT)
         return "TRACK"
 
     def _emit(self, num: str, clock_time: datetime) -> None:

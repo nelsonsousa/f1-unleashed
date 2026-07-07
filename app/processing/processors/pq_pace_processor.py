@@ -155,7 +155,7 @@ class PQPaceProcessor(Processor):
         # out/in/slow classification below already handles. (ybTVoVep / user)
         if self._status.get(num) in ("RET", "STOP", "DSQ", "ELIMINATED"):
             return "blank"
-        if self._cls.get(num, {}).get(last["lap"]) in ("OUT", "PIT", "SLOW"):
+        if self._cls.get(num, {}).get(last["lap"]) in ("OUT", "PIT", "SLOW", "CHECKERED"):
             return "blank"
         if self._ref_ms is None:
             return "white"

@@ -67,9 +67,9 @@
     // (state.finishedDrivers / _prevChequeredCount / markDriverFinishedIfPassive)
     // is superseded and left dead pending cleanup — see issue #26.
     function isFinished(num) {
-        // Server-authoritative: driver_status emits FINISHED once a driver
-        // has taken the chequered flag (race S/F crossing / P-Q first-car).
-        return state.status[num] === 'FINISHED';
+        // Server-authoritative: driver_status emits CHECKERED once a driver
+        // starts a new lap under the chequered flag (race S/F crossing / P-Q first-car).
+        return state.status[num] === 'CHECKERED';
     }
 
     function getTyreSvg(compound, isNew) {

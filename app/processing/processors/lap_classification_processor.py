@@ -117,6 +117,8 @@ class LapClassificationProcessor(Processor):
             return "STOP"
         if d.went_pit:
             return "PIT"
+        if d.last_status == "CHECKERED":
+            return "CHECKERED"   # driverStatus is CHECKERED — a SLOW-type post-flag lap (all sessions)
         if d.went_out:
             return "OUT"
         if self._is_race:
@@ -149,6 +151,10 @@ class LapClassificationProcessor(Processor):
             d.stopped = True; changed = True
         elif status != "STOP" and d.stopped:
             d.stopped = False; changed = True   # STOP revoked
+        # CHECKERED is NOT re-emitted here: it arrives (driver_status runs first) while
+        # cur_lap is still the finishing lap, which must keep its racing class. The next
+        # _start_lap picks up d.last_status == CHECKERED for the lap that starts after
+        # the flag. (user 2026-07-07)
         if changed:
             self._emit(num, d, clock_time)
 
