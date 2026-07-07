@@ -58,6 +58,7 @@ class PQPaceProcessor(Processor):
         self._part: Optional[int] = None
         self._ref_ms: Optional[int] = None
         self._bubble_ms: Optional[int] = None
+        self._status: dict[str, Optional[str]] = {}
         self._colour: dict[str, Optional[str]] = {}   # dedup
 
     def subscribe(self) -> None:
@@ -69,6 +70,12 @@ class PQPaceProcessor(Processor):
             self._on_laps(topic.split(":", 1)[1], data, clock_time)
         elif topic.startswith("driverLapClassification:"):
             self._on_cls(topic.split(":", 1)[1], data, clock_time)
+        elif topic.startswith("driverStatus:"):
+            num = topic.split(":", 1)[1]
+            st = data if isinstance(data, str) else None
+            if st != self._status.get(num):
+                self._status[num] = st
+                self._emit(num, clock_time)
         elif topic == "qualifyingPart":
             self._on_part(data, clock_time)
 
@@ -142,8 +149,12 @@ class PQPaceProcessor(Processor):
         last = self._last.get(num)
         if not last:
             return None
-        if self._cls.get(num, {}).get(last["lap"]) in NON_REPRESENTATIVE:
-            return "white"                          # in/out/stop lap
+        # Suppression → "blank" (client blanks the value). Retired/finished/
+        # eliminated (all), and P/Q out/in/slow laps. (ybTVoVep)
+        if self._status.get(num) in ("RET", "STOP", "DSQ", "FINISHED", "ELIMINATED"):
+            return "blank"
+        if self._cls.get(num, {}).get(last["lap"]) in ("OUT", "PIT", "SLOW"):
+            return "blank"
         if self._ref_ms is None:
             return "white"
         ms = last["ms"]
