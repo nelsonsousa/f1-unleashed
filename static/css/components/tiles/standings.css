@@ -82,7 +82,7 @@
      * Order: last lap before sectors before mini-sectors.
      * color-end + tla-end mirror the row identifier at the right edge.
      * laps-end-spacer = breathing room between Laps and the row-end TLA. */
-    grid-template-columns: 3fr 14px 5fr 4fr 11fr 3fr 6fr 9fr 4fr 6fr 6fr 6fr 13fr 17fr 4fr 2fr 14px 5fr;
+    grid-template-columns: 3fr 14px 5fr 4fr 11fr 3fr 6fr 9fr 2fr 6fr 6fr 6fr 13fr 19fr 4fr 2fr 14px 5fr;
 }
 
 .driver-list.standings-qualifying .driver-row,
