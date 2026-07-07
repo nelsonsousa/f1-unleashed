@@ -1,14 +1,14 @@
 """
 Driver Status Processor — single per-driver status string.
 
-Subscribes to: TimingData, trackStatus (race), RaceControlMessages (practice/
-               qualifying), qualifyingPart (qualifying)
+Subscribes to: TimingData, trackStatus (all sessions), RaceControlMessages,
+               qualifyingPart (qualifying)
 Emits: driverStatus:{num}
-    "DSQ" | "ELIMINATED" | "RET" | "STOP" | "OUT" | "PIT" | "FINISHED" | "TRACK"
+    "DSQ" | "ELIMINATED" | "RET" | "STOP" | "OUT" | "PIT" | "CHECKERED" | "TRACK"
 
 Priority (highest wins):
 
-    DSQ > ELIMINATED > RET > STOP > OUT > PIT > FINISHED > TRACK
+    DSQ > ELIMINATED > RET > STOP > OUT > PIT > CHECKERED > TRACK
 
 DSQ is a latch set by a black flag — delivered (2024 São Paulo) as an
 "FIA STEWARDS: BLACK FLAG FOR CAR N" text RCM (also accept a Flag="BLACK"
@@ -16,17 +16,18 @@ driver-flag form); NOT black-and-white (that's a track-limits warning). It
 outranks everything. ELIMINATED is the qualifying knockout (KnockedOut), which is
 REVERSIBLE (a reinstated driver is un-knocked). RET/STOP/OUT/PIT come from TimingData
 booleans (Retired, Stopped, PitOut, InPit), each set when its field is True and
-cleared when False. FINISHED is a latched flag set when the driver takes the
-chequered flag — it sits BELOW PIT, so a driver who finishes and then pits
-shows PIT. TRACK = no flag active (rendered as an empty badge).
+cleared when False. CHECKERED is a latched flag set once a driver starts a new lap
+under the chequered — it sits BELOW PIT, so a driver who finishes and then pits
+shows PIT ("if InPit, status is Pit anyway"). TRACK = no flag active.
 
-Finished detection (moved here from the standings processor):
-  - Race: the chequered (trackStatus "finished") marks the leader (P1) — they
-    have just crossed S/F. Every other driver finishes as their next S/F
-    crossing (NumberOfLaps increment) arrives.
-  - Practice/qualifying: the "FIRST CAR TO TAKE THE FLAG - CAR N" RCM marks car
-    N; everyone else finishes on their next S/F crossing or as they pit. Reset
-    per qualifying segment (each Q part has its own chequered).
+Chequered detection (trackStatus "finished" for ALL sessions — SessionStatus
+=Finished, which fires per Q part):
+  - Race: the flag falls AS the leader crosses S/F, so P1 finishes immediately;
+    everyone else on their next S/F crossing (NumberOfLaps increment).
+  - Practice/qualifying: the flag falls on TIME, before anyone reaches S/F — every
+    running driver finishes on their next crossing (or now if already in the pits).
+    This replaces the lagging "FIRST CAR TO TAKE THE FLAG" RCM, which arrived after
+    several cars had already crossed. Reset per qualifying segment.
 """
 
 import re
@@ -44,8 +45,6 @@ _FIELDS = (
     ("InPit", "inPit"),
 )
 
-# Practice/qualifying session end: the first car to cross under the chequered.
-_FIRST_FLAG_RX = re.compile(r"FIRST CAR TO TAKE THE FLAG.*?CAR\s+(\d+)", re.I)
 _CAR_RX = re.compile(r"CAR\s*(\d+)", re.I)
 
 
@@ -73,8 +72,10 @@ class DriverStatusProcessor(Processor):
         # RaceControlMessages: BLACK flag -> DSQ (all session types), plus the
         # practice/qualifying chequered ("FIRST CAR TO TAKE THE FLAG").
         self._bus.on("RaceControlMessages", self._handle_rcm)
-        if self._is_race:
-            self._bus.on("trackStatus", self._handle_track_status)
+        # Chequered is keyed off trackStatus (SessionStatus=Finished → "finished")
+        # for ALL session types — for P/Q it fires per part, before the lagging
+        # "FIRST CAR TO TAKE THE FLAG" RCM. (user 2026-07-07)
+        self._bus.on("trackStatus", self._handle_track_status)
         if self._is_qualifying:
             self._bus.on("qualifyingPart", self._handle_qualifying_part)
 
@@ -168,24 +169,36 @@ class DriverStatusProcessor(Processor):
             return True
         return False
 
-    # ── Race: chequered via track status ──
+    # ── Chequered via track status (all session types) ──
     def _handle_track_status(self, data: Any, clock_time: datetime) -> None:
         if (not isinstance(data, dict) or data.get("status") != "finished"
                 or self._chequered):
             return
         self._chequered = True
-        running = sorted(
-            (n for n, p in self._pos.items() if p < 99),
-            key=lambda n: self._pos[n],
-        )
-        if not running:
-            return
-        leader = running[0]
-        self._finished[leader] = True        # P1 just crossed S/F
-        for n in running[1:]:
-            self._lap_at_chequered[n] = self._nol.get(n, 0)
-        for n in running:
-            self._emit(n, clock_time)
+        if self._is_race:
+            # The race flag falls AS the leader crosses S/F (SessionStatus=Finished),
+            # so P1 has finished now; everyone else takes it on their next crossing.
+            running = sorted(
+                (n for n, p in self._pos.items() if p < 99),
+                key=lambda n: self._pos[n],
+            )
+            if not running:
+                return
+            self._finished[running[0]] = True        # P1 just crossed S/F
+            for n in running[1:]:
+                self._lap_at_chequered[n] = self._nol.get(n, 0)
+            for n in running:
+                self._emit(n, clock_time)
+        else:
+            # P/Q: the flag falls on TIME, well before anyone reaches S/F — nobody
+            # has finished yet. Every running driver takes the chequered on their
+            # NEXT S/F crossing (or now if already in the pits), via _maybe_finish.
+            for n, f in self._flags.items():
+                self._lap_at_chequered[n] = self._nol.get(n, 0)
+                if f.get("inPit"):
+                    self._finished[n] = True
+            for n in list(self._flags):
+                self._emit(n, clock_time)
 
     # ── RCM: BLACK-flag DSQ (all sessions) + P/Q chequered ──
     @staticmethod
@@ -221,24 +234,7 @@ class DriverStatusProcessor(Processor):
                     if n not in self._dsq:
                         self._dsq.add(n)
                         dsq_changed.add(n)
-            # Practice/qualifying chequered — first car to take the flag.
-            if not self._is_race and not self._chequered:
-                m = _FIRST_FLAG_RX.search(text)
-                if m:
-                    self._on_first_flag(m.group(1), clock_time)
         for n in dsq_changed:
-            self._emit(n, clock_time)
-
-    def _on_first_flag(self, num: str, clock_time: datetime) -> None:
-        self._chequered = True
-        self._finished[num] = True
-        for n, f in self._flags.items():
-            if n == num:
-                continue
-            self._lap_at_chequered[n] = self._nol.get(n, 0)
-            if f.get("inPit"):
-                self._finished[n] = True
-        for n in set(self._flags) | {num}:
             self._emit(n, clock_time)
 
     # ── Qualifying: reset finished state per segment ──
