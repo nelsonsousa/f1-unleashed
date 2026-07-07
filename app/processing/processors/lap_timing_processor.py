@@ -221,6 +221,14 @@ class LapTimingProcessor(Processor):
             # without re-applying the flags here the fastest lap is never counted
             # as best (its driver shows no best + purple lands on the next car).
             changed |= self._apply_late_flags(num, clock_time)
+        # BestLapTime is F1's authoritative best. A PRESENT value is a NEW value —
+        # even "" — not a sticky carry-forward (only a MISSING key is sticky).
+        # Value="" = best DELETED (track limits); a present SLOWER value = demotion
+        # to a surviving lap. This corrects the flag-derived best for what the
+        # sticky PersonalFastest flag can't express (card atcmh1cL).
+        bt = d.get("BestLapTime")
+        if isinstance(bt, dict) and "Value" in bt:
+            changed |= self._reconcile_best(num, bt, clock_time)
         return changed
 
     def _advance(self, num: str, new_nol: int, bundled_ll: Optional[dict],
@@ -357,6 +365,43 @@ class LapTimingProcessor(Processor):
             if self._part is not None and self._knocked.get(num):
                 continue
             self._emit_best_colour(num, clock_time)
+
+    def _reconcile_best(self, num: str, bt: dict, clock_time: datetime) -> bool:
+        """Correct the best against F1's authoritative BestLapTime for what the
+        sticky PersonalFastest flag can't express. Value="" → the best was DELETED
+        (track limits); a present value SLOWER than our stored best → a demotion to
+        a surviving lap. Improvements already arrive via the PersonalFastest path,
+        so a faster-or-equal value is a no-op here."""
+        v = bt.get("Value")
+        cur = self._best.get(num)
+        if v == "" or v is None:
+            if cur is None:
+                return False
+            del self._best[num]                       # best deleted
+            self._emit_best_colour(num, clock_time)   # → colour null (clears cell)
+            self._reprice(clock_time)
+            return True
+        ms = _parse_ms(v)
+        if ms is None or cur is None or ms <= cur["ms"]:
+            return False                              # improvement/equal handled elsewhere
+        self._best[num] = {"lap": bt.get("Lap"), "time": v, "ms": ms, "part": self._part}
+        self._reprice(clock_time)
+        return True
+
+    def _reprice(self, clock_time: datetime) -> None:
+        """Recompute the part reference from the current active bests and recolour.
+        A deletion/demotion can RAISE the reference, which the incremental
+        _update_best path (only ever lowers it) cannot do."""
+        active = {n: b["ms"] for n, b in self._best.items()
+                  if not (self._part is not None and self._knocked.get(n))}
+        new_ref = min(active.values()) if active else None
+        if new_ref != self._part_fastest_ms:
+            self._part_fastest_ms = new_ref
+            if new_ref is not None:
+                holder = min(active, key=active.get)
+                b = self._best[holder]
+                self._bus.emit("fastestLap", {"num": holder, "lap": b["lap"], "time": b["time"]}, clock_time)
+        self._recompute_best_colours(clock_time)
 
     def _apply_late_flags(self, num: str, clock_time: datetime) -> bool:
         """A standalone PersonalFastest/OverallFastest=True update (no lap-time
