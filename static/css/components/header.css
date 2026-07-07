@@ -31,8 +31,8 @@
     min-width: 0;
 }
 
-/* Neutral bordered pill, sized + framed to match the track-status widget so the
-   two read as a matching pair (emgy6Lmo). */
+/* Solid red pill with white text so the session badge pops, sized + framed to
+   match the track-status widget so the two read as a matching pair (emgy6Lmo). */
 .session-badge {
     font-size: 15px;
     height: 38px;
@@ -40,10 +40,10 @@
     box-sizing: border-box;
     display: inline-flex;
     align-items: center;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid var(--text-secondary);
+    background: var(--accent);
+    border: 1px solid var(--accent);
     border-radius: 4px;
-    color: var(--text-primary);
+    color: #ffffff;
     font-weight: 600;
     text-transform: uppercase;
     white-space: nowrap;
@@ -779,9 +779,8 @@
 }
 .scrubber-live:hover { background: #ff2020; }
 
-/* Live mode */
+/* Live mode — same red base, pulsing. */
 .session-badge.live {
-    background: var(--accent);
     animation: pulse 2s infinite;
 }
 
