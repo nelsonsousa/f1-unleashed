@@ -101,13 +101,13 @@ class SectorTimingProcessor(Processor):
         # covers FINISHED too: the finishing lap keeps its class, the slow-down lap
         # is SLOW. (user 2026-07-07)
         dcls = self._cls_lap.get(num, {}).get(self._display_lap.get(num))
+        if dcls == "CHECKERED":
+            return (True, "white")                    # post-chequered slow-down lap (all sessions)
         if not self._is_race:
             if dcls == "PIT":
                 return (True, "blank")                # in-lap → blank all mini
             if dcls in ("OUT", "SLOW"):
                 return (True, "white")                # out / cool-down → painted segments white
-        elif st == "FINISHED" and dcls in ("OUT", "PIT", "SLOW"):
-            return (True, "white")                    # race: only a FINISHED driver's slow-down lap
         return (False, None)
 
     def _handle_part(self, data: Any, clock_time: datetime) -> None:

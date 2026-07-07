@@ -159,14 +159,12 @@ class RacePaceProcessor(Processor):
         last = self._last.get(num)
         if not last:
             return
-        st = self._status.get(num)
         cls = self._cls.get(num, {}).get(last["lap"])
-        if st in ("RET", "STOP", "DSQ"):
+        if self._status.get(num) in ("RET", "STOP", "DSQ"):
             colour = "blank"     # retired → blank last-lap (client) (ybTVoVep)
-        elif st == "FINISHED" and cls in ("SLOW", "PIT", "OUT", "STOP"):
-            # A finished driver's slow-down/in lap after the flag → blank (the
-            # post-chequered lap is classified SLOW). The finishing lap is a normal
-            # racing lap, so it bands below. (user 2026-07-07)
+        elif cls == "CHECKERED":
+            # Post-chequered slow-down lap → blank last-lap. The finishing lap is a
+            # normal racing lap, so it bands below. (user 2026-07-07)
             colour = "blank"
         elif self._ref_ms is None:
             colour = "white"
