@@ -149,9 +149,11 @@ class PQPaceProcessor(Processor):
         last = self._last.get(num)
         if not last:
             return None
-        # Suppression → "blank" (client blanks the value). Retired/finished/
-        # eliminated (all), and P/Q out/in/slow laps. (ybTVoVep)
-        if self._status.get(num) in ("RET", "STOP", "DSQ", "FINISHED", "ELIMINATED"):
+        # Suppression → "blank" (client blanks the value). Retired/eliminated blank
+        # any lap; FINISHED is NOT here — the finishing (last competitive) lap keeps
+        # its time and only the slow-down lap after the flag blanks, which the
+        # out/in/slow classification below already handles. (ybTVoVep / user)
+        if self._status.get(num) in ("RET", "STOP", "DSQ", "ELIMINATED"):
             return "blank"
         if self._cls.get(num, {}).get(last["lap"]) in ("OUT", "PIT", "SLOW"):
             return "blank"
