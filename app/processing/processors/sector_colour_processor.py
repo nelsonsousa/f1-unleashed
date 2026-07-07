@@ -45,7 +45,8 @@ class SectorColourProcessor(Processor):
         super().__init__(bus, session_type)
         self._is_race = session_type == "race"
         self._sectors: dict[str, list] = {}          # num -> [ms|None x3]
-        self._lap: dict[str, int] = {}               # num -> current lap
+        self._lap: dict[str, int] = {}               # num -> currentLap (fallback)
+        self._display_lap: dict[str, int] = {}       # num -> lap the shown sectors belong to
         self._status: dict[str, Optional[str]] = {}
         self._best_sec: list = [None, None, None]     # P/Q best overall per sector
         self._leader: Optional[str] = None
@@ -61,6 +62,10 @@ class SectorColourProcessor(Processor):
             self._on_sectors(topic.split(":", 1)[1], data, clock_time)
         elif topic.startswith("driverLaps:"):
             self._on_laps(topic.split(":", 1)[1], data)
+        elif topic.startswith("driverSectorLap:"):
+            num = topic.split(":", 1)[1]
+            if isinstance(data, int):
+                self._display_lap[num] = data
         elif topic.startswith("driverStatus:"):
             self._on_status(topic.split(":", 1)[1], data, clock_time)
         elif topic == "standings":
@@ -71,6 +76,12 @@ class SectorColourProcessor(Processor):
     def _on_laps(self, num: str, data: Any) -> None:
         if isinstance(data, dict) and data.get("currentLap") is not None:
             self._lap[num] = data["currentLap"]
+
+    def _seclap(self, num: str):
+        """Lap the SHOWN sectors belong to (from sector_timing's display lap) — the
+        reference must key off this, not currentLap, which runs one ahead of the
+        sticky sectors at the S/F boundary. Falls back to currentLap pre-first-emit."""
+        return self._display_lap.get(num, self._lap.get(num))
 
     def _on_status(self, num: str, data: Any, clock_time: datetime) -> None:
         st = data if isinstance(data, str) else None
@@ -107,7 +118,7 @@ class SectorColourProcessor(Processor):
         recompute_all = False
         if self._is_race:
             if num == self._leader:
-                lap = self._lap.get(num)
+                lap = self._seclap(num)
                 if lap is not None:
                     ls = self._leader_sec.setdefault(lap, [None, None, None])
                     for i in range(3):
@@ -151,7 +162,7 @@ class SectorColourProcessor(Processor):
             if v is None:
                 continue
             if self._is_race:
-                lap = self._lap.get(num)
+                lap = self._seclap(num)
                 ref = self._leader_sec.get(lap, [None, None, None])[i] if lap is not None else None
             else:
                 ref = self._best_sec[i]
