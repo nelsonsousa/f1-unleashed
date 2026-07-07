@@ -50,17 +50,20 @@ def _fmt_gap(ms: int) -> str:
     return f"{'+' if ms >= 0 else '-'}{abs(ms) / 1000:.3f}"
 
 
-def _gap_band(secs: float) -> str:
-    """Δ-to-reference (s, positive) → P/Q gap colour band, same thresholds as the
-    best-lap bands. RED is reserved for the elimination zone (never a band here),
-    so the scale caps at orange. (card atcmh1cL)"""
+def _gap_band(secs: float, cap_orange: bool = False) -> str:
+    """Δ-to-reference (s, positive) → gap colour band, same thresholds as the
+    best-lap bands. In QUALIFYING red is reserved for the elimination zone, so the
+    scale caps at orange; in PRACTICE (no knockout) the full scale applies and
+    red = >2s. (card atcmh1cL)"""
     if secs < 0.2:
         return "blue"
     if secs < 0.5:
         return "green"
     if secs < 1.0:
         return "yellow"
-    return "orange"
+    if cap_orange or secs < 2.0:
+        return "orange"
+    return "red"
 
 
 def _secs(s: Any) -> Optional[float]:
@@ -400,8 +403,8 @@ class DriverGapProcessor(Processor):
                 gap = (_fmt_gap(bms - cutoff_best_ms)
                        if bms is not None and cutoff_best_ms is not None else "")
             else:
-                # Safe driver → Δ-to-P1 band (blue/green/yellow/orange, no red).
+                # Safe driver → Δ-to-P1 band capped at orange (red = KO zone only).
                 gap = self._gap_p1.get(num, "")
                 gs = _secs(gap)
-                band = _gap_band(gs) if gs is not None and gs > 0 else ""
+                band = _gap_band(gs, cap_orange=True) if gs is not None and gs > 0 else ""
             self._emit_gap(num, gap, in_zone, clock_time, band=band)
