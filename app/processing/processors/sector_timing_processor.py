@@ -51,6 +51,7 @@ class SectorTimingProcessor(Processor):
         self._sectors: dict[str, list] = {}
         self._status: dict[str, Optional[str]] = {}   # num -> driverStatus
         self._cls: dict[str, Optional[str]] = {}       # num -> last lap classification
+        self._finished_rolled: dict[str, bool] = {}    # finished driver has rolled into the slow-down lap
         self._part: Optional[int] = None   # current qualifying part (reset trigger)
         # Max segment count seen per sector (track-wide — all cars share the
         # mini-sector layout). Mini-sector arrays are padded to this on every
@@ -90,7 +91,10 @@ class SectorTimingProcessor(Processor):
         if st in ("RET", "STOP", "DSQ", "ELIMINATED"):
             return (True, "blank")                    # retired / eliminated → blank both
         if st == "FINISHED":
-            return (True, "white")                    # chequered → blank sectors, white mini
+            # White override applies to laps AFTER the flag — the last competitive
+            # (finishing) lap keeps its colours until the driver rolls into the
+            # slow-down lap. (user 2026-07-07)
+            return (True, "white") if self._finished_rolled.get(num) else (False, None)
         if not self._is_race:
             cls = self._cls.get(num)
             if st == "PIT" or cls == "PIT":
@@ -137,13 +141,25 @@ class SectorTimingProcessor(Processor):
                     s = sectors[i]
                     if "Value" in sec:
                         if sec["Value"]:
-                            s["value"] = sec["Value"]
+                            # Out/slow/in laps (P/Q): don't STORE the sector time —
+                            # it's blanked and must not carry (sticky) into the lap
+                            # that starts after it. (user 2026-07-07)
+                            if (not self._is_race
+                                    and (self._status.get(num) in ("OUT", "PIT")
+                                         or self._cls.get(num) in ("OUT", "PIT", "SLOW"))):
+                                s["value"] = None
+                            else:
+                                s["value"] = sec["Value"]
                         else:
                             # Explicit clear (lap rollover) — reset this sector.
                             s["value"] = None
                             s["overallFastest"] = False
                             s["personalFastest"] = False
                             s["segments"] = []
+                            # A finished driver rolling into the slow-down lap →
+                            # the white override now applies (user 2026-07-07).
+                            if self._status.get(num) == "FINISHED":
+                                self._finished_rolled[num] = True
                         changed = True
                     if "OverallFastest" in sec:
                         s["overallFastest"] = bool(sec["OverallFastest"]); changed = True

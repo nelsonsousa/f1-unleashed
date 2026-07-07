@@ -298,7 +298,7 @@
 .seg-yellow { background: #ffcc00; }
 .seg-green { background: #00ff88; }
 .seg-purple { background: #cc66ff; }
-.seg-white { background: #ffffff; }
+.seg-white { background: #ffffff; opacity: 0.5; }
 
 .seg-spacer {
     width: 4px;
