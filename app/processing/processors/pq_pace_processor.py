@@ -154,9 +154,12 @@ class PQPaceProcessor(Processor):
         # its time and only the slow-down lap after the flag blanks, which the
         # out/in/slow classification below already handles. (ybTVoVep / user)
         if self._status.get(num) in ("RET", "STOP", "DSQ", "ELIMINATED"):
-            return "blank"
-        if self._cls.get(num, {}).get(last["lap"]) in ("OUT", "PIT", "SLOW", "CHECKERED"):
-            return "blank"
+            return "blank"                          # retired / eliminated → cleared
+        cls = self._cls.get(num, {}).get(last["lap"])
+        if cls == "PIT":
+            return "blank"                          # in-lap → cleared (matches blank mini)
+        if cls in ("OUT", "SLOW", "CHECKERED"):
+            return "white"                          # slow / out / post-flag → shown dimmed (matches white mini)
         if self._ref_ms is None:
             return "white"
         ms = last["ms"]

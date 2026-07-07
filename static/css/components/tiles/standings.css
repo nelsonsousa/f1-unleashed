@@ -211,7 +211,7 @@
 .lap-time.band-red,    .sector-time.band-red,    .gap.band-red    { color: #ff5555; }
 
 /* Race "current pace" bands — last lap vs the leader's reference lap. */
-.lap-time.lap-pace-white  { color: #ffffff; }
+.lap-time.lap-pace-white  { color: #ffffff; opacity: 0.5; }   /* slow / out / post-flag lap — dimmed, like .seg-white */
 .lap-time.lap-pace-purple { color: #cc66ff; }
 .lap-time.lap-pace-blue   { color: #3399ff; }
 .lap-time.lap-pace-green  { color: #00ff88; }
@@ -273,7 +273,7 @@
 .sector-blue { color: #33ccff; }
 .sector-orange { color: #ff9933; }
 .sector-red { color: #ff5555; }
-.sector-white { color: #ffffff; }
+.sector-white { color: #ffffff; opacity: 0.5; }   /* slow / out / post-flag lap — dimmed, like .seg-white */
 
 /* Mini-segments — bars 80% of the driver-colour stripe height (24px×0.8 ≈ 19px),
  * centred vertically inside the row, with breathing room on both sides

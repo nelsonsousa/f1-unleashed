@@ -91,32 +91,34 @@ class SectorTimingProcessor(Processor):
                 self._current_lap[num] = data["currentLap"]
 
     def _suppress_mode(self, num: str):
-        """(blank_sectors, mini_mode) for the driver's current suppression state.
-        Sector TIMES use _display_lap (sticky until the rollover Value="" clear);
-        MINI-SECTORS use _mini_display_lap. Mini-sectors paint from the lap START,
-        well before that clear, so keying them off _display_lap left a whole first
-        sector on the PREVIOUS lap's class (push→white / slow→coloured until
-        sector-1 time landed). (user 2026-07-07)"""
+        """(sector_mode, mini_mode), each None | 'white' | 'blank'. Sector times and
+        mini-sectors share the SAME suppression: 'white' shows the value/segments
+        dimmed white (0.5 opacity), 'blank' clears them. Sector TIMES use
+        _display_lap (sticky until the rollover Value="" clear); MINI-SECTORS use
+        _mini_display_lap — they paint from the lap START, before that clear, so
+        keying them off _display_lap left a whole first sector on the PREVIOUS lap's
+        class. (user 2026-07-07)"""
         st = self._status.get(num)
         if st in ("RET", "STOP", "DSQ", "ELIMINATED"):
-            return (True, "blank")                    # retired / eliminated → blank both
-        blank_sectors, _ = self._suppresses(num, self._display_lap.get(num))
+            return ("blank", "blank")                 # retired / eliminated → clear both
+        sector_mode, _ = self._suppresses(num, self._display_lap.get(num))
         _, mini_mode = self._suppresses(num, self._mini_display_lap.get(num))
-        return (blank_sectors, mini_mode)
+        return (sector_mode, mini_mode)
 
     def _suppresses(self, num: str, lap: Any):
-        """(blank_sectors, mini_mode) for the classification of `lap`. The
-        post-chequered slow-down lap is classified SLOW, so this covers FINISHED
+        """(sector_mode, mini_mode) for the classification of `lap`. Slow / out /
+        post-chequered laps → 'white' (shown dimmed, not cleared); in-laps → 'blank'.
+        The post-chequered slow-down lap is classified SLOW, so this covers FINISHED
         too: the finishing lap keeps its class, the slow-down lap is SLOW."""
         dcls = self._cls_lap.get(num, {}).get(lap)
         if dcls == "CHECKERED":
-            return (True, "white")                    # post-chequered slow-down lap (all sessions)
+            return ("white", "white")                 # post-chequered slow-down lap (all sessions)
         if not self._is_race:
             if dcls == "PIT":
-                return (True, "blank")                # in-lap → blank all mini
+                return ("blank", "blank")             # in-lap → clear
             if dcls in ("OUT", "SLOW"):
-                return (True, "white")                # out / cool-down → painted segments white
-        return (False, None)
+                return ("white", "white")             # out / cool-down → dimmed white
+        return (None, None)
 
     def _handle_part(self, data: Any, clock_time: datetime) -> None:
         """New qualifying part → blank every driver's sector times + mini-sectors
@@ -200,13 +202,14 @@ class SectorTimingProcessor(Processor):
 
     def _emit(self, num: str, clock_time: datetime) -> None:
         sec = self._sectors[num]
-        blank_sectors, mini_mode = self._suppress_mode(num)
-        if blank_sectors:
-            payload = [{"value": None, "overallFastest": False, "personalFastest": False}
+        sector_mode, mini_mode = self._suppress_mode(num)
+        if sector_mode == "blank":
+            payload = [{"value": None, "overallFastest": False, "personalFastest": False, "white": False}
                        for _ in range(3)]
         else:
+            white = sector_mode == "white"            # slow / out / post-flag → value shown dimmed white
             payload = [{"value": s["value"], "overallFastest": s["overallFastest"],
-                        "personalFastest": s["personalFastest"]} for s in sec]
+                        "personalFastest": s["personalFastest"], "white": white} for s in sec]
         self._bus.emit(f"driverSectors:{num}", payload, clock_time)
         # Pad each sector's segments to the max count ever seen for that sector
         # so the array length (and thus the client layout) is fixed; trailing
