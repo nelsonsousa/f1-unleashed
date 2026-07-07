@@ -192,16 +192,9 @@
         return state.status[num] === 'DSQ';
     }
     function renderPenaltyStack(num) {
-        // Retired drivers (RET / STOP / DSQ) — penalties / investigations
-        // no longer matter. Clear the stack from their status badge.
-        if (typeof isRetired === 'function' && isRetired(num)) return '';
-        // Drivers who have taken the chequered flag: any remaining time
-        // penalty is just added to their race time, not a pending action.
-        // Investigations + flags also stop mattering once they're done.
-        // (`finishedDrivers` is populated as each driver crosses S/F under
-        // chequered, not session-wide at the flag — see markDriverFinishedIfPassive
-        // and the driverLastLap handler.)
-        if (isFinished(num)) return '';
+        // (Retired/finished penalty-stack suppression removed — client renders
+        // whatever indicators the server sends; any suppression is a server
+        // decision, TBD. ybTVoVep)
         if (isDriverDSQ(num)) {
             return `<span class="pen-stack"><span class="pen-badge pen-dsq" data-tooltip="DISQUALIFIED">DSQ</span></span>`;
         }
@@ -681,33 +674,9 @@
         return '<span class="gap gap-empty">--.---</span>';
     }
 
-    function isSlowLapClass(num) {
-        // Cool-down (SLOW) only. OUT no longer suppresses — out-lap times and
-        // sectors are shown now (card 81 reverses the old OUT-lap suppression).
-        const cls = state.lapCls[num] && state.lapCls[num].status;
-        return cls === 'SLOW';
-    }
-
-    // Per-lap classification type (from driverLapClassification). Used to
-    // suppress rendering a lap TIME for out/in/stopped laps — those aren't
-    // representative timed laps even though F1 reports a time for them.
-    function lapTypeAt(num, lapNum) {
-        return lapNum != null ? (state.lapClsByLap[num] || {})[lapNum] : undefined;
-    }
-
-    // (chooseLapForDisplay removed — the prev-fast/prev-lap which-value selection
-    // moved server-side; cells render the current lap directly. ybTVoVep)
-
-    // Retired drivers (= status RET / STOP / DSQ): clear last-lap +
-    // sector + mini-sector cells. Race retirements stop accumulating
-    // useful data; the row should keep only persistent identity (= rank,
-    // best lap, tyre history). Applies to race only — in P/Q a "RET"
-    // state during the session isn't a final retirement.
-    function isRetired(num) {
-        if (!IS_RACE) return false;
-        const st = state.status[num];
-        return st === 'RET' || st === 'STOP' || isDriverDSQ(num);
-    }
+    // (isSlowLapClass / lapTypeAt / isRetired removed — client-side suppression
+    // helpers. chooseLapForDisplay also gone earlier. Retired/finished/slow-lap
+    // blanking is a server decision, TBD. ybTVoVep)
 
     function lastLapCell(num) {
         // (Retired + eliminated blanking removed — client renders the server's
