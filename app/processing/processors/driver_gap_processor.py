@@ -50,6 +50,19 @@ def _fmt_gap(ms: int) -> str:
     return f"{'+' if ms >= 0 else '-'}{abs(ms) / 1000:.3f}"
 
 
+def _gap_band(secs: float) -> str:
+    """Δ-to-reference (s, positive) → P/Q gap colour band, same thresholds as the
+    best-lap bands. RED is reserved for the elimination zone (never a band here),
+    so the scale caps at orange. (card atcmh1cL)"""
+    if secs < 0.2:
+        return "blue"
+    if secs < 0.5:
+        return "green"
+    if secs < 1.0:
+        return "yellow"
+    return "orange"
+
+
 def _secs(s: Any) -> Optional[float]:
     """Seconds from a gap/interval string ("+1.234", "+1:23.456", "-0.5").
     Returns None for non-numeric values ("+1 LAP", "LAP", "", placeholders)."""
@@ -182,8 +195,9 @@ class DriverGapProcessor(Processor):
             self._handle_practice(lines, clock_time)
 
     def _emit_gap(self, num: str, gap: Optional[str], cutoff: bool,
-                  clock_time: datetime, trend: str = "") -> None:
-        payload = {"gap": gap if gap is not None else "", "cutoff": cutoff, "trend": trend}
+                  clock_time: datetime, trend: str = "", band: str = "") -> None:
+        payload = {"gap": gap if gap is not None else "", "cutoff": cutoff,
+                   "trend": trend, "band": band}
         if payload != self._last_gap.get(num):
             self._last_gap[num] = payload
             self._bus.emit(f"driverGap:{num}", payload, clock_time)
@@ -285,7 +299,10 @@ class DriverGapProcessor(Processor):
             if not isinstance(d, dict):
                 continue
             if "TimeDiffToFastest" in d:
-                self._emit_gap(num, d["TimeDiffToFastest"], False, clock_time)
+                g = d["TimeDiffToFastest"]
+                gs = _secs(g)
+                band = _gap_band(gs) if gs is not None and gs > 0 else ""
+                self._emit_gap(num, g, False, clock_time, band=band)
 
     # ── Qualifying ── (positional elimination zone)
     def _cutoff_position(self) -> Optional[int]:
@@ -370,6 +387,7 @@ class DriverGapProcessor(Processor):
                 continue
             in_zone = (cutoff_pos is not None
                        and self._pos.get(num, 0) > cutoff_pos)
+            band = ""
             if self._pos.get(num) == 1:
                 # P1 is the fastest — no gap to itself. Belt-and-braces alongside
                 # the _stats_timediff blank-vs-missing fix: also clears the gap the
@@ -377,9 +395,13 @@ class DriverGapProcessor(Processor):
                 # message before the empty TimeDiffToFastest). (card 3ODYNuKJ)
                 gap = ""
             elif in_zone:
+                # Knockout zone → RED (cutoff=True on the client); no Δ band.
                 bms = self._best_ms.get(num)
                 gap = (_fmt_gap(bms - cutoff_best_ms)
                        if bms is not None and cutoff_best_ms is not None else "")
             else:
+                # Safe driver → Δ-to-P1 band (blue/green/yellow/orange, no red).
                 gap = self._gap_p1.get(num, "")
-            self._emit_gap(num, gap, in_zone, clock_time)
+                gs = _secs(gap)
+                band = _gap_band(gs) if gs is not None and gs > 0 else ""
+            self._emit_gap(num, gap, in_zone, clock_time, band=band)
