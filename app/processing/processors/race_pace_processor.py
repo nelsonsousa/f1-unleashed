@@ -159,14 +159,16 @@ class RacePaceProcessor(Processor):
         last = self._last.get(num)
         if not last:
             return
-        if self._status.get(num) in ("RET", "STOP", "DSQ", "FINISHED"):
-            colour = "blank"     # retired / chequered → blank last-lap (client) (ybTVoVep)
+        st = self._status.get(num)
+        if st in ("RET", "STOP", "DSQ"):
+            colour = "blank"     # retired → blank last-lap (client) (ybTVoVep)
         elif self._ref_ms is None:
             colour = "white"
         elif not self._representative(num, last["lap"]):
-            # In/out/stop lap → WHITE (not a representative racing lap). 2026-07 SME
-            # rule; supersedes qKVcxF9n's "keep the band through the pit".
-            colour = "white"
+            # In/out/stop lap → WHITE (not a representative racing lap; supersedes
+            # qKVcxF9n). EXCEPTION: a FINISHED driver's slow-down lap after the flag
+            # → blank. The finishing lap itself is representative, so it bands. (user)
+            colour = "blank" if st == "FINISHED" else "white"
         else:
             colour = self._band(last["ms"] - self._ref_ms)
         if self._colour.get(num) == colour:
