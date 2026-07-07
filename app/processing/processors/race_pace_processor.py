@@ -151,13 +151,10 @@ class RacePaceProcessor(Processor):
             colour = "white"     # retired / stopped → dimmed white
         elif cls == "CHECKERED":
             # Post-chequered slow-down lap → shown dimmed white (matches white mini).
-            # The finishing lap is a normal racing lap, so it bands below. (user)
-            colour = "white"
-        elif not self._representative(num, last["lap"]):
-            # In/out/stop lap → WHITE (not a representative racing lap; supersedes
-            # qKVcxF9n's "keep the band through the pit").
             colour = "white"
         else:
+            # Race in/out laps keep DEFAULT band colours (vs the fastest same-lap),
+            # NOT whited out — only P/Q whites in/out laps. (user 2026-07-08)
             ref = self._fastest_lap_ms.get(last["lap"])   # fastest on THIS lap number
             colour = "white" if ref is None else self._band(last["ms"] - ref)
         if self._colour.get(num) == colour:
