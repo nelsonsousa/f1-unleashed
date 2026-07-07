@@ -8,7 +8,9 @@ Emits: driverSectorColour:{num}  [c0, c1, c2]   (per-sector colour class or null
 Reference:
   practice/qualifying : best overall sector time — per sector, min across drivers;
                         reset each Q part.
-  race                : the LEADER's sector time in the SAME lap (lap N vs lap N).
+  race                : the FASTEST sector time on the SAME lap — per sector, min
+                        across the field, stored per lap (lap N vs lap N). Monotonic,
+                        so it stays stable when a car ahead clears its sectors.
 Bands (Δ = driver_sector − reference):
     <= 0    purple   (fastest overall / at-or-faster-than the leader's sector)
     < 0.1   blue
@@ -49,8 +51,7 @@ class SectorColourProcessor(Processor):
         self._display_lap: dict[str, int] = {}       # num -> lap the shown sectors belong to
         self._status: dict[str, Optional[str]] = {}
         self._best_sec: list = [None, None, None]     # P/Q best overall per sector
-        self._leader: Optional[str] = None
-        self._leader_sec: dict[int, list] = {}        # race: lap -> [ms|None x3]
+        self._fastest_sec: dict[int, list] = {}       # race: lap -> [min ms per sector across field]
         self._part: Optional[int] = None
         self._emitted: dict[str, tuple] = {}          # dedup
 
@@ -68,8 +69,6 @@ class SectorColourProcessor(Processor):
                 self._display_lap[num] = data
         elif topic.startswith("driverStatus:"):
             self._on_status(topic.split(":", 1)[1], data, clock_time)
-        elif topic == "standings":
-            self._on_standings(data, clock_time)
         elif topic == "qualifyingPart":
             self._on_part(data, clock_time)
 
@@ -98,15 +97,6 @@ class SectorColourProcessor(Processor):
         for num in list(self._sectors):
             self._emit(num, clock_time)
 
-    def _on_standings(self, data: Any, clock_time: datetime) -> None:
-        drivers = data.get("drivers") if isinstance(data, dict) else None
-        leader = drivers[0]["num"] if drivers else None
-        if leader != self._leader:
-            self._leader = leader
-            if self._is_race:
-                for num in list(self._sectors):
-                    self._emit(num, clock_time)
-
     def _on_sectors(self, num: str, data: Any, clock_time: datetime) -> None:
         if not isinstance(data, list):
             return
@@ -117,14 +107,13 @@ class SectorColourProcessor(Processor):
         self._sectors[num] = vals
         recompute_all = False
         if self._is_race:
-            if num == self._leader:
-                lap = self._seclap(num)
-                if lap is not None:
-                    ls = self._leader_sec.setdefault(lap, [None, None, None])
-                    for i in range(3):
-                        if vals[i] is not None:
-                            ls[i] = vals[i]
-                    recompute_all = True              # leader reference moved
+            lap = self._seclap(num)                    # fastest sector on the SAME lap
+            if lap is not None:
+                fs = self._fastest_sec.setdefault(lap, [None, None, None])
+                for i in range(3):
+                    if vals[i] is not None and (fs[i] is None or vals[i] < fs[i]):
+                        fs[i] = vals[i]
+                        recompute_all = True           # same-lap fastest sector improved
         else:
             for i in range(3):                        # P/Q best overall per sector
                 if vals[i] is not None and (self._best_sec[i] is None or vals[i] < self._best_sec[i]):
@@ -163,7 +152,7 @@ class SectorColourProcessor(Processor):
                 continue
             if self._is_race:
                 lap = self._seclap(num)
-                ref = self._leader_sec.get(lap, [None, None, None])[i] if lap is not None else None
+                ref = self._fastest_sec.get(lap, [None, None, None])[i] if lap is not None else None
             else:
                 ref = self._best_sec[i]
             out[i] = "purple" if ref is None else self._band(v - ref)
