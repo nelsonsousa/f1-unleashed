@@ -56,6 +56,7 @@ class RacePaceProcessor(Processor):
         self._leader: Optional[str] = None
         self._ref_ms: Optional[int] = None          # leader's last representative lap time
         self._colour: dict[str, str] = {}           # num -> last emitted colour (dedup)
+        self._status: dict[str, Optional[str]] = {}
 
     def subscribe(self) -> None:
         if self._is_race:
@@ -68,6 +69,12 @@ class RacePaceProcessor(Processor):
             self._on_cls(topic.split(":", 1)[1], data, clock_time)
         elif topic == "standings":
             self._on_standings(data, clock_time)
+        elif topic.startswith("driverStatus:"):
+            num = topic.split(":", 1)[1]
+            st = data if isinstance(data, str) else None
+            if st != self._status.get(num):
+                self._status[num] = st
+                self._emit_colour(num, clock_time)
 
     def _representative(self, num: str, lap: Optional[int]) -> bool:
         if lap is None:
@@ -152,7 +159,9 @@ class RacePaceProcessor(Processor):
         last = self._last.get(num)
         if not last:
             return
-        if self._ref_ms is None:
+        if self._status.get(num) in ("RET", "STOP", "DSQ", "FINISHED"):
+            colour = "blank"     # retired / chequered → blank last-lap (client) (ybTVoVep)
+        elif self._ref_ms is None:
             colour = "white"
         elif not self._representative(num, last["lap"]):
             # In/out/stop lap → WHITE (not a representative racing lap). 2026-07 SME

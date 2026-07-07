@@ -694,11 +694,15 @@
         // server too (atcmh1cL). (ybTVoVep / atcmh1cL)
         const cur = state.timing[num];
         const last = (cur && cur.lapTime) || '';
+        // Server-emitted pace class (race_pace for race, pq_pace for P/Q): vs the
+        // leader's lap in race, vs the fastest overall in P/Q; in/out white.
+        const pc = (state.driverData[num] || {}).paceColour;
+        // "blank" = server suppression (retired/finished/eliminated, P/Q out/in/slow).
+        if (pc === 'blank') {
+            return `<span class="lap-time lap-last lap-empty">--:--.---</span>`;
+        }
         let cls = 'lap-empty';
         if (last) {
-            // Server-emitted pace class (race_pace for race, pq_pace for P/Q): vs
-            // the leader's lap in race, vs the fastest overall in P/Q; in/out white.
-            const pc = (state.driverData[num] || {}).paceColour;
             cls = pc ? `lap-pace-${pc}` : 'lap-pace-white';
         }
         return `<span class="lap-time lap-last ${cls}">${last || '--:--.---'}</span>`;
