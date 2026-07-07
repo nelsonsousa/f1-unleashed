@@ -57,10 +57,6 @@
         currentLap: 0,        // race-only (from raceLaps)
         qualifyingSegment: null,
         eliminated: new Set(),
-        // Overall-fastest lap (from the server `fastestLap` topic) so we can
-        // purple-tint the holder and a lap that matches it.
-        overallBestLapMs: null,
-        overallBestLapDriver: null,
     };
 
     // ─── Helpers ───
@@ -321,13 +317,8 @@
         render();
     });
 
-    // fastestLap {num, lap, time} — the session's overall-fastest holder.
-    messageBus.on('fastestLap', (data) => {
-        if (!data || data.num == null) return;
-        state.overallBestLapDriver = String(data.num);
-        state.overallBestLapMs = parseLapMs(data.time);
-        render();
-    });
+    // (fastestLap handler removed — the client-tracked overall-fastest holder fed
+    // only client-derived purple/PB colour, which moved server-side. atcmh1cL)
 
     // driverLaps:{num} {currentLap, laps:{n:{time,personalBest,overallBest}},
     //                    lastLap:{lap,time,personalBest,overallBest}|null,
@@ -550,8 +541,6 @@
         state.currentLap = 0;
         state.qualifyingSegment = null;
         state.eliminated = new Set();
-        state.overallBestLapMs = null;
-        state.overallBestLapDriver = null;
         driverPenalties = {};
         render();
     });
@@ -652,74 +641,17 @@
     // P1-delta colour bands. deltaMs = value − reference (>=0). `sector` uses the
     // tighter sector thresholds (card cKNdwUoZ); otherwise the gap/best/last
     // thresholds (card IeBKH1Xz). Returns a band-* class or null.
-    // Δ-to-P1 colour bands (ms): <0.1 blue, 0.1-0.3 green, 0.3-0.5 yellow,
-    // 0.5-1.0 orange, >1.0 red. `capOrange` clamps red→orange (best-lap/gap in
-    // quali reserve red for the elimination zone).
-    function bandClass(deltaMs, capOrange) {
-        if (deltaMs == null || isNaN(deltaMs) || deltaMs < 0) return null;
-        if (deltaMs < 100) return 'band-blue';
-        if (deltaMs < 300) return 'band-green';
-        if (deltaMs < 500) return 'band-yellow';
-        if (deltaMs < 1000 || capOrange) return 'band-orange';
-        return 'band-red';
-    }
-
-    function parseSectorMs(v) {
-        if (!v) return null;
-        const f = parseFloat(v);
-        return isNaN(f) ? null : Math.round(f * 1000);
-    }
-
-    // Fastest current sector time (ms) per S1/S2/S3 across all drivers — the
-    // reference for the sector colour bands. Cheap (drivers × 3) per render.
-    function fastestSectors() {
-        const best = [null, null, null];
-        for (const n of Object.keys(state.timing)) {
-            const secs = (state.timing[n] || {}).sectors;
-            if (!Array.isArray(secs)) continue;
-            for (let i = 0; i < 3; i++) {
-                const ms = parseSectorMs(secs[i] && secs[i].value);
-                if (ms != null && (best[i] == null || ms < best[i])) best[i] = ms;
-            }
-        }
-        return best;
-    }
+    // (bandClass / parseSectorMs / fastestSectors removed — the client-derived
+    // Δ-to-fastest colour bands moved server-side. atcmh1cL)
 
     function bestLapCell(num) {
         const e = state.driverData[num] || {};
         const t = state.timing[num] || {};
-        // (Out/in/stopped-lap best suppression removed — client renders the
-        // server's bestLap as-is; suppression moves server-side. ybTVoVep)
+        // (Suppression + colour derivation removed — the client renders the
+        // server's bestLap value and will apply a server-emitted colour class.
+        // Until atcmh1cL lands, no purple/PB/band. ybTVoVep / atcmh1cL)
         const txt = e.bestLap || t.bestLapTime || '';
-        let cls = 'lap-empty';
-        if (txt) {
-            const ms = parseLapMs(txt);
-            const isFastest = ms != null && ms === state.overallBestLapMs;
-            if (IS_RACE) {
-                // Best lap is coloured by its delta to the FASTEST OVERALL lap —
-                // ONLY the holder is purple — NOT the last-lap-vs-leader pace
-                // colour. The pace colour let every driver faster than the leader
-                // show lap-pace-purple (multi-purple, 1ZG1NSCI) and went white on
-                // in/out laps (qKVcxF9n); best lap is a fixed value, so it bands
-                // stably vs the overall best. (last lap keeps the pace colour.)
-                if (isFastest) cls = 'lap-purple';
-                else cls = (ms != null && state.overallBestLapMs != null
-                            ? bandClass(ms - state.overallBestLapMs, false) : null) || 'lap-pace-white';
-            } else if (IS_QUALI) {
-                // Quali: eliminated → white; fastest → purple; elimination-zone
-                // (gapIsRed) → red; else Δ-to-P1 bands capped at orange (no red).
-                if (state.eliminated && state.eliminated.has(num)) cls = 'lap-white';
-                else if (isFastest) cls = 'lap-purple';
-                else if ((state.driverData[num] || {}).gapIsRed) cls = 'band-red';
-                else cls = (ms != null && state.overallBestLapMs != null
-                            ? bandClass(ms - state.overallBestLapMs, true) : null) || 'band-orange';
-            } else {
-                // Practice: standard purple(fastest)/green(PB)/yellow — no bands.
-                if (state.overallBestLapDriver === num) cls = 'lap-purple';
-                else if (e.bestLapPersonal) cls = 'lap-green';
-                else cls = 'lap-yellow';
-            }
-        }
+        const cls = txt ? '' : 'lap-empty';
         return `<span class="lap-time ${cls}">${txt || '--:--.---'}</span>`;
     }
 
@@ -741,25 +673,8 @@
         return lapNum != null ? (state.lapClsByLap[num] || {})[lapNum] : undefined;
     }
 
-    // Pick the lap object whose data we should display in the last-lap +
-    // sector cells. Rules:
-    //   - if the current lap's classification is COOL/OUT/ABORT, NEVER
-    //     show current-lap data — fall back to the previous fast lap if
-    //     we have one, otherwise return null (callers render placeholders)
-    //   - while the new lap hasn't reached sector 1 yet, keep showing the
-    //     previous lap so the row doesn't blank out for ~30s
-    //   - otherwise use the live current lap
-    // Returns null if nothing is appropriate to display.
-    function chooseLapForDisplay(num) {
-        const t = state.timing[num];
-        if (isSlowLapClass(num)) {
-            return state.prevFastLap[num] || null;
-        }
-        if (!t || !state.sectorsCleared[num]) {
-            return state.prevFastLap[num] || state.prevLap[num] || t || null;
-        }
-        return t;
-    }
+    // (chooseLapForDisplay removed — the prev-fast/prev-lap which-value selection
+    // moved server-side; cells render the current lap directly. ybTVoVep)
 
     // Retired drivers (= status RET / STOP / DSQ): clear last-lap +
     // sector + mini-sector cells. Race retirements stop accumulating
@@ -782,129 +697,40 @@
         //   - RACE: ALWAYS show the latest lap data including IN/OUT,
         //     because every lap matters for race position + gap, and
         //     IN/OUT laps still produce times the engineer cares about.
+        // Render the CURRENT last-lap directly — no prev-fast which-value
+        // selection, no STOP suppression (those move server-side). Race keeps the
+        // server-provided pace colour; quali/practice colour will come from the
+        // server too (atcmh1cL). (ybTVoVep / atcmh1cL)
         const cur = state.timing[num];
-        const prevFast = state.prevFastLap[num];
-        const prevAny = state.prevLap[num];
-        const cleared = state.sectorsCleared[num];   // S1 of current lap seen
-        const slow = isSlowLapClass(num);             // COOL/ABORT/OUT
-
-        let source;
-        if (IS_RACE) {
-            // Race: prefer the current lap's lap-time once it lands,
-            // otherwise fall back to the most recent previous lap so
-            // the row doesn't blank out mid-lap.
-            if (cur && cur.lapTime) source = cur;
-            else source = prevAny || cur;
-        } else {
-            // P/Q: render the CURRENT lap directly — the server owns blanking
-            // (a new part / no current lap → the cell blanks). No prev-fast /
-            // slow / cleared client fallback. (hqb93XEw)
-            source = cur;
-        }
-
-        // An out lap / stopped "lap" isn't a representative timed lap —
-        // suppress its time even though F1 reports one. (In-pit laps in race
-        // are intentionally kept per the source-selection above.)
-        // A stopped car has no representative time. (OUT laps are now shown —
-        // card 81 — so only STOP is blanked here.)
-        const st = source ? lapTypeAt(num, source.lap) : undefined;
-        if (st === 'STOP') {
-            return `<span class="lap-time lap-last lap-empty">--:--.---</span>`;
-        }
-        const last = (source && source.lapTime) || '';
+        const last = (cur && cur.lapTime) || '';
         let cls = 'lap-empty';
-        if (last) {
-            if (IS_RACE) {
-                // Race: colour by pace vs the leader's reference lap (paceColour).
-                const pc = (state.driverData[num] || {}).paceColour;
-                cls = pc ? `lap-pace-${pc}` : 'lap-pace-white';
-            } else {
-                // Quali + Practice: standard timing colours as they arrive —
-                // overall-fastest purple, personal-best green, else yellow.
-                const lastMs = parseLapMs(last);
-                if (state.overallBestLapMs != null && lastMs != null
-                        && lastMs === state.overallBestLapMs) cls = 'lap-purple';
-                else if (source.personalFastest) cls = 'lap-green';
-                else cls = 'lap-yellow';
-            }
+        if (last && IS_RACE) {
+            const pc = (state.driverData[num] || {}).paceColour;   // server-provided
+            cls = pc ? `lap-pace-${pc}` : 'lap-pace-white';
         }
         return `<span class="lap-time lap-last ${cls}">${last || '--:--.---'}</span>`;
     }
 
-    function lastVsBestCell(num) {
-        const lap = chooseLapForDisplay(num);
-        const t = state.timing[num] || {};
-        const lastMs = parseLapMs(lap && lap.lapTime);
-        const bestMs = parseLapMs(t.bestLapTime);
-        if (lastMs == null || bestMs == null) {
-            return '<span class="delta delta-empty">+-.---</span>';
-        }
-        const diff = lastMs - bestMs;
-        let cls = 'delta-yellow';
-        if (state.overallBestLapMs != null && lastMs === state.overallBestLapMs) cls = 'delta-purple';
-        else if (diff <= 0) cls = 'delta-green';
-        return `<span class="delta ${cls}">${formatGap(diff)}</span>`;
-    }
+    // (lastVsBestCell removed — unused dead code; its last-vs-best delta colour
+    // was client-derived. atcmh1cL)
 
     function sectorCells(num) {
-        // (Retired blanking removed — client renders server sectors as-is. ybTVoVep)
-        // Race: always show the most recent sectors, including IN/OUT
-        // laps (= every lap matters for race-engineer view). P/Q: only
-        // show prev FAST sectors, hide PIT/OUT/IN/COOL.
-        const cur = state.timing[num];
-        const prevFast = state.prevFastLap[num];
-        const prevAny = state.prevLap[num];
-        const cleared = state.sectorsCleared[num];
-        const slow = isSlowLapClass(num);
-
-        let lap;
-        if (IS_RACE) {
-            // Always show the current lap's sectors in race. No
-            // gating on `cleared` (= the "S1 of new lap seen" flag),
-            // which can be stale across the race-start reset; F1's
-            // own data for the current lap is authoritative.
-            lap = cur;
-        } else {
-            // P/Q: render the CURRENT lap's sectors directly — server owns
-            // blanking (a new part / rollover → blank). No prev-fast fallback.
-            // (hqb93XEw)
-            lap = cur;
-        }
-
-        // Race-mode sector display rules:
-        //   Pre-S1-of-new-lap (= !cleared): show the PREVIOUS lap's
-        //     full S1/S2/S3 so the row never blanks across the new-lap
-        //     reset that wipes state.timing[num].sectors.
-        //   Post-S1 (= cleared): show CURRENT lap's sectors only.
-        //     S2/S3 of the previous lap get cleared as S1 of the new
-        //     lap arrives (= per SME 2026-06-07).
-        let sectors = (lap && lap.sectors) || [{}, {}, {}];
-        if (IS_RACE && !cleared && prevAny && prevAny.sectors) {
-            sectors = prevAny.sectors;
-        }
-        // Sector colouring:
-        //   Quali → PLAIN (current sectors not colour-coded; only best sectors are).
-        //   Race  → fastest sector purple, else Δ-to-fastest bands (lenient).
-        //   Practice → standard purple(fastest)/green(PB)/yellow.
-        const fastest = IS_RACE ? fastestSectors() : null;
+        // Render the CURRENT lap's sectors directly (no prev-lap which-value
+        // fallback) and apply the server's per-sector flags: overallFastest →
+        // purple, personalFastest → green. The race Δ-to-fastest bands were
+        // client-derived → removed; a server band class will replace them.
+        // (ybTVoVep / atcmh1cL)
+        const lap = state.timing[num];
+        const sectors = (lap && lap.sectors) || [{}, {}, {}];
         const out = [];
         for (let i = 0; i < 3; i++) {
             const s = sectors[i] || {};
             const v = s.value || '';
             let cls = 'sector-empty';
             if (v) {
-                if (IS_RACE) {
-                    const ms = parseSectorMs(v);
-                    if (ms != null && fastest[i] != null && ms === fastest[i]) cls = 'sector-purple';
-                    else cls = (ms != null && fastest[i] != null
-                                ? bandClass(ms - fastest[i], false) : null) || 'sector-yellow';
-                } else {
-                    // Quali + Practice: standard timing colours from the data —
-                    // overall-fastest purple, personal-best green, else yellow.
-                    if (s.overallFastest) cls = 'sector-purple';
-                    else if (s.personalFastest) cls = 'sector-green';
-                    else cls = 'sector-yellow';
-                }
+                if (s.overallFastest) cls = 'sector-purple';
+                else if (s.personalFastest) cls = 'sector-green';
+                else cls = '';
             }
             out.push(`<span class="sector-time ${cls}">${v || '--.---'}</span>`);
         }
@@ -1046,16 +872,9 @@
         }
         // Elimination zone → red (red is reserved for the zone only).
         if (e.gapIsRed) return `<span class="gap gap-red">${txt}</span>`;
-        if (IS_QUALI) {
-            // Gap = Δ to P1 → bands, capped at orange (big gaps stay orange; red
-            // is reserved for the elimination zone). (P/Q only; race uses
-            // gapOrLapForRaceP1.)
-            const gms = txt.includes(':') ? parseLapMs(txt)
-                      : Math.round(parseFloat(txt.replace('+', '')) * 1000);
-            const band = bandClass(gms, true);
-            return `<span class="gap ${band || ''}">${txt}</span>`;
-        }
-        // Practice: plain (no bands).
+        // (Quali Δ-to-P1 band colour was client-derived → removed; a server band
+        // class will replace it. atcmh1cL) Plain gap for quali + practice; the
+        // elimination-zone red + eliminated white above are server-flag driven.
         return `<span class="gap">${txt}</span>`;
     }
 
@@ -1069,41 +888,13 @@
         return `<span class="pens">${items.join('')}</span>`;
     }
 
-    function lapCountClass(num) {
-        // Race only: colour the lap counter by laps-down from the leader.
-        //   yellow — a full lap or more down (gap shows laps, e.g. "+1 LAP")
-        //   white  — 1 lap behind on the counter but gap is still a time
-        //   green  — same lap as the leader (default)
-        if (!IS_RACE) return '';
-        const n = (state.timing[num] || {}).lap || 0;
-        // Leader lap = the highest per-driver lap — SAME source as `n`
-        // (driverLaps.currentLap). Using raceLaps (state.currentLap) here misreads
-        // the leader as 1-down, since raceLaps.currentLap can lead t.lap by one.
-        let leaderLap = 0;
-        for (const k in state.timing) {
-            const l = state.timing[k].lap || 0;
-            if (l > leaderLap) leaderLap = l;
-        }
-        // Leader / anyone on the lead lap → green. Check this BEFORE the gap
-        // string: the LEADER's own GapToLeader is "LAP N", which must NOT be
-        // mistaken for a lapped driver's "+1 LAP".
-        if (!n || !leaderLap || n >= leaderLap) return ' lap-count-green';
-        // Behind on the counter: lapped (gap shows "LAP") → yellow; otherwise
-        // still within a lap of the leader → white.
-        const gap = ((state.driverData[num] || {}).gap || '').toUpperCase();
-        if (gap.includes('LAP')) return ' lap-count-yellow';
-        return ' lap-count-white';
-    }
-
     function lapCountCell(num) {
         const t = state.timing[num] || {};
-        // Lap count = the authoritative NoL-based current lap
-        // (driverLaps.currentLap, stored as t.lap). NOT max(lapTimes key):
-        // in P/Q the highest TIMED lap is currentLap-1, so once the first lap
-        // time arrived the count regressed (e.g. COL 1→2→1, I10). currentLap is
-        // monotonic and already session-correct.
+        // Lap count = the authoritative NoL-based current lap (driverLaps.currentLap,
+        // stored as t.lap). (laps-down colour was client-derived → removed; the
+        // server will emit the lap-counter colour. atcmh1cL)
         const n = t.lap || 0;
-        return `<span class="lap-count${lapCountClass(num)}">${n || '0'}</span>`;
+        return `<span class="lap-count">${n || '0'}</span>`;
     }
 
     function gapOrLapForRaceP1(num, position) {
