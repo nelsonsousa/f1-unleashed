@@ -47,7 +47,10 @@ class SectorTimingProcessor(Processor):
 
     def __init__(self, bus: SessionMessageBus, session_type: str):
         super().__init__(bus, session_type)
+        self._is_race = session_type == "race"
         self._sectors: dict[str, list] = {}
+        self._status: dict[str, Optional[str]] = {}   # num -> driverStatus
+        self._cls: dict[str, Optional[str]] = {}       # num -> last lap classification
         self._part: Optional[int] = None   # current qualifying part (reset trigger)
         # Max segment count seen per sector (track-wide — all cars share the
         # mini-sector layout). Mini-sector arrays are padded to this on every
@@ -58,6 +61,41 @@ class SectorTimingProcessor(Processor):
     def subscribe(self) -> None:
         self._bus.on("TimingData", self._handle)
         self._bus.on("qualifyingPart", self._handle_part)
+        self._bus.on("*", self._handle_aux)   # driverStatus / driverLapClassification
+
+    def _handle_aux(self, topic: str, data: Any, clock_time: datetime) -> None:
+        """Status / lap-classification drive the display suppression (retired,
+        eliminated, finished, out/in/slow). Not a cycle — nothing in their
+        producers consumes driverSectors."""
+        if topic.startswith("driverStatus:"):
+            num = topic.split(":", 1)[1]
+            st = data if isinstance(data, str) else None
+            if st != self._status.get(num):
+                self._status[num] = st
+                if num in self._sectors:
+                    self._emit(num, clock_time)
+        elif topic.startswith("driverLapClassification:"):
+            num = topic.split(":", 1)[1]
+            if isinstance(data, dict):
+                t = data.get("type")
+                if t != self._cls.get(num):
+                    self._cls[num] = t
+                    if num in self._sectors:
+                        self._emit(num, clock_time)
+
+    def _suppress_mode(self, num: str):
+        """(blank_sectors: bool, mini_mode: 'white'|'blank'|None) for the driver's
+        current suppression state."""
+        st = self._status.get(num)
+        if st in ("RET", "STOP", "DSQ", "ELIMINATED"):
+            return (True, "blank")                    # retired / eliminated → blank both
+        if st == "FINISHED":
+            return (True, "white")                    # chequered → blank sectors, white mini
+        if not self._is_race:
+            cls = self._cls.get(num)
+            if st in ("OUT", "PIT") or cls in ("OUT", "PIT", "SLOW"):
+                return (True, "white")                # P/Q out/in/slow → blank sectors, white mini
+        return (False, None)
 
     def _handle_part(self, data: Any, clock_time: datetime) -> None:
         """New qualifying part → blank every driver's sector times + mini-sectors
@@ -125,16 +163,26 @@ class SectorTimingProcessor(Processor):
 
     def _emit(self, num: str, clock_time: datetime) -> None:
         sec = self._sectors[num]
-        self._bus.emit(f"driverSectors:{num}", [
-            {"value": s["value"], "overallFastest": s["overallFastest"],
-             "personalFastest": s["personalFastest"]} for s in sec
-        ], clock_time)
+        blank_sectors, mini_mode = self._suppress_mode(num)
+        if blank_sectors:
+            payload = [{"value": None, "overallFastest": False, "personalFastest": False}
+                       for _ in range(3)]
+        else:
+            payload = [{"value": s["value"], "overallFastest": s["overallFastest"],
+                        "personalFastest": s["personalFastest"]} for s in sec]
+        self._bus.emit(f"driverSectors:{num}", payload, clock_time)
         # Pad each sector's segments to the max count ever seen for that sector
         # so the array length (and thus the client layout) is fixed; trailing
-        # not-yet-reached segments are None.
+        # not-yet-reached segments are None. Suppression: white = all segments
+        # white, blank = all empty.
         mini = []
         for i, s in enumerate(sec):
             self._seg_counts[i] = max(self._seg_counts[i], len(s["segments"]))
-            pad = self._seg_counts[i] - len(s["segments"])
-            mini.append(list(s["segments"]) + [None] * pad)
+            cnt = self._seg_counts[i]
+            if mini_mode == "white":
+                mini.append(["#ffffff"] * cnt)
+            elif mini_mode == "blank":
+                mini.append([None] * cnt)
+            else:
+                mini.append(list(s["segments"]) + [None] * (cnt - len(s["segments"])))
         self._bus.emit(f"driverMiniSectors:{num}", mini, clock_time)
