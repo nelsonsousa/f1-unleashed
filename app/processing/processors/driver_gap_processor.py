@@ -348,10 +348,18 @@ class DriverGapProcessor(Processor):
                 if v != self._knocked.get(num):
                     self._knocked[num] = v; changed = True
             blt = d.get("BestLapTime")
-            if isinstance(blt, dict) and blt.get("Value"):
-                ms = _parse_ms(blt["Value"])
-                if ms is not None and ms != self._best_ms.get(num):
-                    self._best_ms[num] = ms; changed = True
+            if isinstance(blt, dict) and "Value" in blt:
+                # Present-but-empty is a NEW value: BestLapTime.Value="" means the
+                # best was DELETED (track limits) → clear the gap reference so the
+                # zone gap (Δ-to-cutoff) blanks with it instead of using the stale
+                # deleted lap. Only a MISSING Value key is sticky. (card atcmh1cL)
+                if blt["Value"] == "":
+                    if num in self._best_ms:
+                        del self._best_ms[num]; changed = True
+                else:
+                    ms = _parse_ms(blt["Value"])
+                    if ms is not None and ms != self._best_ms.get(num):
+                        self._best_ms[num] = ms; changed = True
             stats = d.get("Stats")
             if isinstance(stats, (list, dict)):
                 g = _stats_timediff(stats, "TimeDiffToFastest")
