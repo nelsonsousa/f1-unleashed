@@ -294,6 +294,7 @@
         e.gap = data.gap || '';
         e.gapIsRed = !!data.cutoff;
         e.gapTrend = data.trend || '';
+        e.gapBand = data.band || '';
         render();
     });
 
@@ -883,10 +884,10 @@
         }
         // Elimination zone → red (red is reserved for the zone only).
         if (e.gapIsRed) return `<span class="gap gap-red">${txt}</span>`;
-        // (Quali Δ-to-P1 band colour was client-derived → removed; a server band
-        // class will replace it. atcmh1cL) Plain gap for quali + practice; the
-        // elimination-zone red + eliminated white above are server-flag driven.
-        return `<span class="gap">${txt}</span>`;
+        // P/Q + practice: server-emitted Δ-to-P1 band (blue/green/yellow/orange;
+        // red is reserved for the elimination zone above). atcmh1cL.
+        const band = e.gapBand ? ` band-${e.gapBand}` : '';
+        return `<span class="gap${band}">${txt}</span>`;
     }
 
     function penaltiesCell(num) {
