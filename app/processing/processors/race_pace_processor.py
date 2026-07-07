@@ -17,10 +17,11 @@ then compared to the reference and binned (delta = driver − reference):
     +1.001 .. +2.000     orange
     > +2.000             red
 
-A driver whose last lap is an in/out/stop lap KEEPS its previous band — the colour
-persists through the pit stop rather than resetting to white (qKVcxF9n). "white"
-is only used before any reference exists. The whole field is recomputed whenever
-the leader posts a new representative lap (or the leader changes).
+A driver whose last lap is an in/out/stop lap is WHITE — an in/out lap isn't a
+representative racing lap (2026-07 SME rule; supersedes qKVcxF9n's keep-the-band-
+through-the-pit). "white" is also used before any reference exists. The whole field
+is recomputed whenever the leader posts a new representative lap (or the leader
+changes).
 """
 
 from datetime import datetime
@@ -154,10 +155,9 @@ class RacePaceProcessor(Processor):
         if self._ref_ms is None:
             colour = "white"
         elif not self._representative(num, last["lap"]):
-            # In/out/stop lap: nothing meaningful to compare, but DON'T wipe the
-            # colour to white — keep the driver's last representative-lap band so
-            # the last-lap colour persists through the pit stop. (qKVcxF9n)
-            return
+            # In/out/stop lap → WHITE (not a representative racing lap). 2026-07 SME
+            # rule; supersedes qKVcxF9n's "keep the band through the pit".
+            colour = "white"
         else:
             colour = self._band(last["ms"] - self._ref_ms)
         if self._colour.get(num) == colour:
