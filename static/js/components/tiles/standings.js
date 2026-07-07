@@ -658,6 +658,7 @@
     const BEST_LAP_COLOUR_CLASS = {
         purple: 'lap-purple', blue: 'band-blue', green: 'band-green',
         yellow: 'band-yellow', orange: 'band-orange', red: 'band-red',
+        white: 'lap-white',
     };
 
     function bestLapCell(num) {
