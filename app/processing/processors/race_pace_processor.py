@@ -161,11 +161,11 @@ class RacePaceProcessor(Processor):
             return
         cls = self._cls.get(num, {}).get(last["lap"])
         if self._status.get(num) in ("RET", "STOP", "DSQ"):
-            colour = "blank"     # retired → blank last-lap (client) (ybTVoVep)
+            colour = "blank"     # retired → clear last-lap (client) (ybTVoVep)
         elif cls == "CHECKERED":
-            # Post-chequered slow-down lap → blank last-lap. The finishing lap is a
-            # normal racing lap, so it bands below. (user 2026-07-07)
-            colour = "blank"
+            # Post-chequered slow-down lap → shown dimmed white (matches white mini).
+            # The finishing lap is a normal racing lap, so it bands below. (user)
+            colour = "white"
         elif self._ref_ms is None:
             colour = "white"
         elif not self._representative(num, last["lap"]):

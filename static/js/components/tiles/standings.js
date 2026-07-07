@@ -694,8 +694,15 @@
         for (let i = 0; i < 3; i++) {
             const s = sectors[i] || {};
             const v = s.value || '';
-            const c = colours[i];
-            const cls = v ? (c ? `sector-${c}` : '') : 'sector-empty';
+            let cls;
+            if (!v) {
+                cls = 'sector-empty';
+            } else if (s.white) {
+                cls = 'sector-white';               // slow / out / post-flag → dimmed white
+            } else {
+                const c = colours[i];
+                cls = c ? `sector-${c}` : '';
+            }
             out.push(`<span class="sector-time ${cls}">${v || '--.---'}</span>`);
         }
         return out.join('');
