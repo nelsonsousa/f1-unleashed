@@ -54,6 +54,7 @@ class LapPredictionProcessor(Processor):
         self._pending_lap: dict[str, int] = {}    # num -> lap a live prediction is active for
         self._ref_best: dict[str, int] = {}       # num -> best ms the pending lap is measured against
         self._gate_until: dict[str, float] = {}   # num -> session epoch sec until which predictions are gated
+        self._status: dict[str, Any] = {}         # num -> driverStatus (clear on PIT/RET/STOP)
 
     def subscribe(self) -> None:
         if self._active:
@@ -63,7 +64,9 @@ class LapPredictionProcessor(Processor):
         if topic.startswith("driverLaps:"):
             self._on_laps(topic.split(":", 1)[1], data, clock_time)
         elif topic.startswith("driverLapClassification:"):
-            self._on_cls(topic.split(":", 1)[1], data)
+            self._on_cls(topic.split(":", 1)[1], data, clock_time)
+        elif topic.startswith("driverStatus:"):
+            self._on_status(topic.split(":", 1)[1], data, clock_time)
         elif topic == "qualifyingSegment":
             if isinstance(data, dict) and isinstance(data.get("eliminated"), list):
                 self._eliminated = set(data["eliminated"])
@@ -109,15 +112,35 @@ class LapPredictionProcessor(Processor):
             if ms is not None:
                 self._best[num] = ms
 
-    def _on_cls(self, num: str, data: Any) -> None:
+    def _on_cls(self, num: str, data: Any, clock_time: datetime) -> None:
         if not isinstance(data, dict):
             return
         lap = data.get("lap")
         # Only the current (highest) lap drives the gate — ignore Rule 1
         # reclassifications of earlier laps.
         if isinstance(lap, int) and lap >= self._cur_lap.get(num, 0):
+            prev = self._cls.get(num)
             self._cur_lap[num] = lap
             self._cls[num] = data.get("type")
+            # Left the push lap with a live prediction still pending (aborted /
+            # cooled) → clear it server-side so the client needn't gate on PUSH.
+            if prev == "PUSH" and self._cls[num] != "PUSH" and num in self._pending_lap:
+                self._clear(num, clock_time)
+
+    def _on_status(self, num: str, data: Any, clock_time: datetime) -> None:
+        st = data if isinstance(data, str) else None
+        prev = self._status.get(num)
+        self._status[num] = st
+        # Pitted / retired / stopped → blank the delta (item 3), server-side.
+        if st in ("PIT", "RET", "STOP") and prev not in ("PIT", "RET", "STOP"):
+            self._clear(num, clock_time)
+
+    def _clear(self, num: str, clock_time: datetime) -> None:
+        """Blank the driver's live prediction — server-driven, so the client no
+        longer gates on PUSH/PIT."""
+        self._pending_lap.pop(num, None)
+        self._ref_best.pop(num, None)
+        self._bus.emit(f"lapPrediction:{num}", {"delta": None, "observed": False}, clock_time)
 
     def _on_delta(self, num: str, data: Any, clock_time: datetime) -> None:
         if not isinstance(data, dict):

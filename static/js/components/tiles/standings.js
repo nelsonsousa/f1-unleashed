@@ -797,19 +797,11 @@
         if (!p || p.delta === undefined || p.delta === null) {
             return '<span class="pred"></span>';
         }
-        // Hide in the pits (status authority — lapCls can lag the transition).
-        // Applies to both the live prediction and the observed result.
-        if (state.status[num] === 'PIT') {
-            return '<span class="pred"></span>';
-        }
-        // The LIVE prediction (observed=false) renders only during a PUSH lap
-        // with a reference lap. The OBSERVED result (observed=true) is the just-
-        // completed lap's actual outcome and shows regardless of current class
-        // (cards 62/67).
+        // (PUSH/PIT blanking removed — lap_prediction clears the prediction
+        // server-side on pit/retire/leaving-push, so the client just renders what
+        // it's sent. ybTVoVep) The observed result (observed=true) shows regardless
+        // of current class (cards 62/67).
         if (!p.observed) {
-            if ((state.lapCls[num] || {}).status !== 'PUSH') {
-                return '<span class="pred"></span>';
-            }
             const driverEntry = state.driverData[num] || {};
             const hasReference = Boolean(driverEntry.bestLap)
                 || (state.lapTimes[num] && Object.keys(state.lapTimes[num]).length > 0);
