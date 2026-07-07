@@ -22,6 +22,13 @@ Emits:
   raceLaps          (race only) { currentLap, totalLaps }  — from LapCount
   fastestLap        { num, lap, time }  — emitted when a lap is OverallFastest
                     (the session-global fastest; client colours it purple)
+  driverBestLapColour:{num}  { lap, colour }  — best-lap cell colour (atcmh1cL):
+                    "purple" for the current fastest-overall holder, else the
+                    Δ-to-fastest band (blue <0.2s / green <0.5 / yellow <1.0 /
+                    orange <2.0 / red ≥2.0). Recomputed for the whole active field
+                    whenever the reference (part-fastest) changes; in qualifying
+                    eliminated drivers FREEZE (only still-running drivers — top 16
+                    in Q2, top 10 in Q3 — are re-emitted). colour=null clears it.
 
 Model (validated against 2026 data):
   - NumberOfLaps (NoL) is the authoritative per-driver lap counter and
@@ -84,6 +91,7 @@ class LapTimingProcessor(Processor):
         # lap left timeless is recovered from this carried value.
         self._sticky_ll: dict[str, dict] = {}
         self._part_fastest_ms: Optional[int] = None          # current-part global fastest → purple; reset per part
+        self._best_colour: dict[str, Optional[str]] = {}     # num -> last emitted best-lap colour (atcmh1cL dedup)
         self._current_race_lap: Optional[int] = None
         self._total_race_laps: Optional[int] = None
 
@@ -107,8 +115,13 @@ class LapTimingProcessor(Processor):
         # Eliminated drivers keep the best lap from the part they were knocked
         # out in (it stays visible); everyone still in has their displayed best
         # cleared for the new part (card US3eJeKz).
+        removed = [n for n in self._best if not self._knocked.get(n)]
         self._best = {n: b for n, b in self._best.items() if self._knocked.get(n)}
         self._part_fastest_ms = None
+        # Clear the best-lap colour of the drivers whose best just reset (their
+        # colour returns null); eliminated drivers keep their frozen colour.
+        for num in removed:
+            self._emit_best_colour(num, clock_time)
         for num in list(self._laps.keys()):
             self._emit(num, clock_time)
 
@@ -295,10 +308,55 @@ class LapTimingProcessor(Processor):
             if self._part_fastest_ms is None or ms < self._part_fastest_ms:
                 self._part_fastest_ms = ms
                 self._bus.emit("fastestLap", {"num": num, "lap": lap, "time": time}, clock_time)
+                # New fastest-overall → recolour the whole active best-lap field.
+                self._recompute_best_colours(clock_time)
+            else:
+                # Improved but not the reference → just this driver's colour.
+                self._emit_best_colour(num, clock_time)
         # Session-wide best — kept across parts as the delta-prediction
         # reference (card 63); emitted as overallBestLap, never reset.
         if num not in self._session_best or ms < self._session_best[num]["ms"]:
             self._session_best[num] = {"lap": lap, "time": time, "ms": ms}
+
+    # ── Best-lap colour (atcmh1cL) ──
+    def _best_lap_colour(self, delta_ms: int) -> str:
+        """Δ (driver best − current fastest-overall, ms) → colour band."""
+        s = delta_ms / 1000.0
+        if s < 0.2:
+            return "blue"
+        if s < 0.5:
+            return "green"
+        if s < 1.0:
+            return "yellow"
+        if s < 2.0:
+            return "orange"
+        return "red"
+
+    def _compute_best_colour(self, num: str) -> Optional[str]:
+        b = self._best.get(num)
+        if not b or self._part_fastest_ms is None:
+            return None
+        if b["ms"] <= self._part_fastest_ms:
+            return "purple"        # holds the current fastest-overall lap
+        return self._best_lap_colour(b["ms"] - self._part_fastest_ms)
+
+    def _emit_best_colour(self, num: str, clock_time: datetime) -> None:
+        colour = self._compute_best_colour(num)
+        if self._best_colour.get(num) == colour:
+            return
+        self._best_colour[num] = colour
+        b = self._best.get(num)
+        self._bus.emit(f"driverBestLapColour:{num}",
+                       {"lap": b["lap"] if b else None, "colour": colour}, clock_time)
+
+    def _recompute_best_colours(self, clock_time: datetime) -> None:
+        """The fastest-overall reference changed — recolour the whole field. In
+        qualifying, eliminated drivers FREEZE (keep the colour from the part they
+        went out in), so only the still-running drivers are re-emitted."""
+        for num in list(self._best.keys()):
+            if self._part is not None and self._knocked.get(num):
+                continue
+            self._emit_best_colour(num, clock_time)
 
     def _apply_late_flags(self, num: str, clock_time: datetime) -> bool:
         """A standalone PersonalFastest/OverallFastest=True update (no lap-time
