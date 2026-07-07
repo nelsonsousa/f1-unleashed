@@ -1188,10 +1188,10 @@
             cols += `<span class="status ${stt.cls}">${stt.text}</span>`;
             cols += bestLapCell(num);
             cols += gapCell(num);
-            cols += `<span class="segments">${segmentBarsCell(num)}</span>`;
-            cols += sectorCells(num);
             cols += lastLapCell(num);
             cols += predictionCell(num);
+            cols += sectorCells(num);
+            cols += `<span class="segments">${segmentBarsCell(num)}</span>`;
             cols += `<span class="tyres">${tyreCell(num, true)}</span>`;
         } else {
             // Practice
@@ -1199,9 +1199,9 @@
             cols += `<span class="status ${stt.cls}">${stt.text}</span>`;
             cols += bestLapCell(num);
             cols += gapCell(num);
-            cols += `<span class="segments">${segmentBarsCell(num)}</span>`;
-            cols += sectorCells(num);
             cols += lastLapCell(num);
+            cols += sectorCells(num);
+            cols += `<span class="segments">${segmentBarsCell(num)}</span>`;
             cols += `<span class="tyres">${tyreCell(num, false)}</span>`;
         }
 
@@ -1262,12 +1262,12 @@
                 idHdr +
                 '<span>Best lap</span>' +
                 '<span>Gap</span>' +
-                '<span>Mini-sectors</span>' +
+                '<span>Lap time</span>' +
+                '<span>Delta</span>' +
                 '<span>S1</span>' +
                 '<span>S2</span>' +
                 '<span>S3</span>' +
-                '<span>Lap time</span>' +
-                '<span>Delta</span>' +
+                '<span>Mini-sectors</span>' +
                 '<span>Tyre</span>' +
                 '<span>Laps</span>' +
                 '<span></span>' + /* laps-end-spacer */
@@ -1281,11 +1281,11 @@
             idHdr +
             '<span>Best lap</span>' +
             '<span>Gap</span>' +
-            '<span>Mini-sectors</span>' +
+            '<span>Lap time</span>' +
             '<span>S1</span>' +
             '<span>S2</span>' +
             '<span>S3</span>' +
-            '<span>Lap time</span>' +
+            '<span>Mini-sectors</span>' +
             '<span>Tyres</span>' +
             '<span>Laps</span>' +
             '<span></span>' + /* laps-end-spacer */

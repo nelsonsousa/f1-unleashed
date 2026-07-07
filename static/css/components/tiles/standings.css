@@ -78,19 +78,19 @@
 
 .driver-list.standings-practice .driver-row,
 .driver-list.standings-practice .driver-header {
-    /* rank | color | tla | status | best | gap | mini | S1 | S2 | S3 | lap-time | tyres | laps | laps-end-spacer | color-end | tla-end
-     * Canonical order: mini-sectors before sectors before lap time.
+    /* rank | color | tla | status | best | gap | lap-time | S1 | S2 | S3 | mini | tyres | laps | laps-end-spacer | color-end | tla-end
+     * Order: last lap before sectors before mini-sectors (q9JVTQZg).
      * color-end + tla-end mirror the row identifier at the right edge.
      * laps-end-spacer = breathing room between Laps and the row-end TLA. */
-    grid-template-columns: 3fr 14px 5fr 4fr 11fr 6fr 13fr 6fr 6fr 6fr 9fr 24fr 4fr 2fr 14px 5fr;
+    grid-template-columns: 3fr 14px 5fr 4fr 11fr 6fr 9fr 6fr 6fr 6fr 13fr 24fr 4fr 2fr 14px 5fr;
 }
 
 .driver-list.standings-qualifying .driver-row,
 .driver-list.standings-qualifying .driver-header {
-    /* rank | color | tla | status | best | gap | mini | S1 | S2 | S3 | lap-time | prediction | tyres | laps | laps-end-spacer | color-end | tla-end
+    /* rank | color | tla | status | best | gap | lap-time | delta | S1 | S2 | S3 | mini | tyres | laps | laps-end-spacer | color-end | tla-end  (q9JVTQZg)
      * tyres = 4fr: quali shows only the current tyre (one stint), so the
      * column needs ~half the width of the multi-stint practice/race tyres. */
-    grid-template-columns: 3fr 14px 5fr 4fr 11fr 6fr 13fr 6fr 6fr 6fr 9fr 9fr 4fr 4fr 2fr 14px 5fr;
+    grid-template-columns: 3fr 14px 5fr 4fr 11fr 6fr 9fr 9fr 6fr 6fr 6fr 13fr 4fr 4fr 2fr 14px 5fr;
 }
 
 .driver-list.standings-race .driver-row,
