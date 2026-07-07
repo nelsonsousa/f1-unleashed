@@ -44,15 +44,13 @@
         driverData: {},       // num → assembled {gap, gapIsRed, interval, bestLap, …}
         timing: {},           // num → assembled current lap {lap, lapTime, bestLapTime, sectors[]}
         prevLap: {},          // num → snapshot of last completed lap (lapTime + sectors)
-        prevFastLap: {},      // num → snapshot of last non-cool lap
-        sectorsCleared: {},   // num → bool: have we cleared prev-lap sectors yet
+        sectorsCleared: {},   // num → bool: one-shot latch for the position-gain drop
         tyres: {},            // num → assembled tyre stints array (render)
         currentTyre: {},      // num → {compound, isNew, age}
         tyreHistory: {},      // num → [{compound, totalLaps, isNew}] past stints
         lapTimes: {},         // num → {lap → time_str} from driverLaps.laps
         status: {},           // num → DSQ/ELIMINATED/RET/STOP/OUT/PIT/FINISHED/TRACK
         lapCls: {},           // num → {lap, status} (latest classification type)
-        lapClsByLap: {},      // num → {lapNum → type} per-lap map
         prediction: {},       // num → lapPrediction {lap, delta, placesGained}
         currentLap: 0,        // race-only (from raceLaps)
         qualifyingSegment: null,
@@ -256,7 +254,6 @@
                 const t = state.timing[num];
                 t.lapTime = null; t.personalFastest = false; t.overallFastest = false;
                 delete state.prevLap[num];
-                delete state.prevFastLap[num];
                 state.sectorsCleared[num] = false;
             }
             for (const num of Object.keys(state.driverData)) {
@@ -385,21 +382,15 @@
 
         // Completed-lap snapshot — capture the live sectors (still holding
         // the just-finished lap's S1/S2/S3 at this instant) plus lastLap's
-        // time/flags. prevFastLap only if that lap wasn't COOL/ABORT/OUT/IN.
+        // time/flags. Used by the race-mode segment-bar merge (segmentBarsCell).
         if (data.lastLap && data.lastLap.lap != null) {
-            const snap = {
+            state.prevLap[num] = {
                 lap: data.lastLap.lap,
                 lapTime: data.lastLap.time,
                 overallFastest: data.lastLap.overallBest,
                 personalFastest: data.lastLap.personalBest,
                 sectors: t.sectors ? t.sectors.map(s => ({ ...s })) : null,
             };
-            state.prevLap[num] = snap;
-            const cls = (state.lapClsByLap[num] || {})[data.lastLap.lap];
-            if (!cls || (cls !== 'COOL' && cls !== 'ABORT'
-                    && cls !== 'OUT' && cls !== 'IN')) {
-                state.prevFastLap[num] = snap;
-            }
         }
 
         // Rollover → new lap starting: re-arm the sector-clear overlay so
@@ -503,19 +494,13 @@
 
     // driverLapClassification:{num} {lap, trackPct, type}. type ∈
     // PUSH / SLOW / OUT / PIT / STOP / "" (race). Gate the current-lap
-    // indicator so a retroactive finalize for an older lap can't regress
-    // it; keep a per-lap map for the prevFastLap decision.
+    // indicator so a retroactive finalize for an older lap can't regress it.
     messageBus.on('driverLapClassification:', (topic, data) => {
         const num = topic.split(':')[1];
         if (!num || !data) return;
         const curr = state.lapCls[num] || { lap: 0 };
         if (data.lap != null && data.lap >= (curr.lap || 0)) {
             state.lapCls[num] = { lap: data.lap, status: data.type };
-        }
-        if (data.lap != null) {
-            const map = state.lapClsByLap[num] || {};
-            map[data.lap] = data.type;
-            state.lapClsByLap[num] = map;
         }
         render();
     });
@@ -540,14 +525,12 @@
         // (lap counts, sector times, last-lap snapshot) hanging around.
         state.lapTimes = {};
         state.prevLap = {};
-        state.prevFastLap = {};
         state.sectorsCleared = {};
         state.tyres = {};
         state.currentTyre = {};
         state.tyreHistory = {};
         state.status = {};
         state.lapCls = {};
-        state.lapClsByLap = {};
         state.prediction = {};
         state.currentLap = 0;
         state.qualifyingSegment = null;
@@ -557,18 +540,6 @@
     });
 
     // ─── Render ───
-
-    // Practice / qualifying only: when the driver isn't on a flying lap
-    // (out lap, slow/cool-down, in-pit, etc.) the current-lap timing
-    // data is irrelevant. Hide sectors / last-lap / Δ / mini-segments so
-    // the row only shows persistent info (best lap, gap, tyres).
-    const SLOW_CLASSIFICATIONS = new Set(['OUT', 'SLOW']);
-    function isSlowLap(num) {
-        if (state.status[num] === 'PIT') return true;
-        if (state.status[num] === 'STOP' || state.status[num] === 'RET') return true;
-        const lc = state.lapCls[num];
-        return !!(lc && SLOW_CLASSIFICATIONS.has(lc.status));
-    }
 
     function emptySectorCells() {
         return '<span class="sector-time sector-empty"></span>'.repeat(3);
