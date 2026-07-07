@@ -50,8 +50,9 @@ class SectorTimingProcessor(Processor):
         self._is_race = session_type == "race"
         self._sectors: dict[str, list] = {}
         self._status: dict[str, Optional[str]] = {}   # num -> driverStatus
-        self._cls: dict[str, Optional[str]] = {}       # num -> last lap classification
-        self._finished_rolled: dict[str, bool] = {}    # finished driver has rolled into the slow-down lap
+        self._cls_lap: dict[str, dict] = {}            # num -> {lap -> classification type}
+        self._current_lap: dict[str, Any] = {}         # num -> driverLaps.currentLap
+        self._display_lap: dict[str, Any] = {}         # num -> lap the SHOWN sectors belong to
         self._part: Optional[int] = None   # current qualifying part (reset trigger)
         # Max segment count seen per sector (track-wide — all cars share the
         # mini-sector layout). Mini-sector arrays are padded to this on every
@@ -78,11 +79,15 @@ class SectorTimingProcessor(Processor):
         elif topic.startswith("driverLapClassification:"):
             num = topic.split(":", 1)[1]
             if isinstance(data, dict):
-                t = data.get("type")
-                if t != self._cls.get(num):
-                    self._cls[num] = t
+                lap = data.get("lap")
+                if isinstance(lap, int) and self._cls_lap.setdefault(num, {}).get(lap) != data.get("type"):
+                    self._cls_lap[num][lap] = data.get("type")
                     if num in self._sectors:
                         self._emit(num, clock_time)
+        elif topic.startswith("driverLaps:"):
+            num = topic.split(":", 1)[1]
+            if isinstance(data, dict) and data.get("currentLap") is not None:
+                self._current_lap[num] = data["currentLap"]
 
     def _suppress_mode(self, num: str):
         """(blank_sectors: bool, mini_mode: 'white'|'blank'|None) for the driver's
@@ -90,17 +95,19 @@ class SectorTimingProcessor(Processor):
         st = self._status.get(num)
         if st in ("RET", "STOP", "DSQ", "ELIMINATED"):
             return (True, "blank")                    # retired / eliminated → blank both
-        if st == "FINISHED":
-            # White override applies to laps AFTER the flag — the last competitive
-            # (finishing) lap keeps its colours until the driver rolls into the
-            # slow-down lap. (user 2026-07-07)
-            return (True, "white") if self._finished_rolled.get(num) else (False, None)
+        # Suppress by the classification of the lap the DISPLAYED sectors belong to
+        # (NOT the live cls — at a lap boundary the sticky S3/mini are the PREVIOUS
+        # lap's). The post-chequered slow-down lap is classified SLOW, so this
+        # covers FINISHED too: the finishing lap keeps its class, the slow-down lap
+        # is SLOW. (user 2026-07-07)
+        dcls = self._cls_lap.get(num, {}).get(self._display_lap.get(num))
         if not self._is_race:
-            cls = self._cls.get(num)
-            if st == "PIT" or cls == "PIT":
-                return (True, "blank")                # in-lap (entering pits) → blank all mini
-            if st == "OUT" or cls in ("OUT", "SLOW"):
-                return (True, "white")                # out-lap / cool-down → paint painted segments white
+            if dcls == "PIT":
+                return (True, "blank")                # in-lap → blank all mini
+            if dcls in ("OUT", "SLOW"):
+                return (True, "white")                # out / cool-down → painted segments white
+        elif st == "FINISHED" and dcls in ("OUT", "PIT", "SLOW"):
+            return (True, "white")                    # race: only a FINISHED driver's slow-down lap
         return (False, None)
 
     def _handle_part(self, data: Any, clock_time: datetime) -> None:
@@ -122,6 +129,8 @@ class SectorTimingProcessor(Processor):
             if not isinstance(d, dict):
                 continue
             sectors = self._sectors.setdefault(num, _empty_sectors())
+            if self._display_lap.get(num) is None:
+                self._display_lap[num] = self._current_lap.get(num)
 
             # Sector times are STICKY: a completed lap's sectors stay shown
             # until F1 clears them. At the new lap F1 sends Value="" per sector
@@ -141,25 +150,17 @@ class SectorTimingProcessor(Processor):
                     s = sectors[i]
                     if "Value" in sec:
                         if sec["Value"]:
-                            # Out/slow/in laps (P/Q): don't STORE the sector time —
-                            # it's blanked and must not carry (sticky) into the lap
-                            # that starts after it. (user 2026-07-07)
-                            if (not self._is_race
-                                    and (self._status.get(num) in ("OUT", "PIT")
-                                         or self._cls.get(num) in ("OUT", "PIT", "SLOW"))):
-                                s["value"] = None
-                            else:
-                                s["value"] = sec["Value"]
+                            s["value"] = sec["Value"]
                         else:
-                            # Explicit clear (lap rollover) — reset this sector.
+                            # Explicit clear (lap rollover) — reset this sector and
+                            # advance the DISPLAY lap to the current lap: the shown
+                            # sectors now belong to the new lap (the boundary S3/mini
+                            # before this belonged to the previous lap). (user)
                             s["value"] = None
                             s["overallFastest"] = False
                             s["personalFastest"] = False
                             s["segments"] = []
-                            # A finished driver rolling into the slow-down lap →
-                            # the white override now applies (user 2026-07-07).
-                            if self._status.get(num) == "FINISHED":
-                                self._finished_rolled[num] = True
+                            self._display_lap[num] = self._current_lap.get(num)
                         changed = True
                     if "OverallFastest" in sec:
                         s["overallFastest"] = bool(sec["OverallFastest"]); changed = True
