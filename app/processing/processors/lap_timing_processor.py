@@ -75,6 +75,10 @@ class LapTimingProcessor(Processor):
         self._is_race = session_type == "race"   # "race" covers race + sprint
         self._is_quali = session_type == "qualifying"
         self._started = False
+        # Race: NoL at lights out (formation-lap crossings) — subtracted so racing
+        # lap 1 = currentLap 1. currentLap 1 is otherwise never emitted: NoL is
+        # already 1 before lights out, so the first driverLaps gives currentLap 2.
+        self._race_nol_base: Optional[int] = None
         self._pos: dict[str, int] = {}                       # num -> Position (quali zone-red)
         self._nol: dict[str, int] = {}                       # num -> current NoL
         self._laps: dict[str, dict[int, dict]] = {}          # num -> {lap -> {time,pb,ob,part}}
@@ -156,7 +160,14 @@ class LapTimingProcessor(Processor):
         """Number of laps completed when the counter reads `nol`."""
         if nol is None:
             return 0
-        return nol if self._is_race else nol - 1
+        if self._is_race:
+            # Subtract the formation-lap crossings (NoL is already ~1 at lights
+            # out), so racing lap 1 completes at NoL=base+1, not NoL=1. Without
+            # this, currentLap started at 2 and lap-1 sectors leaked into the
+            # lap-2 reference. (user 2026-07-08)
+            base = self._race_nol_base if self._race_nol_base is not None else 1
+            return max(0, nol - base)
+        return nol - 1
 
     def _handle_timing(self, data: Any, clock_time: datetime) -> None:
         lines = data.get("Lines") if isinstance(data, dict) else None
@@ -269,6 +280,8 @@ class LapTimingProcessor(Processor):
 
     def _advance(self, num: str, new_nol: int, bundled_ll: Optional[dict],
                  clock_time: datetime) -> bool:
+        if self._is_race and self._race_nol_base is None:
+            self._race_nol_base = new_nol   # first NoL after lights out = formation offset
         prev = self._nol.get(num)
         self._nol[num] = new_nol
         laps = self._laps.setdefault(num, {})
