@@ -78,11 +78,11 @@
 
 .driver-list.standings-practice .driver-row,
 .driver-list.standings-practice .driver-header {
-    /* rank | color | tla | status | best | gap | lap-time | S1 | S2 | S3 | mini | tyres | laps | laps-end-spacer | color-end | tla-end
-     * Order: last lap before sectors before mini-sectors (q9JVTQZg).
+    /* rank | color | tla | status | best | best-gap-spacer | gap | lap-time | lap-sec-spacer | S1 | S2 | S3 | mini | tyres | laps | laps-end-spacer | color-end | tla-end  (q9JVTQZg)
+     * Order: last lap before sectors before mini-sectors.
      * color-end + tla-end mirror the row identifier at the right edge.
      * laps-end-spacer = breathing room between Laps and the row-end TLA. */
-    grid-template-columns: 3fr 14px 5fr 4fr 11fr 6fr 9fr 6fr 6fr 6fr 13fr 24fr 4fr 2fr 14px 5fr;
+    grid-template-columns: 3fr 14px 5fr 4fr 11fr 3fr 6fr 9fr 4fr 6fr 6fr 6fr 13fr 17fr 4fr 2fr 14px 5fr;
 }
 
 .driver-list.standings-qualifying .driver-row,
@@ -95,12 +95,12 @@
 
 .driver-list.standings-race .driver-row,
 .driver-list.standings-race .driver-header {
-    /* rank | color | tla | status | gap | gap-int-spacer | int | lap-time | S1 | S2 | S3 | mini | best-lap | spacer | tyres | laps | laps-end-spacer | color-end | tla-end  (q9JVTQZg)
+    /* rank | color | tla | status | gap | gap-int-spacer | int | int-lap-spacer | lap-time | lap-sec-spacer | S1 | S2 | S3 | mini | best-lap | spacer | tyres | laps | laps-end-spacer | color-end | tla-end  (q9JVTQZg)
      * Penalties merged into the status badge; standalone column dropped.
      * Status widened to hold the penalty label (! +5s, ! +10s, ! DT, ! S&G).
      * gap-int-spacer = matches best-lap → tyres spacer for visual rhythm.
      * laps-end-spacer = breathing room between Laps and the row-end TLA. */
-    grid-template-columns: 3fr 14px 5fr 8fr 7fr 2fr 7fr 8fr 6fr 6fr 6fr 11fr 9fr 1fr 22fr 4fr 2fr 14px 5fr;
+    grid-template-columns: 3fr 14px 5fr 8fr 7fr 2fr 7fr 3fr 8fr 4fr 6fr 6fr 6fr 11fr 9fr 1fr 15fr 4fr 2fr 14px 5fr;
 }
 
 /* ─── Cells ─── */
