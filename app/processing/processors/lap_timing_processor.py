@@ -402,10 +402,11 @@ class LapTimingProcessor(Processor):
 
     def _reconcile_best(self, num: str, bt: dict, clock_time: datetime) -> bool:
         """Correct the best against F1's authoritative BestLapTime for what the
-        sticky PersonalFastest flag can't express. Value="" → the best was DELETED
-        (track limits); a present value SLOWER than our stored best → a demotion to
-        a surviving lap. Improvements already arrive via the PersonalFastest path,
-        so a faster-or-equal value is a no-op here."""
+        sticky PersonalFastest flag can't express: Value="" → the best was DELETED
+        (track limits); a SLOWER value → a demotion to a surviving lap; a value
+        after we've cleared → RESTORE (F1 sometimes blanks then re-sets the same
+        value a few ms later — Silverstone Q, NOR 1:30.186). Normal improvements
+        arrive via the PersonalFastest path, so a faster/equal value is a no-op."""
         v = bt.get("Value")
         cur = self._best.get(num)
         if v == "" or v is None:
@@ -416,11 +417,33 @@ class LapTimingProcessor(Processor):
             self._reprice(clock_time)
             return True
         ms = _parse_ms(v)
-        if ms is None or cur is None or ms <= cur["ms"]:
-            return False                              # improvement/equal handled elsewhere
-        self._best[num] = {"lap": bt.get("Lap"), "time": v, "ms": ms, "part": self._part}
+        if ms is None or (cur is not None and cur["ms"] == ms):
+            return False
+        if cur is None:
+            # Restore a transient-cleared best. Guard against re-adopting a PRIOR-
+            # part best after a part reset: only restore a value that matches a lap
+            # DRIVEN in the current part.
+            lap = self._lap_of_value(num, v)
+            if lap is None:
+                return False
+            self._best[num] = {"lap": lap, "time": v, "ms": ms,
+                               "part": self._lap_part.get(num, {}).get(lap, self._part)}
+        elif ms > cur["ms"]:
+            # Demotion to a surviving slower lap after a deletion.
+            self._best[num] = {"lap": bt.get("Lap"), "time": v, "ms": ms, "part": self._part}
+        else:
+            return False                              # faster than stored → PersonalFastest path
         self._reprice(clock_time)
         return True
+
+    def _lap_of_value(self, num: str, time_str: str) -> Optional[int]:
+        """Lap number of a recorded time driven in the current part (None if not
+        found) — validates a best-lap restore belongs to this part."""
+        for lap, vv in self._laps.get(num, {}).items():
+            if vv.get("time") == time_str and (
+                    self._part is None or self._lap_part.get(num, {}).get(lap) == self._part):
+                return lap
+        return None
 
     def _reprice(self, clock_time: datetime) -> None:
         """Recompute the part reference from the current active bests and recolour.
