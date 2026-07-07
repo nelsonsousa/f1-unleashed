@@ -110,6 +110,7 @@ class LapDeltaProcessor(Processor):
             return
         self._bus.emit(f"driverDelta:{num}", {
             "deltaMs": int(elapsed - best_t),
+            "refMs": int(best_t),   # reference lap's time to THIS point (SLOW ratio denominator)
             "lap": data.get("lap"),
             "trackPct": dp,
         }, clock_time)
