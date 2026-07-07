@@ -317,8 +317,15 @@
         render();
     });
 
-    // (fastestLap handler removed — the client-tracked overall-fastest holder fed
-    // only client-derived purple/PB colour, which moved server-side. atcmh1cL)
+    // driverBestLapColour:{num} {lap, colour} — server-computed best-lap colour
+    // (atcmh1cL): purple=current fastest-overall holder, else Δ-to-fastest band;
+    // null clears it. (Replaces the removed client fastestLap purple/PB tracking.)
+    messageBus.on('driverBestLapColour:', (topic, data) => {
+        const num = topic.split(':')[1];
+        if (!num || !data) return;
+        ensureData(num).bestLapColour = data.colour || null;
+        render();
+    });
 
     // driverLaps:{num} {currentLap, laps:{n:{time,personalBest,overallBest}},
     //                    lastLap:{lap,time,personalBest,overallBest}|null,
@@ -644,14 +651,18 @@
     // (bandClass / parseSectorMs / fastestSectors removed — the client-derived
     // Δ-to-fastest colour bands moved server-side. atcmh1cL)
 
+    const BEST_LAP_COLOUR_CLASS = {
+        purple: 'lap-purple', blue: 'band-blue', green: 'band-green',
+        yellow: 'band-yellow', orange: 'band-orange', red: 'band-red',
+    };
+
     function bestLapCell(num) {
         const e = state.driverData[num] || {};
         const t = state.timing[num] || {};
-        // (Suppression + colour derivation removed — the client renders the
-        // server's bestLap value and will apply a server-emitted colour class.
-        // Until atcmh1cL lands, no purple/PB/band. ybTVoVep / atcmh1cL)
         const txt = e.bestLap || t.bestLapTime || '';
-        const cls = txt ? '' : 'lap-empty';
+        // Server-emitted best-lap colour (atcmh1cL): purple = fastest-overall
+        // holder, else Δ-to-fastest band. Client just applies the class.
+        const cls = txt ? (BEST_LAP_COLOUR_CLASS[e.bestLapColour] || '') : 'lap-empty';
         return `<span class="lap-time ${cls}">${txt || '--:--.---'}</span>`;
     }
 
