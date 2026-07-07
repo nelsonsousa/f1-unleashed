@@ -93,8 +93,10 @@ class SectorTimingProcessor(Processor):
             return (True, "white")                    # chequered → blank sectors, white mini
         if not self._is_race:
             cls = self._cls.get(num)
-            if st in ("OUT", "PIT") or cls in ("OUT", "PIT", "SLOW"):
-                return (True, "white")                # P/Q out/in/slow → blank sectors, white mini
+            if st == "PIT" or cls == "PIT":
+                return (True, "blank")                # in-lap (entering pits) → blank all mini
+            if st == "OUT" or cls in ("OUT", "SLOW"):
+                return (True, "white")                # out-lap / cool-down → paint painted segments white
         return (False, None)
 
     def _handle_part(self, data: Any, clock_time: datetime) -> None:
@@ -180,7 +182,10 @@ class SectorTimingProcessor(Processor):
             self._seg_counts[i] = max(self._seg_counts[i], len(s["segments"]))
             cnt = self._seg_counts[i]
             if mini_mode == "white":
-                mini.append(["#ffffff"] * cnt)
+                # Repaint PAINTED segments white; null stays null — keeps the
+                # painted-vs-null progress shape (where the driver is on track).
+                mini.append(["#ffffff" if seg else None for seg in s["segments"]]
+                            + [None] * (cnt - len(s["segments"])))
             elif mini_mode == "blank":
                 mini.append([None] * cnt)
             else:
