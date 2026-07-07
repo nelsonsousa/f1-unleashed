@@ -328,6 +328,16 @@
         render();
     });
 
+    // driverSectorColour:{num} [c0,c1,c2] — server-computed per-sector colour
+    // (atcmh1cL): vs best-overall in P/Q, vs the leader's same-lap in race; in/out
+    // white. Client just applies sector-{colour}.
+    messageBus.on('driverSectorColour:', (topic, data) => {
+        const num = topic.split(':')[1];
+        if (!num) return;
+        ensureData(num).sectorColour = Array.isArray(data) ? data : [];
+        render();
+    });
+
     // driverLaps:{num} {currentLap, laps:{n:{time,personalBest,overallBest}},
     //                    lastLap:{lap,time,personalBest,overallBest}|null,
     //                    bestLap:{lap,time}|null}
@@ -729,23 +739,18 @@
     // was client-derived. atcmh1cL)
 
     function sectorCells(num) {
-        // Render the CURRENT lap's sectors directly (no prev-lap which-value
-        // fallback) and apply the server's per-sector flags: overallFastest →
-        // purple, personalFastest → green. The race Δ-to-fastest bands were
-        // client-derived → removed; a server band class will replace them.
-        // (ybTVoVep / atcmh1cL)
+        // Render the CURRENT lap's sectors + apply the server-emitted per-sector
+        // colour (driverSectorColour): vs best-overall in P/Q, vs the leader's
+        // same-lap in race; in/out white. (atcmh1cL)
         const lap = state.timing[num];
         const sectors = (lap && lap.sectors) || [{}, {}, {}];
+        const colours = (state.driverData[num] || {}).sectorColour || [];
         const out = [];
         for (let i = 0; i < 3; i++) {
             const s = sectors[i] || {};
             const v = s.value || '';
-            let cls = 'sector-empty';
-            if (v) {
-                if (s.overallFastest) cls = 'sector-purple';
-                else if (s.personalFastest) cls = 'sector-green';
-                else cls = '';
-            }
+            const c = colours[i];
+            const cls = v ? (c ? `sector-${c}` : '') : 'sector-empty';
             out.push(`<span class="sector-time ${cls}">${v || '--.---'}</span>`);
         }
         return out.join('');
