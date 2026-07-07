@@ -52,7 +52,8 @@ class SectorTimingProcessor(Processor):
         self._status: dict[str, Optional[str]] = {}   # num -> driverStatus
         self._cls_lap: dict[str, dict] = {}            # num -> {lap -> classification type}
         self._current_lap: dict[str, Any] = {}         # num -> driverLaps.currentLap
-        self._display_lap: dict[str, Any] = {}         # num -> lap the SHOWN sectors belong to
+        self._display_lap: dict[str, Any] = {}         # num -> lap the SHOWN sector TIMES belong to
+        self._mini_display_lap: dict[str, Any] = {}    # num -> lap the SHOWN mini-sectors belong to
         self._part: Optional[int] = None   # current qualifying part (reset trigger)
         # Max segment count seen per sector (track-wide — all cars share the
         # mini-sector layout). Mini-sector arrays are padded to this on every
@@ -90,17 +91,24 @@ class SectorTimingProcessor(Processor):
                 self._current_lap[num] = data["currentLap"]
 
     def _suppress_mode(self, num: str):
-        """(blank_sectors: bool, mini_mode: 'white'|'blank'|None) for the driver's
-        current suppression state."""
+        """(blank_sectors, mini_mode) for the driver's current suppression state.
+        Sector TIMES use _display_lap (sticky until the rollover Value="" clear);
+        MINI-SECTORS use _mini_display_lap. Mini-sectors paint from the lap START,
+        well before that clear, so keying them off _display_lap left a whole first
+        sector on the PREVIOUS lap's class (push→white / slow→coloured until
+        sector-1 time landed). (user 2026-07-07)"""
         st = self._status.get(num)
         if st in ("RET", "STOP", "DSQ", "ELIMINATED"):
             return (True, "blank")                    # retired / eliminated → blank both
-        # Suppress by the classification of the lap the DISPLAYED sectors belong to
-        # (NOT the live cls — at a lap boundary the sticky S3/mini are the PREVIOUS
-        # lap's). The post-chequered slow-down lap is classified SLOW, so this
-        # covers FINISHED too: the finishing lap keeps its class, the slow-down lap
-        # is SLOW. (user 2026-07-07)
-        dcls = self._cls_lap.get(num, {}).get(self._display_lap.get(num))
+        blank_sectors, _ = self._suppresses(num, self._display_lap.get(num))
+        _, mini_mode = self._suppresses(num, self._mini_display_lap.get(num))
+        return (blank_sectors, mini_mode)
+
+    def _suppresses(self, num: str, lap: Any):
+        """(blank_sectors, mini_mode) for the classification of `lap`. The
+        post-chequered slow-down lap is classified SLOW, so this covers FINISHED
+        too: the finishing lap keeps its class, the slow-down lap is SLOW."""
+        dcls = self._cls_lap.get(num, {}).get(lap)
         if dcls == "CHECKERED":
             return (True, "white")                    # post-chequered slow-down lap (all sessions)
         if not self._is_race:
@@ -131,6 +139,8 @@ class SectorTimingProcessor(Processor):
             sectors = self._sectors.setdefault(num, _empty_sectors())
             if self._display_lap.get(num) is None:
                 self._display_lap[num] = self._current_lap.get(num)
+            if self._mini_display_lap.get(num) is None:
+                self._mini_display_lap[num] = self._current_lap.get(num)
 
             # Sector times are STICKY: a completed lap's sectors stay shown
             # until F1 clears them. At the new lap F1 sends Value="" per sector
@@ -138,6 +148,7 @@ class SectorTimingProcessor(Processor):
             # showing). There is NO NoL-driven reset — the empty-Value clears
             # drive the rollover, so a same-time lap is still seen.
             changed = False
+            seg_painted = False
             sp = d.get("Sectors")
             if sp:
                 items = sp.items() if isinstance(sp, dict) else enumerate(sp)
@@ -176,7 +187,14 @@ class SectorTimingProcessor(Processor):
                             while len(s["segments"]) <= si:
                                 s["segments"].append(None)
                             if "Status" in seg:
-                                s["segments"][si] = _segment_color(seg["Status"]); changed = True
+                                s["segments"][si] = _segment_color(seg["Status"])
+                                changed = True; seg_painted = True
+            # Mini-sectors paint from the lap START: advance _mini_display_lap on the
+            # FIRST segment message after the lap increment, so the new lap's segments
+            # take its own class immediately — instead of the previous lap's, which
+            # _display_lap only sheds at the far-later Value="" clear. (user)
+            if seg_painted and self._mini_display_lap.get(num) != self._current_lap.get(num):
+                self._mini_display_lap[num] = self._current_lap.get(num)
             if changed:
                 self._emit(num, clock_time)
 
