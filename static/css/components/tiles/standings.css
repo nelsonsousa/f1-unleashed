@@ -100,7 +100,7 @@
      * Status widened to hold the penalty label (! +5s, ! +10s, ! DT, ! S&G).
      * gap-int-spacer = matches best-lap → tyres spacer for visual rhythm.
      * laps-end-spacer = breathing room between Laps and the row-end TLA. */
-    grid-template-columns: 3fr 14px 5fr 8fr 7fr 2fr 7fr 3fr 8fr 4fr 6fr 6fr 6fr 11fr 9fr 1fr 15fr 4fr 2fr 14px 5fr;
+    grid-template-columns: 3fr 14px 5fr 8fr 7fr 2fr 7fr 3fr 8fr 2fr 6fr 6fr 6fr 11fr 9fr 1fr 17fr 4fr 2fr 14px 5fr;
 }
 
 /* ─── Cells ─── */
