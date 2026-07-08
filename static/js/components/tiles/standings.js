@@ -806,10 +806,14 @@
         const deltaSec = p.delta / 1000;
         const deltaText = (deltaSec < 0 ? '−' : '+') + Math.abs(deltaSec).toFixed(1);
         const deltaCls = p.deltaColour === 'green' ? 'pred-delta-neg' : 'pred-delta-pos';
-        const posHtml = (p.placesGained > 0)
-            ? `<span class="pred-pos-gain${posCol}"><span class="pred-pos-arrow">&#9650;</span>`
-              + `<span class="pred-pos-num">${p.placesGained}</span></span>`
-            : '<span class="pred-pos-gain pred-pos-zero">=0</span>';
+        // gain → arrow; =0 only for an improving lap with no gain; slower lap → nothing.
+        let posHtml = '';
+        if (p.placesGained > 0) {
+            posHtml = `<span class="pred-pos-gain${posCol}"><span class="pred-pos-arrow">&#9650;</span>`
+                + `<span class="pred-pos-num">${p.placesGained}</span></span>`;
+        } else if (p.placesGained === 0) {
+            posHtml = '<span class="pred-pos-gain pred-pos-zero">=0</span>';
+        }
         return '<span class="pred">'
             + `<span class="pred-delta ${deltaCls}">${deltaText}</span>`
             + posHtml + '</span>';
