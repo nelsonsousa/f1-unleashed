@@ -143,7 +143,10 @@ class SectorColourProcessor(Processor):
         vals = self._sectors.get(num)
         if not vals:
             return [None, None, None]
-        if self._status.get(num) in WHITE_STATUS:
+        # P/Q whites out/in/stop laps here (status = the real-time signal). Races keep
+        # DEFAULT band colours on in/out laps; their retired/stopped white comes from
+        # sector_timing's white flag instead. (user 2026-07-08)
+        if not self._is_race and self._status.get(num) in WHITE_STATUS:
             return ["white" if v is not None else None for v in vals]
         out = [None, None, None]
         for i in range(3):
