@@ -451,7 +451,12 @@
         //    a fixed event offset maps to a new x — the markers must be
         //    re-projected (card 79). A finished replay has a fixed duration, so
         //    this is a no-op once the build completes.
-        if (state.events && (messageBus.isLive || state.duration !== prevDuration)) {
+        // Re-render markers when the coordinate system moved (duration grew — live edge or
+        // replay build) OR a hidden event just crossed the playhead (no-spoiler reveal).
+        const visN = (state.events || []).reduce(
+            (n, ev) => n + (ev.offset_ms <= state.offset * 1000 ? 1 : 0), 0);
+        if (state.events && (state.duration !== prevDuration || visN !== state._lastVisN)) {
+            state._lastVisN = visN;
             renderEventMarkers(state.events);
         }
         startClockAnimation();
@@ -523,7 +528,7 @@
         // RED / SC / VSC / CHEQUERED). T1 = first such marker (≈ session/race
         // green), T2 = chequered (or the last marker). The middle section spans
         // T1→T2; pre-T1 and post-T2 are compressed into the side margins.
-        let chequered = null, firstVisible = null, lastVisible = null;
+        let chequered = null, firstVisible = null;
         for (const ev of state.events || []) {
             if (typeof ev.offset_ms !== 'number') continue;
             const d = typeof ev.data === 'string' ? ev.data : (ev.data?.event || '');
@@ -531,20 +536,27 @@
             if (upper === 'CHEQUERED')
                 chequered = (chequered === null) ? ev.offset_ms : Math.max(chequered, ev.offset_ms);
             if (firstVisible === null || ev.offset_ms < firstVisible) firstVisible = ev.offset_ms;
-            if (lastVisible === null || ev.offset_ms > lastVisible) lastVisible = ev.offset_ms;
         }
         const t1 = firstVisible;
-        const t2 = chequered != null ? chequered : lastVisible;
-        if (t1 == null || t2 == null || t2 <= t1) return [[0, 0], [end, 100]];
+        if (t1 == null) return [[0, 0], [end, 100]];
 
+        // Region 2 ends at the CHEQUERED flag (real session end) — only a finished session
+        // has a post-session tail to compress into region 3. No-spoiler: use the flag only
+        // once the playhead has actually REACHED it; until then (still building, live
+        // before the end, or simply not there yet) region 2 runs to the growing edge, so
+        // the scrubber keeps resizing and the end position isn't revealed early. (Previously
+        // the last discovered event capped region 2, freezing a transient replay's scrubber
+        // between events — that rule was only valid for fully-built DBs.) (user 2026-07-08)
+        const t2 = (chequered != null && chequered <= state.offset * 1000) ? chequered : null;
         const Y = Math.max(0, Math.min(t1 - FIVE_MIN_MS, end));
-        const Zraw = t2 + FIVE_MIN_MS;
-        const Z = Math.min(Zraw, end);
-        const hasR3 = Zraw < end - 1;
-        const rightPct = hasR3 ? (100 - sidePct) : 100;
         const pts = [[0, 0]];
         if (Y > 0) pts.push([Y, sidePct]);
-        if (Z > Y) pts.push([Z, rightPct]);
+        if (t2 != null && t2 > t1) {
+            const Zraw = t2 + FIVE_MIN_MS;
+            const Z = Math.min(Zraw, end);
+            const rightPct = (Zraw < end - 1) ? (100 - sidePct) : 100;
+            if (Z > Y) pts.push([Z, rightPct]);
+        }
         if (pts[pts.length - 1][0] < end) pts.push([end, 100]);
         return pts;
     }
@@ -644,10 +656,10 @@
         // user-spec'd: 0.5 px dark stroke on each SVG handles the
         // visual separation).
         for (const ev of events) {
-            // No-spoiler rule: in LIVE, never reveal an event that is ahead
-            // of the current playback point (even if the data has already
-            // arrived because playback is lagging the live edge).
-            if (messageBus.isLive && ev.offset_ms > state.offset * 1000) continue;
+            // No-spoiler rule (live + replay): never render a marker ahead of the current
+            // playback point. Markers reveal progressively as the playhead crosses them
+            // (handleClockUpdate re-renders on that). (user 2026-07-08)
+            if (ev.offset_ms > state.offset * 1000) continue;
             const pct = offsetToPct(ev.offset_ms);
             if (pct < 0 || pct > 100) continue;
 
@@ -1398,6 +1410,7 @@
         if (data.duration) {
             state.duration = data.duration;
             renderEventMarkers(state.events);
+            updateScrubberPosition();   // dot pct depends on the (grown) coordinate system
         }
     }
 
