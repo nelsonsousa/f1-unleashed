@@ -950,7 +950,7 @@
         } else if (IS_QUALI) {
             mid = [bestLapCell(num), gapCell(num), lastLapCell(num), predictionCell(num),
                    sec[0], sec[1], sec[2], mini,
-                   `<span class="tyres">${tyreCell(num, true)}</span>`, laps];
+                   `<span class="tyres">${tyreCell(num, false)}</span>`, laps];  // Q: full tyre history (like race)
         } else {
             mid = [bestLapCell(num), gapCell(num), lastLapCell(num),
                    sec[0], sec[1], sec[2], mini,
