@@ -239,6 +239,8 @@ class DriverGapProcessor(Processor):
                 v = d["IntervalToPositionAhead"]
                 if isinstance(v, dict):
                     v = v.get("Value", "")
+                if isinstance(v, str) and v.strip().upper().startswith("LAP"):
+                    v = ""   # leader has no car ahead — the feed's "LAP N" is noise (user)
                 trend = self._int_state(num, _secs(v), self._race_pos.get(num))
                 payload = {"interval": v, "trend": trend}
                 if payload != self._last_int.get(num):

@@ -85,7 +85,7 @@
      * laps-end-spacer = breathing room between Laps and the row-end TLA. */
     /* rank·color·tla·NUM | status·best·—·gap·last·—·S1·S2·S3·mini·tyres·laps·— | tla·color·RANK */
     /* Fixed content-based widths (monospace numerics). tyres = 1 current + 4 previous. */
-    grid-template-columns: 18px 14px 32px 20px 36px 94px 0 72px 88px 0 54px 54px 54px 150px 220px 22px 0 32px 14px 18px;
+    grid-template-columns: 22px 14px 32px 20px 36px 94px 0 72px 88px 0 54px 54px 54px 150px 220px 22px 0 32px 14px 22px;
 }
 
 .driver-list.standings-qualifying .driver-row,
@@ -95,7 +95,7 @@
      * column needs ~half the width of the multi-stint practice/race tyres. */
     /* rank·color·tla·NUM | status·best·gap·last·delta·S1·S2·S3·mini·tyre·laps·— | tla·color·RANK */
     /* Fixed content-based widths (monospace numerics). tyre = current only. */
-    grid-template-columns: 18px 14px 32px 20px 36px 94px 72px 88px 55px 54px 54px 54px 150px 46px 22px 0 32px 14px 18px;
+    grid-template-columns: 22px 14px 32px 20px 36px 94px 72px 88px 92px 54px 54px 54px 150px 46px 22px 0 32px 14px 22px;
 }
 
 .driver-list.standings-race .driver-row,
@@ -108,7 +108,7 @@
     /* rank·color·tla·NUM | status·gap·—·int·—·last·—·S1·S2·S3·mini·best·—·tyres·laps·— | tla·color·RANK */
     /* Fixed content-based widths (monospace numerics). status = 3 badges; tyres =
        1 current + 2 previous. */
-    grid-template-columns: 18px 14px 32px 20px 92px 80px 0 64px 0 88px 0 54px 54px 54px 150px 94px 0 135px 22px 0 32px 14px 18px;
+    grid-template-columns: 22px 14px 32px 20px 92px 72px 0 72px 0 88px 0 54px 54px 54px 150px 94px 0 135px 22px 0 32px 14px 22px;
 }
 
 /* ─── Cells ─── */
