@@ -797,20 +797,20 @@
         const p = state.prediction[num];
         if (!p) return '<span class="pred"></span>';
         const hasDelta = p.delta != null;
-        const hasPos = p.predictedPos != null;      // only present for an improving lap
+        const hasPos = p.predictedPos != null;
         if (!hasDelta && !hasPos) return '<span class="pred"></span>';
         const posCol = p.posColour ? ` c-${p.posColour}` : '';
-        if (!hasDelta) {
-            // No lap this part, improving → predicted position only.
-            return `<span class="pred"><span class="pred-pos-gain pred-pos-pred${posCol}">P${p.predictedPos}</span></span>`;
-        }
-        // Has a lap → delta (green improving / yellow slower); position only when improving.
-        const deltaSec = p.delta / 1000;
-        const deltaText = (deltaSec < 0 ? '−' : '+') + Math.abs(deltaSec).toFixed(1);
-        const deltaCls = p.deltaColour === 'green' ? 'pred-delta-neg' : 'pred-delta-pos';
         const posHtml = hasPos ? `<span class="pred-pos-gain${posCol}">P${p.predictedPos}</span>` : '';
-        return '<span class="pred">'
-            + `<span class="pred-delta ${deltaCls}">${deltaText}</span>` + posHtml + '</span>';
+        // Always render the delta slot (empty when no delta) so the position keeps the
+        // same place whether or not a delta shows. (user 2026-07-08)
+        let deltaHtml = '<span class="pred-delta"></span>';
+        if (hasDelta) {
+            const deltaSec = p.delta / 1000;
+            const deltaText = (deltaSec < 0 ? '−' : '+') + Math.abs(deltaSec).toFixed(1);
+            const deltaCls = p.deltaColour === 'green' ? 'pred-delta-neg' : 'pred-delta-pos';
+            deltaHtml = `<span class="pred-delta ${deltaCls}">${deltaText}</span>`;
+        }
+        return `<span class="pred">${deltaHtml}${posHtml}</span>`;
     }
 
     function formatLapTimeOneDecimal(ms) {
