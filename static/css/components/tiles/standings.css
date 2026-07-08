@@ -82,7 +82,8 @@
      * Order: last lap before sectors before mini-sectors.
      * color-end + tla-end mirror the row identifier at the right edge.
      * laps-end-spacer = breathing room between Laps and the row-end TLA. */
-    grid-template-columns: 3fr 14px 5fr 4fr 11fr 3fr 6fr 9fr 2fr 6fr 6fr 6fr 13fr 19fr 4fr 2fr 14px 5fr;
+    /* rank·color·tla·NUM | status·best·—·gap·last·—·S1·S2·S3·mini·tyres·laps·— | tla·color·RANK */
+    grid-template-columns: 3fr 14px 5fr 4fr 4fr 10fr 3fr 6fr 8fr 2fr 6fr 6fr 6fr 13fr 15fr 3fr 2fr 5fr 14px 3fr;
 }
 
 .driver-list.standings-qualifying .driver-row,
@@ -90,7 +91,8 @@
     /* rank | color | tla | status | best | gap | lap-time | delta | S1 | S2 | S3 | mini | tyres | laps | laps-end-spacer | color-end | tla-end  (q9JVTQZg)
      * tyres = 4fr: quali shows only the current tyre (one stint), so the
      * column needs ~half the width of the multi-stint practice/race tyres. */
-    grid-template-columns: 3fr 14px 5fr 4fr 11fr 6fr 9fr 9fr 6fr 6fr 6fr 13fr 4fr 4fr 2fr 14px 5fr;
+    /* rank·color·tla·NUM | status·best·gap·last·delta·S1·S2·S3·mini·tyre·laps·— | tla·color·RANK */
+    grid-template-columns: 3fr 14px 5fr 4fr 3fr 10fr 6fr 8fr 9fr 6fr 6fr 6fr 13fr 4fr 3fr 2fr 5fr 14px 3fr;
 }
 
 .driver-list.standings-race .driver-row,
@@ -100,7 +102,8 @@
      * Status widened to hold the penalty label (! +5s, ! +10s, ! DT, ! S&G).
      * gap-int-spacer = matches best-lap → tyres spacer for visual rhythm.
      * laps-end-spacer = breathing room between Laps and the row-end TLA. */
-    grid-template-columns: 3fr 14px 5fr 8fr 7fr 2fr 7fr 3fr 8fr 2fr 6fr 6fr 6fr 11fr 9fr 1fr 17fr 4fr 2fr 14px 5fr;
+    /* rank·color·tla·NUM | status·gap·—·int·—·last·—·S1·S2·S3·mini·best·—·tyres·laps·— | tla·color·RANK */
+    grid-template-columns: 3fr 14px 5fr 4fr 8fr 7fr 2fr 7fr 3fr 8fr 2fr 6fr 6fr 6fr 11fr 9fr 1fr 13fr 4fr 2fr 5fr 14px 3fr;
 }
 
 /* ─── Cells ─── */
@@ -123,6 +126,20 @@
 .driver-tla {
     font-weight: 700;
     min-width: 0;
+}
+
+/* Car number — secondary identifier next to the start TLA (small, muted). */
+.driver-num {
+    text-align: left;
+    font-size: 12px;
+    color: var(--text-muted);
+    min-width: 0;
+}
+
+/* Rank repeated at the row END — mirrors the start rank (left-aligned so it sits
+   beside the end colour stripe, as the start rank sits beside the start stripe). */
+.rank-end {
+    text-align: left;
 }
 
 /* Status — no background, text-only colour coding. */

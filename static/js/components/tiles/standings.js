@@ -896,9 +896,11 @@
         if (isDriverDSQ(num)) cls.push('dsq');
 
         let cols = '';
+        // Start identifier block: rank · colour · TLA · car number.
         cols += `<span class="rank">${idx + 1}</span>`;
         cols += `<span class="driver-color" style="--team-color:${drv.color}"></span>`;
         cols += `<span class="driver-tla">${drv.tla}</span>`;
+        cols += `<span class="driver-num">${num}</span>`;
 
         // Canonical column order (all session types):
         //   ... | mini-sectors | sectors | lap time | <session tail>
@@ -952,11 +954,12 @@
         cols += lapCountCell(num);
         cols += '<span class="col-spacer"></span>';
 
-        // Driver colour + TLA mirrored at the END of the row so each
-        // driver is easy to identify regardless of how wide / scrolled
-        // the row is.
-        cols += `<span class="driver-color driver-color-end" style="--team-color:${drv.color}"></span>`;
+        // End identifier block, MIRRORED (reversed vs the start): TLA · colour ·
+        // rank. So each driver is identifiable regardless of how wide / scrolled the
+        // row is, and the rank bookends both sides. No car number at this end.
         cols += `<span class="driver-tla driver-tla-end">${drv.tla}</span>`;
+        cols += `<span class="driver-color driver-color-end" style="--team-color:${drv.color}"></span>`;
+        cols += `<span class="rank rank-end">${idx + 1}</span>`;
 
         return `<div class="${cls.join(' ')}" data-driver="${num}">${cols}</div>`;
     }
@@ -972,7 +975,7 @@
         // the Driver span keeps subsequent spans flowing into col 4+.
         const idHdr =
             '<span></span>' +                                        /* rank */
-            '<span style="grid-column: 2 / span 2">Driver</span>' +  /* color + tla */
+            '<span style="grid-column: 2 / span 3">Driver</span>' +  /* color + tla + num */
             '<span></span>';                                         /* status */
 
         if (IS_RACE) {
@@ -994,7 +997,7 @@
                 '<span>Tyres</span>' +
                 '<span>Laps</span>' +
                 '<span></span>' + /* laps-end-spacer */
-                '<span></span><span></span>' + /* color-end + tla-end */
+                '<span></span><span></span><span></span>' + /* tla-end + color-end + rank-end */
                 '</div>'
             );
         }
@@ -1013,7 +1016,7 @@
                 '<span>Tyre</span>' +
                 '<span>Laps</span>' +
                 '<span></span>' + /* laps-end-spacer */
-                '<span></span><span></span>' + /* color-end + tla-end */
+                '<span></span><span></span><span></span>' + /* tla-end + color-end + rank-end */
                 '</div>'
             );
         }
