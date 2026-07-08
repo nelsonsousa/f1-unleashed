@@ -52,10 +52,10 @@ class LapDeltaProcessor(Processor):
         super().__init__(bus, session_type)
         self._enabled = session_type in ("practice", "qualifying")
         self._laps: dict[str, dict[int, list]] = {}    # num -> {lap: [(dp, t_ms)]}
-        self._best_num: dict[str, int] = {}             # num -> reference lap number (driverLaps)
-        self._ref_full: dict[str, int] = {}             # num -> reference lap's FULL time ms
-        self._best_curve: dict[str, list] = {}          # num -> sorted [(dp, t_ms)]
-        self._best_curve_lap: dict[str, int] = {}       # num -> lap the curve was built for
+        self._best_num: dict[str, int] = {}             # num -> own reference lap number (driverLaps)
+        self._ref_full: dict[str, int] = {}             # num -> own reference lap's FULL time ms
+        self._curves: dict[tuple, list] = {}            # (num, lap) -> sorted [(dp, t_ms)]
+        self._fastest: Optional[tuple] = None           # session-fastest lap (num, lap, time_ms) — priority 3
 
     def subscribe(self) -> None:
         if self._enabled:
@@ -73,6 +73,13 @@ class LapDeltaProcessor(Processor):
                     pass
         elif topic.startswith("driverLaps:"):
             self._on_driver_laps(topic.split(":", 1)[1], data)
+        elif topic == "fastestLap":
+            # Priority-3 reference: the session-fastest overall lap, for a driver with
+            # NO lap of their own. Only updates when a new fastest is set. (user 2026-07-08)
+            if isinstance(data, dict) and data.get("num") is not None and isinstance(data.get("lap"), int):
+                t = _parse_ms(data.get("time"))
+                if t is not None:
+                    self._fastest = (data["num"], data["lap"], t)
 
     def _on_lap(self, num: str, lap: int, samples: Any) -> None:
         if not isinstance(samples, list):
@@ -100,19 +107,34 @@ class LapDeltaProcessor(Processor):
             if t is not None:
                 self._ref_full[num] = t
 
-    def _ref_curve(self, num: str) -> Optional[list]:
-        """The current best lap's curve, rebuilt only once its telemetryLap is
-        cached — so a freshly-set best never resolves to a stale reference."""
-        bn = self._best_num.get(num)
-        if bn is None:
+    def _build_curve(self, num: str, lap: Optional[int]) -> Optional[list]:
+        """Sorted [(dp, t_ms)] for a driver's lap, cached by (num, lap). None until
+        that lap's telemetryLap is cached — so a reference never resolves stale."""
+        if lap is None:
             return None
-        if self._best_curve_lap.get(num) != bn:
-            c = self._laps.get(num, {}).get(bn)
-            if not c:
-                return None   # best lap known but its telemetry not cached yet
-            self._best_curve[num] = sorted(c, key=lambda x: x[0])
-            self._best_curve_lap[num] = bn
-        return self._best_curve[num]
+        key = (num, lap)
+        cached = self._curves.get(key)
+        if cached is not None:
+            return cached
+        c = self._laps.get(num, {}).get(lap)
+        if not c:
+            return None
+        curve = sorted(c, key=lambda x: x[0])
+        self._curves[key] = curve
+        return curve
+
+    def _ref(self, num: str):
+        """(curve, refFullMs) for the reference lap: the driver's own best (this-part
+        or overall) if known, else the session-fastest overall lap (another driver's)."""
+        bn = self._best_num.get(num)
+        if bn is not None:
+            curve = self._build_curve(num, bn)
+            return (curve, self._ref_full.get(num)) if curve else (None, None)
+        if self._fastest is not None:
+            curve = self._build_curve(self._fastest[0], self._fastest[1])
+            if curve:
+                return curve, self._fastest[2]
+        return None, None
 
     def _on_live(self, num: str, data: Any, clock_time: datetime) -> None:
         if not isinstance(data, dict):
@@ -121,7 +143,7 @@ class LapDeltaProcessor(Processor):
         elapsed = data.get("lapElapsedMs")
         if dp is None or elapsed is None or elapsed < MIN_ELAPSED_MS:
             return
-        curve = self._ref_curve(num)
+        curve, ref_full = self._ref(num)
         if not curve:
             return
         best_t = self._interp(curve, dp)
@@ -130,7 +152,7 @@ class LapDeltaProcessor(Processor):
         self._bus.emit(f"driverDelta:{num}", {
             "deltaMs": int(elapsed - best_t),
             "refMs": int(best_t),   # reference lap's time to THIS point (SLOW ratio denominator)
-            "refFullMs": self._ref_full.get(num),   # reference lap's FULL time → predicted = this + delta
+            "refFullMs": ref_full,  # reference lap's FULL time → predicted = this + delta
             "lap": data.get("lap"),
             "trackPct": dp,
         }, clock_time)
