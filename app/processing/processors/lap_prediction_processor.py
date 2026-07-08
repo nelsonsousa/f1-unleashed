@@ -44,6 +44,8 @@ def _parse_ms(s: Any) -> Optional[int]:
 _BLANK = {"lap": None, "delta": None, "placesGained": None,
           "predictedPos": None, "deltaColour": None, "posColour": None}
 
+MIN_TRACK_PCT = 10.0   # don't publish a prediction before 10% of the lap (user 2026-07-08)
+
 
 class LapPredictionProcessor(Processor):
 
@@ -154,6 +156,8 @@ class LapPredictionProcessor(Processor):
             return
         if self._cls.get(num) != "PUSH" or num in self._eliminated:
             return
+        if (data.get("trackPct") or 0) < MIN_TRACK_PCT:
+            return
         delta = data.get("deltaMs")
         ref_full = data.get("refFullMs")
         if delta is None or ref_full is None:
@@ -167,11 +171,13 @@ class LapPredictionProcessor(Processor):
         payload["lap"] = data.get("lap")
         payload["posColour"] = pos_colour
         if my_best is not None:
-            # Has a lap this part → delta + places gained (floored at 0 = "=0").
-            current_rank = 1 + sum(1 for o in others if o < my_best)
+            # Has a lap this part → delta always; places gained only makes sense when
+            # improving (delta<0) — a slower lap shows just the yellow delta, no =0.
             payload["delta"] = delta
-            payload["placesGained"] = max(0, current_rank - predicted_rank)
             payload["deltaColour"] = "green" if delta < 0 else "yellow"
+            if delta < 0:
+                current_rank = 1 + sum(1 for o in others if o < my_best)
+                payload["placesGained"] = max(0, current_rank - predicted_rank)
         else:
             # No lap this part → predicted position only.
             payload["predictedPos"] = predicted_rank
