@@ -92,6 +92,7 @@
     }
 
     function scheduleRender() {
+        if (state.mode === 'live' && _telPlaying) return;   // continuous animateLive covers live playback
         if (state.renderPending) return;
         state.renderPending = true;
         requestAnimationFrame(() => {
@@ -99,6 +100,46 @@
             renderChart();
         });
     }
+
+    // --- smooth live marker/trace (interpolation, mirrors track_map) ---
+    // Live samples arrive at ~3.7Hz; render the marker and the trace's leading edge each
+    // frame at (playback clock − LAG) interpolated between bracketing samples so they
+    // glide instead of snapping. LAG guarantees the "next" sample is already buffered.
+    // Only runs in live-follow mode while playing.
+    const TEL_LAG_MS = 500;
+    let _telPlaying = false;
+
+    function telRenderNowMs() {
+        const ct = messageBus.clockTime, st = messageBus.startTime;
+        if (!ct || !st) return null;
+        return (ct.getTime() - st.getTime()) - TEL_LAG_MS;
+    }
+
+    // Live samples ([dp,speed,rpm,gear,throttle,brake,offsetMs] ascending by offsetMs)
+    // truncated + interpolated to render time t (ms from start). Returns {trace, marker}.
+    function liveViewAt(samples, t) {
+        const last = samples[samples.length - 1];
+        if (t == null || last[6] == null || t >= last[6]) return { trace: samples, marker: last };
+        if (t <= samples[0][6]) return { trace: [samples[0]], marker: samples[0] };
+        let i = samples.length - 1;
+        while (i > 0 && samples[i][6] > t) i--;
+        const a = samples[i], b = samples[i + 1];
+        const f = (t - a[6]) / (b[6] - a[6]);
+        const m = a.slice();
+        for (let k = 0; k < 6; k++) if (k !== 3) m[k] = a[k] + (b[k] - a[k]) * f;   // gear (idx 3) discrete
+        m[6] = t;
+        return { trace: samples.slice(0, i + 1).concat([m]), marker: m };
+    }
+
+    function animateLive() {
+        if (state.mode === 'live' && _telPlaying) renderChart();
+        requestAnimationFrame(animateLive);
+    }
+    requestAnimationFrame(animateLive);
+
+    messageBus.on('playback:status', (data) => {
+        if (data) { _telPlaying = !!data.isPlaying; scheduleRender(); }
+    });
 
     /**
      * Return drivers grouped by team, teams ordered by lowest driver number.
@@ -429,7 +470,7 @@
     // ts, lap, lapElapsedMs}. dp is the track distance %. A change in `lap`
     // marks an S/F crossing → start a fresh live-lap trace. Samples with a
     // null dp (position outage) are skipped.
-    function handleLiveTelemetry(num, data) {
+    function handleLiveTelemetry(num, data, offsetMs) {
         if (!data || typeof data !== 'object') return;
         if (data.dp == null) return;
 
@@ -446,6 +487,7 @@
             data.gear || 0,
             data.throttle || 0,
             data.brake || 0,
+            offsetMs,          // [6] message offset (ms from session start) — for interpolation
         ];
         if (!state.liveSamples[num]) state.liveSamples[num] = [];
         state.liveSamples[num].push(sample);
@@ -547,8 +589,9 @@
                 const color = driver ? driver.color : DEFAULT_CAR_COLOR;
                 const tla = driver ? driver.tla : num;
                 const dashed = teamOrder[num] === 1;
-                drawTrace(ctx, samples, color, channel, margin, plotW, plotH, yMin, yMax, dashed);
-                drawMarker(ctx, samples[samples.length - 1], color, tla,
+                const view = liveViewAt(samples, telRenderNowMs());
+                drawTrace(ctx, view.trace, color, channel, margin, plotW, plotH, yMin, yMax, dashed);
+                drawMarker(ctx, view.marker, color, tla,
                     channel, margin, plotW, plotH, yMin, yMax);
             }
         }
@@ -631,7 +674,8 @@
             let samples = null;
             if (state.mode === 'live') {
                 if (liveTraceSuppressed(num)) continue;  // RET/STOP (+ OUT/PIT in P/Q)
-                samples = state.liveSamples[num];
+                const ls = state.liveSamples[num];
+                samples = (ls && ls.length) ? liveViewAt(ls, telRenderNowMs()).trace : ls;
             } else {
                 const lap = Object.values(currentLaps()).find(l => l.driver === num);
                 if (!lap) continue;
@@ -1219,9 +1263,9 @@
     // Live trace: the server now emits a fully-decoded per-driver sample
     // (dp = track %, channels, lap) — no more client-side CarData.z decode
     // or position-derived distance. One sample per emit.
-    messageBus.on('liveTelemetry:', (topic, data) => {
+    messageBus.on('liveTelemetry:', (topic, data, offsetMs) => {
         const num = topic.split(':')[1];
-        if (num) handleLiveTelemetry(num, data);
+        if (num) handleLiveTelemetry(num, data, offsetMs);
     });
 
     messageBus.on('driverStatus:', (topic, data) => {

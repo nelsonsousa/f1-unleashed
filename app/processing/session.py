@@ -1059,13 +1059,10 @@ class SessionEngine:
                         self._last_offset_ms, target_offset_ms
                     )
 
-                    # Deduplicate: only send latest per topic in this tick
-                    latest: dict[str, tuple[int, Any]] = {}
+                    # Send EVERY message in chronological order (dedup removed — trial:
+                    # gives position/telemetry all their samples for smoother motion;
+                    # rows are ORDER BY offset_ms so sticky-delta topics stay correct).
                     for offset, topic, data in new_messages:
-                        latest[topic] = (offset, data)
-
-                    # Broadcast to clients with offset_ms
-                    for topic, (offset, data) in latest.items():
                         await self._broadcast({"topic": topic, "data": data, "offset_ms": offset})
 
                 # Send clock update

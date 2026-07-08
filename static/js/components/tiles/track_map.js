@@ -218,13 +218,61 @@
     // Handlers
     // =========================================================================
 
-    function handlePosition(data) {
-        if (!data || typeof data !== 'object') return;
+    // --- smooth marker motion (position interpolation) ---
+    // Markers used to snap to each ~3.7Hz position sample. Instead, buffer samples per
+    // car and, each animation frame, render the car at (playback clock − LAG) linearly
+    // interpolated between its two bracketing samples — so it glides between them over
+    // their real time gap. The small lag guarantees the "next" sample is already here.
+    const POS_LAG_MS = 500;
+    const posBuf = {};                       // num -> [{t, x, y}] ascending by t (t = ms from session start)
+
+    function handlePosition(data, offsetMs) {
+        // The bus passes the message offset (ms from session start) as the 2nd arg — a
+        // NUMBER, not a Date (tiles read the live clock from messageBus.clockTime). Use it
+        // directly as the sample timestamp; renderNowMs is the same ms-from-start frame.
+        if (!data || typeof data !== 'object' || offsetMs == null) return;
         for (const [num, coords] of Object.entries(data)) {
             if (!Array.isArray(coords) || coords.length < 2) continue;
-            updateCarMarker(num, coords[0], coords[1]);
+            const buf = posBuf[num] || (posBuf[num] = []);
+            if (buf.length && offsetMs <= buf[buf.length - 1].t) continue;   // dup / out-of-order guard
+            buf.push({ t: offsetMs, x: coords[0], y: coords[1] });
         }
     }
+
+    function renderNowMs() {
+        const ct = messageBus.clockTime, st = messageBus.startTime;
+        if (!ct || !st) return null;
+        return (ct.getTime() - st.getTime()) - POS_LAG_MS;
+    }
+
+    function interpAt(buf, t) {
+        if (t <= buf[0].t) return buf[0];
+        const last = buf[buf.length - 1];
+        if (t >= last.t) return last;                     // clamp — no next sample yet
+        for (let i = buf.length - 1; i > 0; i--) {
+            const a = buf[i - 1], b = buf[i];
+            if (a.t <= t) {
+                const f = (t - a.t) / (b.t - a.t);
+                return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+            }
+        }
+        return buf[0];
+    }
+
+    function animateMarkers() {
+        const t = renderNowMs();
+        if (t !== null) {
+            for (const num in posBuf) {
+                const buf = posBuf[num];
+                if (!buf.length) continue;
+                const p = interpAt(buf, t);
+                updateCarMarker(num, p.x, p.y);
+                while (buf.length >= 2 && buf[1].t <= t) buf.shift();   // drop passed, keep the lo bracket
+            }
+        }
+        requestAnimationFrame(animateMarkers);
+    }
+    requestAnimationFrame(animateMarkers);
 
     function handleDriverList(data) {
         if (!data || typeof data !== 'object') return;
@@ -301,7 +349,7 @@
         const num = topic.split(':')[1];
         if (!num) return;
         state.driverStatus[num] = data;
-        if (data === 'RET' || data === 'STOP') removeCarMarker(num);
+        if (data === 'RET' || data === 'STOP') { removeCarMarker(num); delete posBuf[num]; }
     });
 
     messageBus.on('state:reset', () => {
@@ -313,6 +361,7 @@
         // Reset status too — restore re-applies it up to the seek point, so a
         // backward seek before a RET/STOP correctly re-shows that car (card 55).
         state.driverStatus = {};
+        for (const k in posBuf) delete posBuf[k];
         if (state.trackSvg) {
             state.trackSvg.querySelectorAll('[data-sector]').forEach(p => {
                 p.classList.remove('sector-yellow', 'sector-double-yellow');
