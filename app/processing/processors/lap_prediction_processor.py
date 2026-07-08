@@ -45,6 +45,8 @@ _BLANK = {"lap": None, "delta": None, "predictedPos": None,
           "deltaColour": None, "posColour": None}
 
 MIN_TRACK_PCT = 10.0   # don't publish a prediction before 10% of the lap (user 2026-07-08)
+BUCKET_PCT = 5         # publish at most once per 5% of lap distance
+MEDIAN_WINDOW = 5      # smooth the delta over the last 5 samples
 
 
 class LapPredictionProcessor(Processor):
@@ -60,6 +62,9 @@ class LapPredictionProcessor(Processor):
         self._status: dict[str, Any] = {}
         self._pending: dict[str, int] = {}         # num -> lap a prediction is active for
         self._emitted: dict[str, Optional[tuple]] = {}   # dedup
+        self._buf: dict[str, list] = {}            # num -> last <=5 raw deltaMs (median window)
+        self._bucket: dict[str, int] = {}          # num -> last-published 5% bucket
+        self._buf_lap: dict[str, Any] = {}         # num -> lap the buffer belongs to
 
     def subscribe(self) -> None:
         if self._active:
@@ -119,6 +124,9 @@ class LapPredictionProcessor(Processor):
 
     def _clear(self, num: str, clock_time: datetime) -> None:
         self._pending.pop(num, None)
+        self._buf.pop(num, None)
+        self._bucket.pop(num, None)
+        self._buf_lap.pop(num, None)
         if self._emitted.get(num) is not None:
             self._emitted[num] = None
             self._bus.emit(f"lapPrediction:{num}", dict(_BLANK), clock_time)
@@ -156,16 +164,29 @@ class LapPredictionProcessor(Processor):
             return
         if self._cls.get(num) != "PUSH" or num in self._eliminated:
             return
-        if (data.get("trackPct") or 0) < MIN_TRACK_PCT:
-            return
-        delta = data.get("deltaMs")
+        dp = data.get("trackPct")
+        raw = data.get("deltaMs")
         ref_full = data.get("refFullMs")
-        if delta is None or ref_full is None:
+        if dp is None or dp < MIN_TRACK_PCT or raw is None or ref_full is None:
             return
+        lap = data.get("lap")
+        if lap != self._buf_lap.get(num):          # new lap → restart window + bucketing
+            self._buf_lap[num] = lap
+            self._buf[num] = []
+            self._bucket.pop(num, None)
+        buf = self._buf[num]
+        buf.append(raw)
+        if len(buf) > MEDIAN_WINDOW:
+            buf.pop(0)
+        bucket = int(dp // BUCKET_PCT)             # throttle: once per 5% of lap distance
+        if bucket == self._bucket.get(num):
+            return
+        self._bucket[num] = bucket
+        delta = sorted(buf)[len(buf) // 2]         # median of the last <=5 samples
         predicted = ref_full + delta
         others = self._others(num)
         payload = dict(_BLANK)
-        payload["lap"] = data.get("lap")
+        payload["lap"] = lap
         # Predict the position ONLY for an improving lap (delta<0) — a slower lap makes
         # no meaningful prediction. A driver with a lap this part still shows the (yellow)
         # delta; one with no lap yet shows nothing. (user 2026-07-08)
@@ -180,5 +201,5 @@ class LapPredictionProcessor(Processor):
         if self._emitted.get(num) == key:
             return
         self._emitted[num] = key
-        self._pending[num] = data.get("lap")
+        self._pending[num] = lap
         self._bus.emit(f"lapPrediction:{num}", payload, clock_time)
