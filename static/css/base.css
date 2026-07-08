@@ -32,6 +32,8 @@
     --c-dim:    #8a8a8a;   /* de-emphasised: slow / out / in laps, pre-lights-out */
     --c-faint:  #555555;   /* even fainter neutral */
     --c-plain:  #d4d4d4;   /* uncoloured but active (quali last-lap / current sectors) */
+
+    --sp: 3px;             /* standings column-spacing base unit (1u/2u/3u = 3/6/9px) */
 }
 
 /* ─── Shared tile-header button ───
