@@ -799,8 +799,7 @@
         if (!p) return '<span class="pred"></span>';
         const posCol = p.posColour ? ` c-${p.posColour}` : '';
         if (p.predictedPos != null) {
-            return '<span class="pred"><span class="pred-delta"></span>'
-                + `<span class="pred-pos-gain${posCol}">P${p.predictedPos}</span></span>`;
+            return `<span class="pred"><span class="pred-pos-gain pred-pos-pred${posCol}">P${p.predictedPos}</span></span>`;
         }
         if (p.delta == null) return '<span class="pred"></span>';
         const deltaSec = p.delta / 1000;
