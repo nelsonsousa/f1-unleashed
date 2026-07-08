@@ -889,7 +889,7 @@
 
         const allShown = state.hiddenDrivers.size === 0;
         const allBtn = document.getElementById('telemetryAllDrivers');
-        if (allBtn) allBtn.classList.toggle('all-selected', allShown);
+        if (allBtn) allBtn.classList.toggle('active', allShown);   // shared .tile-btn.active
 
         let html = `<div class="telemetry-driver-list" style="--max-lap:${totalLapCols}">`;
         for (const { num, teamOrder } of sorted) {
@@ -947,7 +947,7 @@
         });
 
         // The ALL DRIVERS button lives in the tile header and is wired
-        // once in init(); only its `all-selected` class is toggled here.
+        // once in init(); only its `.active` class is toggled here (shared .tile-btn).
     }
 
     // Render the recorded-lap list for one driver as small clickable pills.
@@ -1103,7 +1103,7 @@
         el.classList.remove('hidden');
         const prefix = state.isSprintQuali ? 'SQ' : 'Q';
         const active = state.activePart || part;
-        el.innerHTML = `<button class="telemetry-part-toggle" id="telemetryPartToggle"`
+        el.innerHTML = `<button class="tile-btn telemetry-part-toggle" id="telemetryPartToggle"`
                      + `${part > 1 ? '' : ' disabled'} title="Show another qualifying part">`
                      + `${prefix}${active}</button>`;
         const btn = document.getElementById('telemetryPartToggle');

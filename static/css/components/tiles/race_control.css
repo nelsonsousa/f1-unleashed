@@ -176,25 +176,7 @@
     gap: 4px;
     margin-left: 12px;
 }
-.rc-tab {
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    color: var(--text-secondary, #a3a3a3);
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 4px;
-    cursor: pointer;
-    line-height: 1.4;
-}
-.rc-tab:hover {
-    color: var(--text-primary, #fff);
-    border-color: rgba(255, 255, 255, 0.3);
-}
-.rc-tab.active {
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--text-primary, #fff);
-    border-color: rgba(255, 255, 255, 0.4);
-}
+/* Tab buttons use the shared .tile-btn (base.css) — grey outline, white active. */
 
 .rc-pane { display: none; }
 .rc-pane.active { display: block; }

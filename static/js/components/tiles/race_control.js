@@ -278,7 +278,7 @@
 
     function applyChampionshipTabVisibility() {
         // Championship tab only relevant in race-style sessions.
-        const tab = document.querySelector('#rcTabs .rc-tab[data-tab="champ"]');
+        const tab = document.querySelector('#rcTabs .tile-btn[data-tab="champ"]');
         const pane = document.getElementById('rcPaneChamp');
         const showChamp = isRaceSession();
         if (tab) tab.style.display = showChamp ? '' : 'none';
@@ -286,7 +286,7 @@
     }
 
     function applyPeckingTabVisibility() {
-        const tab = document.querySelector('#rcTabs .rc-tab[data-tab="pecking"]');
+        const tab = document.querySelector('#rcTabs .tile-btn[data-tab="pecking"]');
         const pane = document.getElementById('rcPanePecking');
         const showPecking = isPeckingSession();
         if (tab) tab.style.display = showPecking ? '' : 'none';
@@ -294,7 +294,7 @@
     }
 
     function activateTab(tab) {
-        document.querySelectorAll('#rcTabs .rc-tab').forEach((b) => {
+        document.querySelectorAll('#rcTabs .tile-btn').forEach((b) => {
             b.classList.toggle('active', b.dataset.tab === tab);
         });
         document.querySelectorAll('.rc-pane').forEach((p) => {
@@ -314,7 +314,7 @@
             if (typeof window.stopTeamRadio === 'function') window.stopTeamRadio();
             return;
         }
-        const btn = e.target.closest('#rcTabs .rc-tab');
+        const btn = e.target.closest('#rcTabs .tile-btn');
         if (!btn) return;
         activateTab(btn.dataset.tab);
         // Lazy fetch — guarantees the pane shows data even if the
