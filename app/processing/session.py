@@ -98,6 +98,8 @@ class SessionEngine:
 
         # Playback state
         self._last_offset_ms = 0
+        self._last_ev_count = -1       # scrubber-event change detection (replay-build push)
+        self._last_pushed_dur = -1.0
         self._ended = False     # cached: feed's terminal SessionStatus=Ends seen
         self._terminal = False  # playback parked at the terminal end (→ finished)
         self._data_live = True  # live: raw data edge advanced recently (stream light)
@@ -1009,10 +1011,6 @@ class SessionEngine:
         try:
             while self._running:
                 await asyncio.sleep(1.0)
-                # Replay: once the build is done the edge is fixed (duration is
-                # pinned in _run_preprocess) — stop following. Live keeps going.
-                if not self._live and self._preprocess_done.is_set():
-                    return
                 if not self._db:
                     continue
                 edge_ms = self._capped_edge_ms()   # also refreshes self._data_live
@@ -1032,8 +1030,41 @@ class SessionEngine:
                 if self._live:
                     await self._broadcast({"topic": "streamLive",
                                            "data": {"alive": self._data_live}})
+                else:
+                    # Replay build: keep the scrubber current (growing duration + future
+                    # event markers) even when paused — push as events are discovered,
+                    # not only on seek. (user)
+                    await self._push_scrubber_state()
+                    # Replay: once the build is done the edge is fixed (duration pinned in
+                    # _run_preprocess) — this was the final (complete) push, so stop.
+                    if self._preprocess_done.is_set():
+                        return
         except asyncio.CancelledError:
             raise
+
+    async def _push_scrubber_state(self) -> None:
+        """Replay build: broadcast the growing duration + full scrubber-event list so the
+        scrubber's edges and future markers stay current mid-build. Change-gated so the
+        client only re-renders when the duration or event count actually moves."""
+        if not self._db:
+            return
+        if self._duration != self._last_pushed_dur:
+            self._last_pushed_dur = self._duration
+            await self._broadcast({"topic": "state:stream-progress",
+                                   "data": {"duration": self._duration}})
+        try:
+            rows = self._db._conn.execute(
+                "SELECT offset_ms, topic, data FROM messages "
+                "WHERE topic = 'event' ORDER BY offset_ms"
+            ).fetchall()
+        except Exception:
+            logger.exception("Failed to read scrubber events")
+            return
+        if len(rows) != self._last_ev_count:
+            self._last_ev_count = len(rows)
+            events = [{"offset_ms": r[0], "topic": r[1], "data": json.loads(r[2])}
+                      for r in rows]
+            await self._broadcast({"topic": "state:events", "data": events})
 
     # ── Playback Loop ──
 
