@@ -44,6 +44,7 @@ from app.processing.processors.driver_gap_processor import DriverGapProcessor
 from app.processing.processors.race_pace_processor import RacePaceProcessor
 from app.processing.processors.pq_pace_processor import PQPaceProcessor
 from app.processing.processors.sector_colour_processor import SectorColourProcessor
+from app.processing.processors.best_sector_processor import BestSectorProcessor
 from app.processing.processors.team_radio_processor import TeamRadioProcessor
 from app.processing.processors.data_health_processor import DataHealthProcessor
 from app.processing.processors.heartbeat_processor import HeartbeatProcessor
@@ -568,6 +569,7 @@ class SessionPreProcessor:
             RacePaceProcessor(self._bus, self._session_type),
             PQPaceProcessor(self._bus, self._session_type),
             SectorColourProcessor(self._bus, self._session_type),
+            BestSectorProcessor(self._bus, self._session_type),
             RaceControlProcessor(self._bus, self._session_type),
             # FIA Stewards stack — only meaningful for race + sprint;
             # the processor itself no-ops if registered elsewhere.
