@@ -58,6 +58,13 @@
             }
 
             state.carMarkersGroup = svgElement.querySelector('#car-markers');
+            if (state.carMarkersGroup) {
+                // Click a car → focus that driver (+ neighbours in a race) on the dashboard.
+                state.carMarkersGroup.addEventListener('click', (e) => {
+                    const m = e.target.closest('.car-marker');
+                    if (m && window.F1Dashboard) window.F1Dashboard.focus(m.dataset.driver);
+                });
+            }
 
             const trackMap = document.getElementById('trackMap');
             if (trackMap) {
@@ -137,6 +144,7 @@
         const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         g.setAttribute('class', 'car-marker');
         g.setAttribute('data-driver', num);
+        g.style.cursor = 'pointer';
 
         const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         circle.setAttribute('r', state.markerRadius);
