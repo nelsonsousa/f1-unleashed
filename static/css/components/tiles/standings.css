@@ -462,7 +462,6 @@
 .pred-pos-gain.c-orange { color: var(--c-orange); }
 .pred-pos-gain.c-red    { color: var(--c-red); }
 .pred-pos-gain.pred-pos-zero { color: var(--c-white); }
-.pred-pos-pred { text-align: left; }   /* predicted position (no lap) sits left, no delta slot */
 
 /* FIA Stewards penalty / flag stack.
  * Lives inside the status badge. Horizontal flexbox, h-scrolls when
