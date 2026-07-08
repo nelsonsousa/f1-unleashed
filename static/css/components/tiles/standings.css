@@ -99,7 +99,7 @@
      * column needs ~half the width of the multi-stint practice/race tyres. */
     /* Fixed px tracks (see practice). rank color tla num status | best gap last delta
        S1 S2 S3 mini tyre laps | tla color rank */
-    grid-template-columns: 22px 8px 14px 4px 36px 8px 20px 22px 96px 22px 94px 8px 74px 22px 88px 6px 92px 6px 52px 8px 52px 8px 52px 8px 150px 22px 90px 22px 22px 10px 36px 4px 14px 4px 22px;
+    grid-template-columns: 22px 8px 14px 4px 36px 8px 20px 22px 96px 22px 94px 8px 74px 22px 88px 12px 112px 12px 52px 8px 52px 8px 52px 8px 150px 22px 90px 22px 22px 10px 36px 4px 14px 4px 22px;
 }
 
 .driver-list.standings-race .driver-row,
@@ -335,6 +335,12 @@
     -ms-overflow-style: none;      /* IE / Edge */
 }
 .tyres::-webkit-scrollbar { display: none; }   /* Chrome / Safari */
+
+/* Hover reveals the full stint history: the strip pops out over the neighbouring
+   columns (opaque stint backing) so past sets show without scrolling. */
+.tyres { position: relative; }
+.tyres:hover { overflow: visible; z-index: 10; }
+.tyres:hover .tyre-stint { background: var(--bg-secondary); }
 
 .tyre-stint {
     display: inline-flex;
