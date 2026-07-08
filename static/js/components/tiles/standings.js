@@ -729,9 +729,9 @@
             else if (white) cls = 'c-dim';
             // P/Q out/in/stop sector colour is also "white" → dimmed grey.
             else cls = c === 'white' ? 'c-dim' : (c ? `c-${c}` : '');
-            out.push(`<span class="sector-time ${cls}">${v || '--.---'}</span>`);
+            out.push(`<span class="sector-time${i === 2 ? ' sector-last' : ''} ${cls}">${v || '--.---'}</span>`);
         }
-        return out.join('');
+        return out;   // [S1, S2, S3] — S3 gets .sector-last (wider trailing margin)
     }
 
     function segmentBarsCell(num) {
@@ -775,10 +775,13 @@
         // Current = last entry (or first marked .current); display first.
         const ordered = stints.slice().reverse();
         const slice = currentTyreOnly ? ordered.slice(0, 1) : ordered;
-        return slice.map(stint => {
+        return slice.map((stint, i) => {
             if (!stint || !stint.compound) return '';
             const laps = tyreLaps(stint, curLap);
-            return `<span class="tyre-stint">` +
+            // Current stint (newest, index 0) vs past stints — separate classes so
+            // each can be styled independently (size / emphasis / opacity).
+            const role = i === 0 ? 'tyre-stint-current' : 'tyre-stint-past';
+            return `<span class="tyre-stint ${role}">` +
                 `<img class="tyre-stint-icon" src="${getTyreSvg(stint.compound, stint.new)}" alt="${stint.compound}">` +
                 `<span class="tyre-stint-laps">${laps}</span>` +
                 `</span>`;
@@ -917,72 +920,43 @@
         if (elim) cls.push('knocked-out');
         if (isDriverDSQ(num)) cls.push('dsq');
 
-        let cols = '';
-        // Start identifier block: rank · colour · TLA · car number.
-        cols += `<span class="rank">${idx + 1}</span>`;
-        cols += `<span class="driver-color" style="--team-color:${drv.color}"></span>`;
-        cols += `<span class="driver-tla">${drv.tla}</span>`;
-        cols += `<span class="driver-num">${num}</span>`;
-
-        // Canonical column order (all session types):
-        //   ... | mini-sectors | sectors | lap time | <session tail>
+        // Columns are joined by col-spacers whose WIDTH comes from the grid template
+        // (base unit 3px: 1u/2u/3u = 3/6/9px). Row order + per-column spacing are the
+        // grid tracks in standings.css — the two MUST stay in sync (content track,
+        // spacer track, content track, …). Start block: rank·colour·TLA·number·status.
+        const style = `style="--team-color:${drv.color}"`;
+        const stt = statusCell(num);
+        const sec = sectorCells(num);                    // [S1, S2, S3]
+        const idStart = [
+            `<span class="rank">${idx + 1}</span>`,
+            `<span class="driver-color" ${style}></span>`,
+            `<span class="driver-tla">${drv.tla}</span>`,
+            `<span class="driver-num">${num}</span>`,
+            `<span class="status ${stt.cls}">${stt.text}</span>`,
+        ];
+        // End block MIRRORED (reversed): TLA · colour · rank. No car number here.
+        const idEnd = [
+            `<span class="driver-tla driver-tla-end">${drv.tla}</span>`,
+            `<span class="driver-color driver-color-end" ${style}></span>`,
+            `<span class="rank rank-end">${idx + 1}</span>`,
+        ];
+        const mini = `<span class="segments">${segmentBarsCell(num)}</span>`;
+        const laps = lapCountCell(num);
+        let mid;
         if (IS_RACE) {
-            // (Penalties column removed — penalty / under-investigation
-            // indicator is now layered on the status badge itself.)
-            const stt = statusCell(num);
-            cols += `<span class="status ${stt.cls}">${stt.text}</span>`;
-            cols += gapOrLapForRaceP1(num, idx + 1);
-            cols += '<span class="col-spacer"></span>';
-            cols += intervalCell(num);
-            cols += '<span class="col-spacer"></span>';   // int ↔ last-lap gap
-            cols += lastLapCell(num);
-            cols += '<span class="col-spacer"></span>';   // last-lap ↔ sectors gap
-            cols += sectorCells(num);
-            cols += `<span class="segments">${segmentBarsCell(num)}</span>`;
-            cols += bestLapCell(num);
-            // Spacer column — visually separates best-lap from the
-            // tyre history (matches the spacing between lap-time and
-            // best-lap).
-            cols += '<span class="col-spacer"></span>';
-            cols += `<span class="tyres">${tyreCell(num, false)}</span>`;
+            mid = [gapOrLapForRaceP1(num, idx + 1), intervalCell(num), lastLapCell(num),
+                   sec[0], sec[1], sec[2], mini, bestLapCell(num),
+                   `<span class="tyres">${tyreCell(num, false)}</span>`, laps];
         } else if (IS_QUALI) {
-            const stt = statusCell(num);
-            cols += `<span class="status ${stt.cls}">${stt.text}</span>`;
-            cols += bestLapCell(num);
-            cols += gapCell(num);
-            cols += lastLapCell(num);
-            cols += predictionCell(num);
-            cols += sectorCells(num);
-            cols += `<span class="segments">${segmentBarsCell(num)}</span>`;
-            cols += `<span class="tyres">${tyreCell(num, true)}</span>`;
+            mid = [bestLapCell(num), gapCell(num), lastLapCell(num), predictionCell(num),
+                   sec[0], sec[1], sec[2], mini,
+                   `<span class="tyres">${tyreCell(num, true)}</span>`, laps];
         } else {
-            // Practice
-            const stt = statusCell(num);
-            cols += `<span class="status ${stt.cls}">${stt.text}</span>`;
-            cols += bestLapCell(num);
-            cols += '<span class="col-spacer"></span>';   // best-lap ↔ gap gap
-            cols += gapCell(num);
-            cols += lastLapCell(num);
-            cols += '<span class="col-spacer"></span>';   // last-lap ↔ sectors gap
-            cols += sectorCells(num);
-            cols += `<span class="segments">${segmentBarsCell(num)}</span>`;
-            cols += `<span class="tyres">${tyreCell(num, false)}</span>`;
+            mid = [bestLapCell(num), gapCell(num), lastLapCell(num),
+                   sec[0], sec[1], sec[2], mini,
+                   `<span class="tyres">${tyreCell(num, false)}</span>`, laps];
         }
-
-        // Laps column + trailing spacer — all session types. Quali shows
-        // the current tyre in a narrower tyre column but still shows the
-        // lap count; each grid template includes the matching Laps +
-        // laps-end-spacer tracks.
-        cols += lapCountCell(num);
-        cols += '<span class="col-spacer"></span>';
-
-        // End identifier block, MIRRORED (reversed vs the start): TLA · colour ·
-        // rank. So each driver is identifiable regardless of how wide / scrolled the
-        // row is, and the rank bookends both sides. No car number at this end.
-        cols += `<span class="driver-tla driver-tla-end">${drv.tla}</span>`;
-        cols += `<span class="driver-color driver-color-end" style="--team-color:${drv.color}"></span>`;
-        cols += `<span class="rank rank-end">${idx + 1}</span>`;
-
+        const cols = idStart.concat(mid, idEnd).join('');   // spacing is per-role margin (CSS)
         return `<div class="${cls.join(' ')}" data-driver="${num}">${cols}</div>`;
     }
 
@@ -1000,71 +974,29 @@
     }
 
     function buildHeader() {
-        // Header order MUST match buildRow's column order.
-        // Canonical: ... | Mini | S1 | S2 | S3 | Lap time | <tail>
-        // Common left identifier-block header (= rank empty, "Driver"
-        // spanning colour+tla, status empty). Explicit grid-column on
-        // the Driver span keeps subsequent spans flowing into col 4+.
-        const idHdr =
-            '<span></span>' +                                        /* rank */
-            '<span style="grid-column: 2 / span 3">Driver</span>' +  /* color + tla + num */
-            '<span></span>';                                         /* status */
-
+        // Mirrors buildRow's parts exactly (same order + count) — the grid interleaves
+        // a spacer track after each. Identifier cells carry no label; "Driver" sits
+        // over the TLA. Sector headers are the current↔best toggles.
+        const e = '<span></span>';
+        const idStart = [e, e, '<span>Driver</span>', e, e];   // rank·color·TLA·num·status
+        const idEnd = [e, e, e];                               // tla·color·rank
+        const sec = [sectorHeaderCell(0), sectorHeaderCell(1), sectorHeaderCell(2)];
+        const mini = '<span>Mini-sectors</span>';
+        const laps = '<span>Laps</span>';
+        let mid;
         if (IS_RACE) {
-            return (
-                '<div class="driver-header">' +
-                idHdr +
-                '<span>Gap</span>' +
-                '<span></span>' + /* gap-int-spacer */
-                '<span>Int</span>' +
-                '<span></span>' + /* int-lap-spacer */
-                '<span>Lap time</span>' +
-                '<span></span>' + /* lap-sec-spacer */
-                sectorHeaderCell(0) + sectorHeaderCell(1) + sectorHeaderCell(2) +
-                '<span>Mini-sectors</span>' +
-                '<span>Best lap</span>' +
-                '<span class="col-spacer"></span>' +
-                '<span>Tyres</span>' +
-                '<span>Laps</span>' +
-                '<span></span>' + /* laps-end-spacer */
-                '<span></span><span></span><span></span>' + /* tla-end + color-end + rank-end */
-                '</div>'
-            );
+            mid = ['<span>Gap</span>', '<span>Int</span>', '<span>Lap time</span>',
+                   sec[0], sec[1], sec[2], mini, '<span>Best lap</span>',
+                   '<span>Tyres</span>', laps];
+        } else if (IS_QUALI) {
+            mid = ['<span>Best lap</span>', '<span>Gap</span>', '<span>Lap time</span>', '<span>Delta</span>',
+                   sec[0], sec[1], sec[2], mini, '<span>Tyre</span>', laps];
+        } else {
+            mid = ['<span>Best lap</span>', '<span>Gap</span>', '<span>Lap time</span>',
+                   sec[0], sec[1], sec[2], mini, '<span>Tyres</span>', laps];
         }
-        if (IS_QUALI) {
-            return (
-                '<div class="driver-header">' +
-                idHdr +
-                '<span>Best lap</span>' +
-                '<span>Gap</span>' +
-                '<span>Lap time</span>' +
-                '<span>Delta</span>' +
-                sectorHeaderCell(0) + sectorHeaderCell(1) + sectorHeaderCell(2) +
-                '<span>Mini-sectors</span>' +
-                '<span>Tyre</span>' +
-                '<span>Laps</span>' +
-                '<span></span>' + /* laps-end-spacer */
-                '<span></span><span></span><span></span>' + /* tla-end + color-end + rank-end */
-                '</div>'
-            );
-        }
-        // Practice.
-        return (
-            '<div class="driver-header">' +
-            idHdr +
-            '<span>Best lap</span>' +
-            '<span></span>' + /* best-gap spacer */
-            '<span>Gap</span>' +
-            '<span>Lap time</span>' +
-            '<span></span>' + /* lap-sec spacer */
-            sectorHeaderCell(0) + sectorHeaderCell(1) + sectorHeaderCell(2) +
-            '<span>Mini-sectors</span>' +
-            '<span>Tyres</span>' +
-            '<span>Laps</span>' +
-            '<span></span>' + /* laps-end-spacer */
-            '<span></span><span></span>' + /* color-end + tla-end */
-            '</div>'
-        );
+        const cells = idStart.concat(mid, idEnd).join('');   // spacing is per-role margin (CSS)
+        return '<div class="driver-header">' + cells + '</div>';
     }
 
     // ─── Tooltip ───
