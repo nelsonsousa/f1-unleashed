@@ -166,12 +166,13 @@ class LapPredictionProcessor(Processor):
         others = self._others(num)
         payload = dict(_BLANK)
         payload["lap"] = data.get("lap")
-        # Always predict the ACTUAL position this lap would take — more informative than
-        # "places gained", and shown whether or not there's a delta. (user 2026-07-08)
-        payload["predictedPos"] = 1 + sum(1 for o in others if o < predicted)
-        payload["posColour"] = self._band(predicted)
+        # Predict the position ONLY for an improving lap (delta<0) — a slower lap makes
+        # no meaningful prediction. A driver with a lap this part still shows the (yellow)
+        # delta; one with no lap yet shows nothing. (user 2026-07-08)
+        if delta < 0:
+            payload["predictedPos"] = 1 + sum(1 for o in others if o < predicted)
+            payload["posColour"] = self._band(predicted)
         if self._part_best.get(num) is not None:
-            # Has a lap this part → also show the live delta.
             payload["delta"] = delta
             payload["deltaColour"] = "green" if delta < 0 else "yellow"
         key = (payload["delta"], payload["predictedPos"],
