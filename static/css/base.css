@@ -34,6 +34,31 @@
     --c-plain:  #d4d4d4;   /* uncoloured but active (quali last-lap / current sectors) */
 }
 
+/* ─── Shared tile-header button ───
+ * Grey outline, transparent background; grey text idle, white text when hovered or
+ * active. One style for every tile's header controls (standings sector toggles,
+ * telemetry part/driver toggles, race-control tabs). Hover matches the RCM tabs. */
+.tile-btn {
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: var(--text-secondary);
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    line-height: 1.4;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.tile-btn:hover {
+    color: var(--text-primary);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+.tile-btn.active {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    border-color: rgba(255, 255, 255, 0.4);
+}
+
 body {
     font-family: 'Titillium Web', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: var(--bg-primary);

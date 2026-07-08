@@ -128,6 +128,22 @@
     min-width: 0;
 }
 
+/* Sector-column header toggle — two compact .tile-btn (S{n} / BS{n}) that fit the
+   narrow sector track. */
+.sec-toggle {
+    display: inline-flex;
+    gap: 2px;
+    justify-content: flex-end;
+    min-width: 0;
+    overflow: hidden;
+}
+.sec-toggle .sec-btn {
+    font-size: 9px;
+    padding: 0 3px;
+    border-radius: 3px;
+    line-height: 1.6;
+}
+
 /* Car number — secondary identifier next to the start TLA (small, muted). */
 .driver-num {
     text-align: left;

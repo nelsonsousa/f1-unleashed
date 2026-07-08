@@ -330,6 +330,22 @@
         render();
     });
 
+    // driverBestSectors:{num} [v0,v1,v2] + driverBestSectorColour:{num} [c0,c1,c2] —
+    // each driver's fastest S1/S2/S3 + band colour vs the session-best sector
+    // (best_sector_processor). Shown when a sector column header is toggled to "best".
+    messageBus.on('driverBestSectors:', (topic, data) => {
+        const num = topic.split(':')[1];
+        if (!num) return;
+        ensureData(num).bestSectors = Array.isArray(data) ? data : [];
+        render();
+    });
+    messageBus.on('driverBestSectorColour:', (topic, data) => {
+        const num = topic.split(':')[1];
+        if (!num) return;
+        ensureData(num).bestSectorColour = Array.isArray(data) ? data : [];
+        render();
+    });
+
     // driverLaps:{num} {currentLap, laps:{n:{time,personalBest,overallBest}},
     //                    lastLap:{lap,time,personalBest,overallBest}|null,
     //                    bestLap:{lap,time}|null}
@@ -693,20 +709,26 @@
         const lap = state.timing[num];
         const sectors = (lap && lap.sectors) || [{}, {}, {}];
         const colours = (state.driverData[num] || {}).sectorColour || [];
+        const bestVals = (state.driverData[num] || {}).bestSectors || [];
+        const bestCols = (state.driverData[num] || {}).bestSectorColour || [];
+        const mode = state.sectorMode || [false, false, false];
         const out = [];
         for (let i = 0; i < 3; i++) {
-            const s = sectors[i] || {};
-            const v = s.value || '';
-            let cls;
-            if (!v) {
-                cls = 'c-empty';
-            } else if (s.white) {
-                cls = 'c-dim';                       // slow / out / post-flag → dimmed grey
+            let v, c, white = false;
+            if (mode[i]) {
+                v = bestVals[i] || '';               // best-sector mode: driver's fastest S{i}
+                c = bestCols[i];
             } else {
-                const c = colours[i];
-                // P/Q out/in/stop sector colour is also "white" → dimmed grey.
-                cls = c === 'white' ? 'c-dim' : (c ? `c-${c}` : '');
+                const s = sectors[i] || {};
+                v = s.value || '';
+                c = colours[i];
+                white = !!s.white;                   // slow / out / post-flag → dimmed
             }
+            let cls;
+            if (!v) cls = 'c-empty';
+            else if (white) cls = 'c-dim';
+            // P/Q out/in/stop sector colour is also "white" → dimmed grey.
+            else cls = c === 'white' ? 'c-dim' : (c ? `c-${c}` : '');
             out.push(`<span class="sector-time ${cls}">${v || '--.---'}</span>`);
         }
         return out.join('');
@@ -967,6 +989,16 @@
     // Header — column count must match the row's grid template for that
     // session type (see standings.css). Driver-identification cells get
     // no header text (rank/colour/tla/status are self-explanatory).
+    // One sector's header cell: a current↔best toggle (S{n} / BS{n}). Defaults to
+    // current; the active button is white, the other grey (shared .tile-btn style).
+    function sectorHeaderCell(i) {
+        const best = (state.sectorMode || [])[i];
+        return '<span class="sec-toggle">' +
+            `<button class="tile-btn sec-btn${best ? '' : ' active'}" data-sec="${i}" data-best="0">S${i + 1}</button>` +
+            `<button class="tile-btn sec-btn${best ? ' active' : ''}" data-sec="${i}" data-best="1">BS${i + 1}</button>` +
+            '</span>';
+    }
+
     function buildHeader() {
         // Header order MUST match buildRow's column order.
         // Canonical: ... | Mini | S1 | S2 | S3 | Lap time | <tail>
@@ -988,9 +1020,7 @@
                 '<span></span>' + /* int-lap-spacer */
                 '<span>Lap time</span>' +
                 '<span></span>' + /* lap-sec-spacer */
-                '<span>S1</span>' +
-                '<span>S2</span>' +
-                '<span>S3</span>' +
+                sectorHeaderCell(0) + sectorHeaderCell(1) + sectorHeaderCell(2) +
                 '<span>Mini-sectors</span>' +
                 '<span>Best lap</span>' +
                 '<span class="col-spacer"></span>' +
@@ -1009,9 +1039,7 @@
                 '<span>Gap</span>' +
                 '<span>Lap time</span>' +
                 '<span>Delta</span>' +
-                '<span>S1</span>' +
-                '<span>S2</span>' +
-                '<span>S3</span>' +
+                sectorHeaderCell(0) + sectorHeaderCell(1) + sectorHeaderCell(2) +
                 '<span>Mini-sectors</span>' +
                 '<span>Tyre</span>' +
                 '<span>Laps</span>' +
@@ -1029,9 +1057,7 @@
             '<span>Gap</span>' +
             '<span>Lap time</span>' +
             '<span></span>' + /* lap-sec spacer */
-            '<span>S1</span>' +
-            '<span>S2</span>' +
-            '<span>S3</span>' +
+            sectorHeaderCell(0) + sectorHeaderCell(1) + sectorHeaderCell(2) +
             '<span>Mini-sectors</span>' +
             '<span>Tyres</span>' +
             '<span>Laps</span>' +
@@ -1086,6 +1112,16 @@
     function _setupTooltip(container) {
         if (container._stTooltipBound) return;
         container._stTooltipBound = true;
+        // Per-sector header toggle (S{n} ↔ BS{n}). Delegated so it survives the
+        // wholesale re-render; each sector toggles current↔best independently.
+        container.addEventListener('click', (e) => {
+            const btn = e.target.closest('.tile-btn[data-sec]');
+            if (!btn) return;
+            const i = parseInt(btn.dataset.sec, 10);
+            const best = btn.dataset.best === '1';
+            const mode = state.sectorMode || (state.sectorMode = [false, false, false]);
+            if (mode[i] !== best) { mode[i] = best; render(); }
+        });
         container.addEventListener('mousemove', (e) => {
             _mouseX = e.clientX;
             _mouseY = e.clientY;
