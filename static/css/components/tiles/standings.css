@@ -213,7 +213,7 @@
 /* Race "current pace" bands — last lap vs the leader's reference lap. */
 .lap-time.lap-pace-white  { color: #ffffff; opacity: 0.5; }   /* slow / out / post-flag lap — dimmed, like .seg-white */
 .lap-time.lap-pace-purple { color: #cc66ff; }
-.lap-time.lap-pace-blue   { color: #3399ff; }
+.lap-time.lap-pace-blue   { color: #33ccff; }   /* match .band-blue (best-lap/gap/sectors) */
 .lap-time.lap-pace-green  { color: #00ff88; }
 .lap-time.lap-pace-yellow { color: #ffcc00; }
 .lap-time.lap-pace-orange { color: #ff9933; }
