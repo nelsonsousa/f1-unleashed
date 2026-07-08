@@ -30,8 +30,9 @@
 .driver-header {
     display: grid;
     align-items: center;
-    /* Tightened from 4px so all columns fit in the 67% tile. */
-    column-gap: 2px;
+    /* No inter-column spacing — spacer tracks are zeroed; spacing is added back
+       per-column later once the tight baseline is settled. */
+    column-gap: 0;
     padding: 4px 4px;
 }
 
@@ -83,7 +84,7 @@
      * color-end + tla-end mirror the row identifier at the right edge.
      * laps-end-spacer = breathing room between Laps and the row-end TLA. */
     /* rank·color·tla·NUM | status·best·—·gap·last·—·S1·S2·S3·mini·tyres·laps·— | tla·color·RANK */
-    grid-template-columns: 3fr 14px 5fr 4fr 4fr 10fr 3fr 6fr 8fr 2fr 6fr 6fr 6fr 13fr 15fr 3fr 2fr 5fr 14px 3fr;
+    grid-template-columns: 3fr 14px 3fr 4fr 3fr 10fr 0 6fr 8fr 0 6fr 6fr 6fr 13fr 15fr 3fr 0 3fr 14px 3fr;
 }
 
 .driver-list.standings-qualifying .driver-row,
@@ -92,7 +93,7 @@
      * tyres = 4fr: quali shows only the current tyre (one stint), so the
      * column needs ~half the width of the multi-stint practice/race tyres. */
     /* rank·color·tla·NUM | status·best·gap·last·delta·S1·S2·S3·mini·tyre·laps·— | tla·color·RANK */
-    grid-template-columns: 3fr 14px 5fr 4fr 3fr 10fr 6fr 8fr 9fr 6fr 6fr 6fr 13fr 4fr 3fr 2fr 5fr 14px 3fr;
+    grid-template-columns: 3fr 14px 3fr 4fr 3fr 10fr 6fr 8fr 7fr 6fr 6fr 6fr 13fr 4fr 3fr 0 3fr 14px 3fr;
 }
 
 .driver-list.standings-race .driver-row,
@@ -103,7 +104,7 @@
      * gap-int-spacer = matches best-lap → tyres spacer for visual rhythm.
      * laps-end-spacer = breathing room between Laps and the row-end TLA. */
     /* rank·color·tla·NUM | status·gap·—·int·—·last·—·S1·S2·S3·mini·best·—·tyres·laps·— | tla·color·RANK */
-    grid-template-columns: 3fr 14px 5fr 4fr 8fr 7fr 2fr 7fr 3fr 8fr 2fr 6fr 6fr 6fr 11fr 9fr 1fr 13fr 4fr 2fr 5fr 14px 3fr;
+    grid-template-columns: 3fr 14px 3fr 4fr 8fr 7fr 0 7fr 0 8fr 0 6fr 6fr 6fr 11fr 9fr 0 13fr 4fr 0 3fr 14px 3fr;
 }
 
 /* ─── Cells ─── */
@@ -138,17 +139,18 @@
     overflow: hidden;
 }
 .sec-toggle .sec-btn {
-    font-size: 9px;
+    font-size: 12px;
     padding: 0 3px;
     border-radius: 3px;
-    line-height: 1.6;
+    line-height: 1.4;
 }
 
-/* Car number — secondary identifier next to the start TLA (small, muted). */
+/* Car number — secondary identifier next to the start TLA (monospace). */
 .driver-num {
     text-align: left;
-    font-size: 12px;
-    color: var(--text-muted);
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 14px;
+    color: var(--text-secondary);
     min-width: 0;
 }
 
@@ -284,7 +286,7 @@
     min-width: 0;
     overflow: hidden;
     height: 100%;
-    padding: 0 20px;
+    padding: 0;   /* no inter-column inset — added back later if needed */
 }
 
 .seg-bar {
@@ -306,11 +308,8 @@
     flex: 0 0 auto;
 }
 
-/* 10 px buffer so the tyre-history strip doesn't sit flush against
- * the rightmost timing column (last-lap in Q, best-lap in practice).
- * Halved from 20 px per SME polish — visually tighter cluster. */
 .tyres {
-    margin-left: 10px;
+    margin-left: 0;   /* no inter-column inset — added back later if needed */
     display: inline-flex;
     align-items: center;
     gap: 4px;
