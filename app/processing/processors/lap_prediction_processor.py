@@ -44,9 +44,9 @@ def _parse_ms(s: Any) -> Optional[int]:
 _BLANK = {"lap": None, "delta": None, "predictedPos": None,
           "deltaColour": None, "posColour": None}
 
-MIN_TRACK_PCT = 10.0   # don't publish a prediction before 10% of the lap (user 2026-07-08)
-BUCKET_PCT = 5         # publish at most once per 5% of lap distance
-MEDIAN_WINDOW = 5      # smooth the delta over the last 5 samples
+MIN_TRACK_PCT = 10.0     # don't publish a prediction before 10% of the lap (user 2026-07-08)
+EMIT_INTERVAL_S = 2.0    # publish at most once per 2 s (session clock)
+MEDIAN_WINDOW = 4        # smooth the delta over the last 4 samples
 
 
 class LapPredictionProcessor(Processor):
@@ -62,8 +62,8 @@ class LapPredictionProcessor(Processor):
         self._status: dict[str, Any] = {}
         self._pending: dict[str, int] = {}         # num -> lap a prediction is active for
         self._emitted: dict[str, Optional[tuple]] = {}   # dedup
-        self._buf: dict[str, list] = {}            # num -> last <=5 raw deltaMs (median window)
-        self._bucket: dict[str, int] = {}          # num -> last-published 5% bucket
+        self._buf: dict[str, list] = {}            # num -> last <=4 raw deltaMs (median window)
+        self._last_emit: dict[str, float] = {}     # num -> session ts of last publish (2 s throttle)
         self._buf_lap: dict[str, Any] = {}         # num -> lap the buffer belongs to
 
     def subscribe(self) -> None:
@@ -125,7 +125,7 @@ class LapPredictionProcessor(Processor):
     def _clear(self, num: str, clock_time: datetime) -> None:
         self._pending.pop(num, None)
         self._buf.pop(num, None)
-        self._bucket.pop(num, None)
+        self._last_emit.pop(num, None)
         self._buf_lap.pop(num, None)
         if self._emitted.get(num) is not None:
             self._emitted[num] = None
@@ -170,19 +170,19 @@ class LapPredictionProcessor(Processor):
         if dp is None or dp < MIN_TRACK_PCT or raw is None or ref_full is None:
             return
         lap = data.get("lap")
-        if lap != self._buf_lap.get(num):          # new lap → restart window + bucketing
+        if lap != self._buf_lap.get(num):          # new lap → restart window + throttle
             self._buf_lap[num] = lap
             self._buf[num] = []
-            self._bucket.pop(num, None)
+            self._last_emit.pop(num, None)
         buf = self._buf[num]
         buf.append(raw)
         if len(buf) > MEDIAN_WINDOW:
             buf.pop(0)
-        bucket = int(dp // BUCKET_PCT)             # throttle: once per 5% of lap distance
-        if bucket == self._bucket.get(num):
+        now = clock_time.timestamp()               # throttle: at most once per 2 s
+        if now - self._last_emit.get(num, -1e9) < EMIT_INTERVAL_S:
             return
-        self._bucket[num] = bucket
-        delta = sorted(buf)[len(buf) // 2]         # median of the last <=5 samples
+        self._last_emit[num] = now
+        delta = sorted(buf)[len(buf) // 2]         # median of the last <=4 samples
         predicted = ref_full + delta
         others = self._others(num)
         payload = dict(_BLANK)
