@@ -99,7 +99,7 @@
      * column needs ~half the width of the multi-stint practice/race tyres. */
     /* Fixed px tracks (see practice). rank color tla num status | best gap last delta
        S1 S2 S3 mini tyre laps | tla color rank */
-    grid-template-columns: 22px 8px 14px 4px 36px 8px 20px 22px 96px 22px 94px 8px 74px 22px 88px 6px 92px 6px 52px 8px 52px 8px 52px 8px 150px 22px 138px 22px 22px 10px 36px 4px 14px 4px 22px;
+    grid-template-columns: 22px 8px 14px 4px 36px 8px 20px 22px 96px 22px 94px 8px 74px 22px 88px 6px 92px 6px 52px 8px 52px 8px 52px 8px 150px 22px 90px 22px 22px 10px 36px 4px 14px 4px 22px;
 }
 
 .driver-list.standings-race .driver-row,
@@ -322,13 +322,19 @@
 }
 
 .tyres {
-    margin-left: 0;   /* no inter-column inset — added back later if needed */
+    margin-left: 0;
     display: inline-flex;
     align-items: center;
     gap: 4px;
     min-width: 0;
-    overflow: hidden;
+    /* Fixed-width window; ALL stints render and scroll horizontally into view. No
+       visible scrollbar (wheel / trackpad scrolls it). */
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;         /* Firefox */
+    -ms-overflow-style: none;      /* IE / Edge */
 }
+.tyres::-webkit-scrollbar { display: none; }   /* Chrome / Safari */
 
 .tyre-stint {
     display: inline-flex;

@@ -767,14 +767,14 @@
         return html;
     }
 
-    function tyreCell(num, currentTyreOnly) {
+    function tyreCell(num) {
         const stints = state.tyres[num];
         if (!stints || !stints.length) return '';
         const t = state.timing[num] || {};
         const curLap = t.lap || 0;
-        // Current = last entry (or first marked .current); display first.
-        const ordered = stints.slice().reverse();
-        const slice = currentTyreOnly ? ordered.slice(0, 1) : ordered;
+        // Newest first; render ALL stints. The .tyres column is a fixed-width window
+        // that scrolls horizontally (no scrollbar) so past sets can be reached.
+        const slice = stints.slice().reverse();
         return slice.map((stint, i) => {
             if (!stint || !stint.compound) return '';
             const laps = tyreLaps(stint, curLap);
@@ -946,15 +946,15 @@
         if (IS_RACE) {
             mid = [gapOrLapForRaceP1(num, idx + 1), intervalCell(num), lastLapCell(num),
                    sec[0], sec[1], sec[2], mini, bestLapCell(num),
-                   `<span class="tyres">${tyreCell(num, false)}</span>`, laps];
+                   `<span class="tyres">${tyreCell(num)}</span>`, laps];
         } else if (IS_QUALI) {
             mid = [bestLapCell(num), gapCell(num), lastLapCell(num), predictionCell(num),
                    sec[0], sec[1], sec[2], mini,
-                   `<span class="tyres">${tyreCell(num, false)}</span>`, laps];  // Q: full tyre history (like race)
+                   `<span class="tyres">${tyreCell(num)}</span>`, laps];
         } else {
             mid = [bestLapCell(num), gapCell(num), lastLapCell(num),
                    sec[0], sec[1], sec[2], mini,
-                   `<span class="tyres">${tyreCell(num, false)}</span>`, laps];
+                   `<span class="tyres">${tyreCell(num)}</span>`, laps];
         }
         // Join columns with spacer spans; each spacer's WIDTH is a gap track in the
         // grid template (content track, gap track, …). Tune gaps in CSS; the spans
