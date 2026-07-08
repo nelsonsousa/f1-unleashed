@@ -41,8 +41,8 @@ def _parse_ms(s: Any) -> Optional[int]:
         return None
 
 
-_BLANK = {"lap": None, "delta": None, "placesGained": None,
-          "predictedPos": None, "deltaColour": None, "posColour": None}
+_BLANK = {"lap": None, "delta": None, "predictedPos": None,
+          "deltaColour": None, "posColour": None}
 
 MIN_TRACK_PCT = 10.0   # don't publish a prediction before 10% of the lap (user 2026-07-08)
 
@@ -164,24 +164,17 @@ class LapPredictionProcessor(Processor):
             return
         predicted = ref_full + delta
         others = self._others(num)
-        predicted_rank = 1 + sum(1 for o in others if o < predicted)
-        pos_colour = self._band(predicted)
-        my_best = self._part_best.get(num)
         payload = dict(_BLANK)
         payload["lap"] = data.get("lap")
-        payload["posColour"] = pos_colour
-        if my_best is not None:
-            # Has a lap this part → delta always; places gained only makes sense when
-            # improving (delta<0) — a slower lap shows just the yellow delta, no =0.
+        # Always predict the ACTUAL position this lap would take — more informative than
+        # "places gained", and shown whether or not there's a delta. (user 2026-07-08)
+        payload["predictedPos"] = 1 + sum(1 for o in others if o < predicted)
+        payload["posColour"] = self._band(predicted)
+        if self._part_best.get(num) is not None:
+            # Has a lap this part → also show the live delta.
             payload["delta"] = delta
             payload["deltaColour"] = "green" if delta < 0 else "yellow"
-            if delta < 0:
-                current_rank = 1 + sum(1 for o in others if o < my_best)
-                payload["placesGained"] = max(0, current_rank - predicted_rank)
-        else:
-            # No lap this part → predicted position only.
-            payload["predictedPos"] = predicted_rank
-        key = (payload["delta"], payload["placesGained"], payload["predictedPos"],
+        key = (payload["delta"], payload["predictedPos"],
                payload["deltaColour"], payload["posColour"])
         if self._emitted.get(num) == key:
             return

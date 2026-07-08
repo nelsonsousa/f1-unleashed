@@ -790,32 +790,23 @@
 
     function predictionCell(num) {
         // Render only — lap_prediction (server) computes everything (quali). Payload:
-        // { delta(ms), placesGained, predictedPos, deltaColour, posColour }.
-        //   - no lap this part → predictedPos: show `Pnn`, coloured by the band the
-        //     predicted lap time earns (posColour);
-        //   - has a lap        → delta `±s.S` (green improving / yellow slower) + places
-        //     gained as a coloured up-arrow, or `=0` white when no gain.
+        // { delta(ms), predictedPos, deltaColour, posColour }. Always shows the
+        // predicted position `Pnn` (coloured by the band the predicted lap time earns);
+        // when the driver has a lap this part, the live delta `±s.S` (green improving /
+        // yellow slower) shows to its left.
         const p = state.prediction[num];
-        if (!p) return '<span class="pred"></span>';
+        if (!p || p.predictedPos == null) return '<span class="pred"></span>';
         const posCol = p.posColour ? ` c-${p.posColour}` : '';
-        if (p.predictedPos != null) {
+        if (p.delta == null) {
+            // No lap this part → predicted position only, left-aligned (no delta slot).
             return `<span class="pred"><span class="pred-pos-gain pred-pos-pred${posCol}">P${p.predictedPos}</span></span>`;
         }
-        if (p.delta == null) return '<span class="pred"></span>';
         const deltaSec = p.delta / 1000;
         const deltaText = (deltaSec < 0 ? '−' : '+') + Math.abs(deltaSec).toFixed(1);
         const deltaCls = p.deltaColour === 'green' ? 'pred-delta-neg' : 'pred-delta-pos';
-        // gain → arrow; =0 only for an improving lap with no gain; slower lap → nothing.
-        let posHtml = '';
-        if (p.placesGained > 0) {
-            posHtml = `<span class="pred-pos-gain${posCol}"><span class="pred-pos-arrow">&#9650;</span>`
-                + `<span class="pred-pos-num">${p.placesGained}</span></span>`;
-        } else if (p.placesGained === 0) {
-            posHtml = '<span class="pred-pos-gain pred-pos-zero">=0</span>';
-        }
         return '<span class="pred">'
             + `<span class="pred-delta ${deltaCls}">${deltaText}</span>`
-            + posHtml + '</span>';
+            + `<span class="pred-pos-gain${posCol}">P${p.predictedPos}</span></span>`;
     }
 
     function formatLapTimeOneDecimal(ms) {
