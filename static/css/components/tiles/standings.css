@@ -420,7 +420,7 @@
 .pred {
     display: flex;
     align-items: baseline;
-    justify-content: space-between;
+    justify-content: flex-start;   /* pack delta + position to the left */
     gap: 6px;
     min-width: 0;
     overflow: hidden;
@@ -449,8 +449,8 @@
     color: #00ff88;
     font-size: 16px;
     flex: 0 0 auto;
-    text-align: right;
-    min-width: 2.5em;          /* fixed slot so positions stay aligned with/without the delta */
+    text-align: left;
+    min-width: 2.5em;
 }
 
 /* Position (places gained OR predicted Pnn) coloured by the band the predicted lap

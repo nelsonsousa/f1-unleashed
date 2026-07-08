@@ -795,18 +795,22 @@
         // when the driver has a lap this part, the live delta `±s.S` (green improving /
         // yellow slower) shows to its left.
         const p = state.prediction[num];
-        if (!p || p.predictedPos == null) return '<span class="pred"></span>';
+        if (!p) return '<span class="pred"></span>';
+        const hasDelta = p.delta != null;
+        const hasPos = p.predictedPos != null;      // only present for an improving lap
+        if (!hasDelta && !hasPos) return '<span class="pred"></span>';
         const posCol = p.posColour ? ` c-${p.posColour}` : '';
-        if (p.delta == null) {
-            // No lap this part → predicted position only, left-aligned (no delta slot).
+        if (!hasDelta) {
+            // No lap this part, improving → predicted position only.
             return `<span class="pred"><span class="pred-pos-gain pred-pos-pred${posCol}">P${p.predictedPos}</span></span>`;
         }
+        // Has a lap → delta (green improving / yellow slower); position only when improving.
         const deltaSec = p.delta / 1000;
         const deltaText = (deltaSec < 0 ? '−' : '+') + Math.abs(deltaSec).toFixed(1);
         const deltaCls = p.deltaColour === 'green' ? 'pred-delta-neg' : 'pred-delta-pos';
+        const posHtml = hasPos ? `<span class="pred-pos-gain${posCol}">P${p.predictedPos}</span>` : '';
         return '<span class="pred">'
-            + `<span class="pred-delta ${deltaCls}">${deltaText}</span>`
-            + `<span class="pred-pos-gain${posCol}">P${p.predictedPos}</span></span>`;
+            + `<span class="pred-delta ${deltaCls}">${deltaText}</span>` + posHtml + '</span>';
     }
 
     function formatLapTimeOneDecimal(ms) {
