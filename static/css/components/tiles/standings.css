@@ -16,7 +16,7 @@
     flex-direction: column;
     height: 100%;
     overflow-y: auto;
-    overflow-x: hidden;
+    overflow-x: auto;   /* over-wide rows scroll horizontally (header scrolls with them) */
     /* 15px → 18px → 19px (per polish batch). */
     font-size: 19px;
     padding: 2px 4px;
@@ -29,6 +29,7 @@
 .driver-row,
 .driver-header {
     display: grid;
+    width: max-content;   /* intrinsic (sum of fixed tracks) → leftover shows / overflow scrolls */
     align-items: center;
     /* No inter-column spacing — spacer tracks are zeroed; spacing is added back
        per-column later once the tight baseline is settled. */
@@ -83,10 +84,11 @@
      * Order: last lap before sectors before mini-sectors.
      * color-end + tla-end mirror the row identifier at the right edge.
      * laps-end-spacer = breathing room between Laps and the row-end TLA. */
-    /* rank·color·tla·NUM | status·best·—·gap·last·—·S1·S2·S3·mini·tyres·laps·— | tla·color·RANK */
-    /* 17 columns; widths + spacing are per-role (min-width in ch + margin-right in
-       --sp units) on the cells themselves — see "Column widths + spacing" below. */
-    grid-template-columns: repeat(17, auto);
+    /* Fixed px tracks = content + trailing margin, IDENTICAL for every row + header so
+       columns align. No flexible column: the row is width:max-content, so leftover
+       space shows on the right and an over-wide row scrolls horizontally.
+       rank color tla num status | best gap last S1 S2 S3 mini tyres laps | tla color rank */
+    grid-template-columns: 23px 17px 37px 24px 46px 101px 81px 92px 53px 53px 59px 159px 226px 26px 37px 17px 20px;
 }
 
 .driver-list.standings-qualifying .driver-row,
@@ -94,9 +96,9 @@
     /* rank | color | tla | status | best | gap | lap-time | delta | S1 | S2 | S3 | mini | tyres | laps | laps-end-spacer | color-end | tla-end  (q9JVTQZg)
      * tyres = 4fr: quali shows only the current tyre (one stint), so the
      * column needs ~half the width of the multi-stint practice/race tyres. */
-    /* rank·color·tla·NUM | status·best·gap·last·delta·S1·S2·S3·mini·tyre·laps·— | tla·color·RANK */
-    /* 18 columns; per-role widths + spacing on the cells (see below). */
-    grid-template-columns: repeat(18, auto);
+    /* Fixed px tracks (see practice). rank color tla num status | best gap last delta
+       S1 S2 S3 mini tyre laps | tla color rank */
+    grid-template-columns: 23px 17px 37px 24px 46px 101px 81px 92px 98px 53px 53px 59px 159px 52px 26px 37px 17px 20px;
 }
 
 .driver-list.standings-race .driver-row,
@@ -106,9 +108,9 @@
      * Status widened to hold the penalty label (! +5s, ! +10s, ! DT, ! S&G).
      * gap-int-spacer = matches best-lap → tyres spacer for visual rhythm.
      * laps-end-spacer = breathing room between Laps and the row-end TLA. */
-    /* rank·color·tla·NUM | status·gap·—·int·—·last·—·S1·S2·S3·mini·best·—·tyres·laps·— | tla·color·RANK */
-    /* 18 columns; per-role widths + spacing on the cells (see below). */
-    grid-template-columns: repeat(18, auto);
+    /* Fixed px tracks (see practice). rank color tla num status | gap int last S1 S2 S3
+       mini best tyres laps | tla color rank */
+    grid-template-columns: 23px 17px 37px 24px 96px 81px 81px 92px 53px 53px 59px 159px 101px 141px 26px 37px 17px 20px;
 }
 
 /* ─── Cells ─── */
@@ -355,29 +357,14 @@
 .tyre-stint-past .tyre-stint-laps { font-size: 13px; }
 /* .tyre-stint-past { opacity: 0.5; }  ← enable to fade past stints */
 
-/* ═══ Column widths + spacing ═══
- * Grids are repeat(N, auto): each column's WIDTH + trailing SPACING come from the
- * cell here. Widths — monospace numerics in ch (auto-scale with the cell's own
- * font-size); graphical / badge columns in px. Spacing — margin-right in --sp units
- * (base 3px). Roles repeat identically at both row ends (TLA is always 1u, …) except
- * the final rank, which has no trailing gap. Change one value here; nothing else. */
-
-/* width per column */
-.rank        { min-width: 2ch; }
-.driver-tla  { min-width: 3ch; }
-.driver-num  { min-width: 2ch; }
-.lap-time    { min-width: 9ch; }        /* MM:SS.mmm — 2-digit minutes reserved */
-.gap         { min-width: 7ch; }        /* +SS.sss */
-.interval    { min-width: 7ch; font-size: 17px; }
-.pred        { min-width: 11ch; font-size: 14px; }   /* ±s.SSS + arrow + 2-digit pos */
-.sector-time { min-width: 6ch; }
-.lap-count   { min-width: 2ch; }
-.segments    { min-width: 150px; }      /* fits a 3×8 mini-sector track */
-.status      { min-width: 40px; }                              /* P/Q: 1 badge */
-.driver-list.standings-race .status      { min-width: 92px; }  /* race: 3 badges */
-.driver-list.standings-qualifying .tyres { min-width: 46px; }  /* current only */
-.driver-list.standings-race .tyres       { min-width: 135px; } /* 1 + 2 stints */
-.driver-list.standings-practice .tyres   { min-width: 220px; } /* 1 + 4 stints */
+/* ═══ Column spacing ═══
+ * Widths live in the fixed grid tracks above (aligned across all rows + header). Here:
+ * the trailing gap after each column as margin-right in --sp units (base 3px). Each
+ * fixed track = content + this margin, so the value sits with its gap after it. Roles
+ * repeat identically at both row ends (TLA always 1u, …) except the final rank (no
+ * trailing gap). interval/delta also need an explicit font-size (they inherit else). */
+.interval { font-size: 17px; }
+.pred     { font-size: 14px; }
 
 /* trailing spacing after each column (margin-right, in --sp units) */
 .rank, .driver-color, .driver-tla, .sector-time                     { margin-right: var(--sp); }             /* 1u */
