@@ -789,60 +789,30 @@
     }
 
     function predictionCell(num) {
-        // The .pred span is ONE grid cell — delta + projected-position
-        // side by side, otherwise inner spans would spill across grid
-        // tracks and misalign every column to the right.
-        //
-        // Per SME 2026-06-07: only show delta on PUSH laps (= active
-        // attempts), AND only when the driver has at least one timed
-        // lap on the board THIS session (= a reference for the delta
-        // to be meaningful).
-        // lapPrediction {lap, delta (ms, negative), placesGained}. The
-        // server only emits it for an improving PUSH lap, with the position
-        // gain already computed (no client-side rank math needed).
+        // Render only — lap_prediction (server) computes everything (quali). Payload:
+        // { delta(ms), placesGained, predictedPos, deltaColour, posColour }.
+        //   - no lap this part → predictedPos: show `Pnn`, coloured by the band the
+        //     predicted lap time earns (posColour);
+        //   - has a lap        → delta `±s.S` (green improving / yellow slower) + places
+        //     gained as a coloured up-arrow, or `=0` white when no gain.
         const p = state.prediction[num];
-        if (!p || p.delta === undefined || p.delta === null) {
-            return '<span class="pred"></span>';
+        if (!p) return '<span class="pred"></span>';
+        const posCol = p.posColour ? ` c-${p.posColour}` : '';
+        if (p.predictedPos != null) {
+            return '<span class="pred"><span class="pred-delta"></span>'
+                + `<span class="pred-pos-gain${posCol}">P${p.predictedPos}</span></span>`;
         }
-        // (PUSH/PIT blanking removed — lap_prediction clears the prediction
-        // server-side on pit/retire/leaving-push, so the client just renders what
-        // it's sent. ybTVoVep) The observed result (observed=true) shows regardless
-        // of current class (cards 62/67).
-        if (!p.observed) {
-            const driverEntry = state.driverData[num] || {};
-            const hasReference = Boolean(driverEntry.bestLap)
-                || (state.lapTimes[num] && Object.keys(state.lapTimes[num]).length > 0);
-            if (!hasReference) {
-                return '<span class="pred"></span>';
-            }
-        }
-        // Positions gained: green up-triangle + WHITE count, right-aligned.
-        // Predicted (live projection) gain = green; observed (completed) = white.
-        const gainCls = p.observed ? 'pred-pos-observed' : 'pred-pos-predicted';
-        const posHtml = (p.placesGained != null && p.placesGained > 0)
-            ? `<span class="pred-pos-gain ${gainCls}"><span class="pred-pos-arrow">&#9650;</span>`
-              + `<span class="pred-pos-num">${p.placesGained}</span></span>`
-            : '';
-        // On completion (observed) only the positions gained are shown — the delta
-        // time is dropped, but its slot is kept (empty) so the positions stay in
-        // the same fixed column position as during the live projection.
-        if (p.observed) {
-            // The observed positions-gained is removed by DELETING
-            // state.prediction[num] once the driver reaches S1 of the next lap,
-            // or STOPs/pits (see the driverSectors / driverStatus handlers) — a
-            // one-shot removal so it can't reappear after a pit/new run. Until
-            // then, show it (empty delta slot keeps the column aligned).
-            return `<span class="pred"><span class="pred-delta"></span>${posHtml}</span>`;
-        }
-        // Live projection: delta (0.1s) on the left, positions gained on the right.
+        if (p.delta == null) return '<span class="pred"></span>';
         const deltaSec = p.delta / 1000;
-        const sign = deltaSec < 0 ? '−' : '+';
-        const deltaText = `${sign}${Math.abs(deltaSec).toFixed(1)}`;
-        const deltaCls = deltaSec < 0 ? 'pred-delta-neg' : 'pred-delta-pos';
-        return `<span class="pred">`
+        const deltaText = (deltaSec < 0 ? '−' : '+') + Math.abs(deltaSec).toFixed(1);
+        const deltaCls = p.deltaColour === 'green' ? 'pred-delta-neg' : 'pred-delta-pos';
+        const posHtml = (p.placesGained > 0)
+            ? `<span class="pred-pos-gain${posCol}"><span class="pred-pos-arrow">&#9650;</span>`
+              + `<span class="pred-pos-num">${p.placesGained}</span></span>`
+            : '<span class="pred-pos-gain pred-pos-zero">=0</span>';
+        return '<span class="pred">'
             + `<span class="pred-delta ${deltaCls}">${deltaText}</span>`
-            + posHtml
-            + `</span>`;
+            + posHtml + '</span>';
     }
 
     function formatLapTimeOneDecimal(ms) {

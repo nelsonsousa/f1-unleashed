@@ -453,10 +453,15 @@
     min-width: 2.5em;          /* fixed slot so positions stay aligned with/without the delta */
 }
 
-/* Positions gained colour by state: predicted (live projection) = green,
-   observed (completed lap) = white. */
-.pred-pos-predicted .pred-pos-arrow, .pred-pos-predicted .pred-pos-num { color: #00ff88; }
-.pred-pos-observed  .pred-pos-arrow, .pred-pos-observed  .pred-pos-num { color: #ffffff; }
+/* Position (places gained OR predicted Pnn) coloured by the band the predicted lap
+   time earns (server posColour); the arrow/num inherit. =0 (no gain) is white. */
+.pred-pos-gain.c-purple { color: var(--c-purple); }
+.pred-pos-gain.c-blue   { color: var(--c-blue); }
+.pred-pos-gain.c-green  { color: var(--c-green); }
+.pred-pos-gain.c-yellow { color: var(--c-yellow); }
+.pred-pos-gain.c-orange { color: var(--c-orange); }
+.pred-pos-gain.c-red    { color: var(--c-red); }
+.pred-pos-gain.pred-pos-zero { color: var(--c-white); }
 
 /* FIA Stewards penalty / flag stack.
  * Lives inside the status badge. Horizontal flexbox, h-scrolls when

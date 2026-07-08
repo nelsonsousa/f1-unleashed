@@ -34,6 +34,17 @@ RELIABILITY_GAP_PCT = 1.0
 MIN_ELAPSED_MS = 5_000
 
 
+def _parse_ms(s: Any) -> Optional[int]:
+    if not isinstance(s, str) or ":" not in s:
+        return None
+    try:
+        mm, rest = s.split(":")
+        sec, _, ms = rest.partition(".")
+        return int(mm) * 60000 + int(sec) * 1000 + int((ms or "0").ljust(3, "0")[:3])
+    except (ValueError, IndexError):
+        return None
+
+
 class LapDeltaProcessor(Processor):
     """Live delta to the driver's best lap, sampled by track position."""
 
@@ -41,7 +52,8 @@ class LapDeltaProcessor(Processor):
         super().__init__(bus, session_type)
         self._enabled = session_type in ("practice", "qualifying")
         self._laps: dict[str, dict[int, list]] = {}    # num -> {lap: [(dp, t_ms)]}
-        self._best_num: dict[str, int] = {}             # num -> best lap number (driverLaps)
+        self._best_num: dict[str, int] = {}             # num -> reference lap number (driverLaps)
+        self._ref_full: dict[str, int] = {}             # num -> reference lap's FULL time ms
         self._best_curve: dict[str, list] = {}          # num -> sorted [(dp, t_ms)]
         self._best_curve_lap: dict[str, int] = {}       # num -> lap the curve was built for
 
@@ -73,13 +85,20 @@ class LapDeltaProcessor(Processor):
     def _on_driver_laps(self, num: str, data: Any) -> None:
         if not isinstance(data, dict):
             return
-        # Reference the SESSION-WIDE best (overallBestLap), not the per-part
-        # bestLap — the delta predictor needs the overall benchmark lap, which
-        # is kept across qualifying parts (card 63). Equal outside quali.
-        bl = data.get("overallBestLap")
-        b = bl.get("lap") if isinstance(bl, dict) else None
-        if isinstance(b, int):
-            self._best_num[num] = b
+        # Reference = the driver's PERSONAL BEST, by priority (user 2026-07-08):
+        #   1. best lap THIS part (driverLaps.bestLap) if set;
+        #   2. else best lap across all parts (overallBestLap).
+        # (Priority 3 — another driver's lap when the driver has none — is handled
+        #  in lap_prediction / TODO here for the curve.) Outside quali bestLap ==
+        #  overallBestLap, so behaviour is unchanged there.
+        ref = data.get("bestLap")
+        if not (isinstance(ref, dict) and ref.get("lap") is not None):
+            ref = data.get("overallBestLap")
+        if isinstance(ref, dict) and isinstance(ref.get("lap"), int):
+            self._best_num[num] = ref["lap"]
+            t = _parse_ms(ref.get("time"))
+            if t is not None:
+                self._ref_full[num] = t
 
     def _ref_curve(self, num: str) -> Optional[list]:
         """The current best lap's curve, rebuilt only once its telemetryLap is
@@ -111,6 +130,7 @@ class LapDeltaProcessor(Processor):
         self._bus.emit(f"driverDelta:{num}", {
             "deltaMs": int(elapsed - best_t),
             "refMs": int(best_t),   # reference lap's time to THIS point (SLOW ratio denominator)
+            "refFullMs": self._ref_full.get(num),   # reference lap's FULL time → predicted = this + delta
             "lap": data.get("lap"),
             "trackPct": dp,
         }, clock_time)
