@@ -55,6 +55,7 @@ class SectorTimingProcessor(Processor):
         self._display_lap: dict[str, Any] = {}         # num -> lap the SHOWN sector TIMES belong to
         self._mini_display_lap: dict[str, Any] = {}    # num -> lap the SHOWN mini-sectors belong to
         self._part: Optional[int] = None   # current qualifying part (reset trigger)
+        self._started = False              # race: lights out (SessionStatus=Started)
         # Max segment count seen per sector (track-wide — all cars share the
         # mini-sector layout). Mini-sector arrays are padded to this on every
         # emit so the layout is fixed-length and the client render is
@@ -90,6 +91,11 @@ class SectorTimingProcessor(Processor):
             num = topic.split(":", 1)[1]
             if isinstance(data, dict) and data.get("currentLap") is not None:
                 self._current_lap[num] = data["currentLap"]
+        elif topic == "SessionStatus":
+            if isinstance(data, dict) and data.get("Status") == "Started" and not self._started:
+                self._started = True   # lights out → un-grey; re-emit the field
+                for num in list(self._sectors):
+                    self._emit(num, clock_time)
 
     def _suppress_mode(self, num: str):
         """(sector_mode, mini_mode), each None | 'white' | 'blank'. Sector times and
@@ -99,6 +105,8 @@ class SectorTimingProcessor(Processor):
         _mini_display_lap — they paint from the lap START, before that clear, so
         keying them off _display_lap left a whole first sector on the PREVIOUS lap's
         class. (user 2026-07-07)"""
+        if self._is_race and not self._started:
+            return ("white", "white")                 # pre-lights-out (race): grey all timing
         st = self._status.get(num)
         if st in ("DSQ", "ELIMINATED"):
             return ("blank", "blank")                 # out of contention → clear both
