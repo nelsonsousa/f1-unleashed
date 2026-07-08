@@ -84,7 +84,8 @@
      * color-end + tla-end mirror the row identifier at the right edge.
      * laps-end-spacer = breathing room between Laps and the row-end TLA. */
     /* rank·color·tla·NUM | status·best·—·gap·last·—·S1·S2·S3·mini·tyres·laps·— | tla·color·RANK */
-    grid-template-columns: 3fr 14px 3fr 4fr 3fr 10fr 0 6fr 8fr 0 6fr 6fr 6fr 13fr 15fr 3fr 0 3fr 14px 3fr;
+    /* Fixed content-based widths (monospace numerics). tyres = 1 current + 4 previous. */
+    grid-template-columns: 18px 14px 32px 20px 36px 94px 0 72px 88px 0 54px 54px 54px 150px 220px 22px 0 32px 14px 18px;
 }
 
 .driver-list.standings-qualifying .driver-row,
@@ -93,7 +94,8 @@
      * tyres = 4fr: quali shows only the current tyre (one stint), so the
      * column needs ~half the width of the multi-stint practice/race tyres. */
     /* rank·color·tla·NUM | status·best·gap·last·delta·S1·S2·S3·mini·tyre·laps·— | tla·color·RANK */
-    grid-template-columns: 3fr 14px 3fr 4fr 3fr 10fr 6fr 8fr 7fr 6fr 6fr 6fr 13fr 4fr 3fr 0 3fr 14px 3fr;
+    /* Fixed content-based widths (monospace numerics). tyre = current only. */
+    grid-template-columns: 18px 14px 32px 20px 36px 94px 72px 88px 55px 54px 54px 54px 150px 46px 22px 0 32px 14px 18px;
 }
 
 .driver-list.standings-race .driver-row,
@@ -104,7 +106,9 @@
      * gap-int-spacer = matches best-lap → tyres spacer for visual rhythm.
      * laps-end-spacer = breathing room between Laps and the row-end TLA. */
     /* rank·color·tla·NUM | status·gap·—·int·—·last·—·S1·S2·S3·mini·best·—·tyres·laps·— | tla·color·RANK */
-    grid-template-columns: 3fr 14px 3fr 4fr 8fr 7fr 0 7fr 0 8fr 0 6fr 6fr 6fr 11fr 9fr 0 13fr 4fr 0 3fr 14px 3fr;
+    /* Fixed content-based widths (monospace numerics). status = 3 badges; tyres =
+       1 current + 2 previous. */
+    grid-template-columns: 18px 14px 32px 20px 92px 80px 0 64px 0 88px 0 54px 54px 54px 150px 94px 0 135px 22px 0 32px 14px 18px;
 }
 
 /* ─── Cells ─── */
@@ -216,6 +220,12 @@
 .status .status-flag.flag-dsq,
 .status .status-flag.flag-dsq-muted      { color: #ff5555; }
 
+/* Numeric timing cells use a monospace font so column widths are predictable /
+   content-sized (fixed px tracks below). */
+.lap-time, .sector-time, .gap, .interval, .delta, .lap-count {
+    font-family: 'Monaco', 'Consolas', monospace;
+}
+
 /* Lap times. Best lap uses .lap-time alone; last lap adds .lap-last and
  * shrinks one extra pixel to de-emphasise it relative to the best. */
 .lap-time {
@@ -286,7 +296,7 @@
     min-width: 0;
     overflow: hidden;
     height: 100%;
-    padding: 0;   /* no inter-column inset — added back later if needed */
+    padding: 0 8px;   /* before 1st / after last mini-sector = 2× the 4px inter-sector gap */
 }
 
 .seg-bar {
