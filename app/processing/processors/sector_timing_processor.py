@@ -56,6 +56,7 @@ class SectorTimingProcessor(Processor):
         self._mini_display_lap: dict[str, Any] = {}    # num -> lap the SHOWN mini-sectors belong to
         self._part: Optional[int] = None   # current qualifying part (reset trigger)
         self._started = False              # race: lights out (SessionStatus=Started)
+        self._pending_roll: dict[str, bool] = {}   # a real sector time seen since the last rollover
         # Max segment count seen per sector (track-wide — all cars share the
         # mini-sector layout). Mini-sector arrays are padded to this on every
         # emit so the layout is fixed-length and the client render is
@@ -93,8 +94,11 @@ class SectorTimingProcessor(Processor):
                 self._current_lap[num] = data["currentLap"]
         elif topic == "SessionStatus":
             if isinstance(data, dict) and data.get("Status") == "Started" and not self._started:
-                self._started = True   # lights out → un-grey; re-emit the field
+                self._started = True   # lights out → un-grey + seed the lap counters to 1
                 for num in list(self._sectors):
+                    self._display_lap[num] = 1        # racing lap 1 (discard pre-race out-laps)
+                    self._mini_display_lap[num] = 1
+                    self._pending_roll[num] = False
                     self._emit(num, clock_time)
 
     def _suppress_mode(self, num: str):
@@ -173,16 +177,21 @@ class SectorTimingProcessor(Processor):
                     if "Value" in sec:
                         if sec["Value"]:
                             s["value"] = sec["Value"]
+                            self._pending_roll[num] = True   # real sector time — arm the rollover
                         else:
-                            # Explicit clear (lap rollover) — reset this sector and
-                            # advance the DISPLAY lap to the current lap: the shown
-                            # sectors now belong to the new lap (the boundary S3/mini
-                            # before this belonged to the previous lap). (user)
+                            # Explicit clear (lap rollover). Advance the display lap by
+                            # ONE per lap — the S/F crossing itself, which lands a sector
+                            # BEFORE currentLap updates (NoL arrives with the lap-time
+                            # calc). _pending_roll guards against the 2–3 sector clears in
+                            # one rollover double-counting. (user 2026-07-08)
+                            if self._pending_roll.get(num):
+                                dl = self._display_lap.get(num)
+                                self._display_lap[num] = (dl + 1) if dl is not None else self._current_lap.get(num)
+                                self._pending_roll[num] = False
                             s["value"] = None
                             s["overallFastest"] = False
                             s["personalFastest"] = False
                             s["segments"] = []
-                            self._display_lap[num] = self._current_lap.get(num)
                         changed = True
                     if "OverallFastest" in sec:
                         s["overallFastest"] = bool(sec["OverallFastest"]); changed = True
