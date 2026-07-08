@@ -1,0 +1,102 @@
+/* Live dashboard view — 2–3 driver gauges inside the telemetry tile.
+   Toggled via #telemetryTile.dashboard-mode. Speed on the thick outer arc (0–360),
+   throttle (green) / brake (red) on the inner arc, gear on a sliding centre tape, and
+   an inline driver ticker in telemetry-pill order. Fed by liveTelemetry, interpolated. */
+
+/* ── view visibility ── */
+#telemetryTile.dashboard-mode .telemetry-only,
+#telemetryTile.dashboard-mode .telemetry-container { display: none; }
+.dashboard-container { display: none; }
+#telemetryTile.dashboard-mode .dashboard-container { display: flex; }
+
+.telemetry-view-toggle { display: flex; gap: 4px; margin-right: auto; }
+
+/* ── layout ── */
+.dashboard-container { height: 100%; width: 100%; align-items: stretch; }
+.dash-panel {
+    flex: 1; min-width: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; padding: 12px 10px;
+}
+.dash-panel + .dash-panel { border-left: 1px solid var(--border); }
+
+/* ── gauge ── */
+.dash-gauge {
+    position: relative; container-type: size;
+    flex: 1 1 0; min-height: 0; width: 100%;   /* square SVG self-centres via preserveAspectRatio */
+}
+.dash-gauge svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.dash-track { fill: none; stroke: #20242b; stroke-linecap: round; }
+.dash-fill  { fill: none; stroke-linecap: round; }
+.dash-tick  { fill: var(--text-muted); font-family: 'Monaco','Consolas',monospace; font-size: 3.6cqmin; }
+
+.dash-readout {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; pointer-events: none; gap: 0.8cqmin;
+}
+.dash-speed {
+    font-family: 'Monaco','Consolas',monospace; font-weight: 700; font-size: 23cqmin;
+    line-height: .9; letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: var(--text-primary);
+}
+.dash-kmh { font-size: 4.2cqmin; letter-spacing: .3em; color: var(--text-secondary); font-weight: 600; }
+
+/* gear tape (centre) */
+.dash-tape {
+    margin-top: 5cqmin; position: relative; width: 49cqmin; height: 15cqmin; overflow: hidden;
+    border-radius: 3cqmin; background: #0e1115cc; border: 1px solid var(--border);
+}
+.dash-tape-mark {
+    position: absolute; left: 50%; top: 8%; bottom: 8%; width: 44%; transform: translateX(-50%);
+    border-radius: 2.4cqmin; background: rgba(51,204,255,.12); border: 1px solid rgba(51,204,255,.28);
+}
+.dash-tape-row { position: absolute; inset: 0; display: flex; transition: transform .16s cubic-bezier(.4,0,.2,1); }
+.dash-tape-cell {
+    flex: 0 0 58%; display: flex; align-items: center; justify-content: center;
+    font-family: 'Monaco','Consolas',monospace; font-weight: 700; color: var(--text-muted);
+    font-size: 6.5cqmin; transition: color .15s, font-size .15s;
+}
+.dash-tape-cell.cur { color: var(--text-primary); font-size: 9.5cqmin; }
+
+/* ── driver ticker ── */
+.dash-selector { position: relative; flex: 0 0 auto; }
+.dash-tla {
+    min-width: 100px; height: 42px; display: flex; align-items: center; justify-content: center;
+    padding: 0 18px; border-radius: 6px; cursor: pointer;
+    font-family: 'Monaco','Consolas',monospace; font-weight: 700; font-size: 26px; letter-spacing: .04em;
+    transition: filter .15s;
+}
+.dash-tla:hover { filter: brightness(1.12); }
+.dash-selector.open .dash-tla { display: none; }
+
+/* empty slot — dimmed gauge + a neutral "SELECT" ticker */
+.dash-panel.empty .dash-gauge { opacity: .26; }
+.dash-panel.empty .dash-tla {
+    background: transparent; border: 1px dashed var(--border); color: var(--text-muted);
+    font-size: 14px; letter-spacing: .14em;
+}
+
+.dash-picker {
+    display: none; align-items: center; gap: 4px; width: 280px; height: 42px; padding: 4px;
+    background: #0e1115cc; border: 1px solid var(--border); border-radius: 8px;
+}
+.dash-selector.open .dash-picker { display: flex; }
+.dash-arrow {
+    flex: 0 0 auto; width: 22px; height: 34px; border: none; border-radius: 5px; cursor: pointer;
+    background: #20252d; color: var(--text-secondary); font-size: 15px; line-height: 1;
+    transition: background .15s, color .15s;
+}
+.dash-arrow:hover { background: #2a3039; color: var(--text-primary); }
+.dash-strip {
+    flex: 1; display: flex; gap: 6px; overflow-x: auto; scroll-behavior: smooth;
+    scrollbar-width: none; padding: 1px;
+}
+.dash-strip::-webkit-scrollbar { display: none; }
+.dash-chip {
+    flex: 0 0 auto; min-width: 62px; height: 34px; padding: 0 8px; border-radius: 5px; cursor: pointer;
+    font-family: 'Monaco','Consolas',monospace; font-weight: 700; font-size: 24px; letter-spacing: .04em;
+    color: #0b0d10; display: flex; align-items: center; justify-content: center;
+    outline: 2px solid transparent; outline-offset: -2px; transition: transform .12s;
+}
+.dash-chip:hover { transform: translateY(-2px); }
+.dash-chip.cur { outline-color: #fff; }
+
+@media (prefers-reduced-motion: reduce) { .dash-tape-row, .dash-strip { transition: none; scroll-behavior: auto; } }

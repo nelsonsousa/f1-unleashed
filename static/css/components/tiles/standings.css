@@ -63,6 +63,7 @@
 .driver-row {
     border-bottom: 1px solid var(--border);
     min-height: 0;
+    cursor: pointer;   /* click → focus that driver on the dashboard */
 }
 
 .driver-row:last-child {

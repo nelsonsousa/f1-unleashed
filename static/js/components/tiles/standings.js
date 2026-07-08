@@ -1019,11 +1019,16 @@
         // wholesale re-render; each sector toggles current↔best independently.
         container.addEventListener('click', (e) => {
             const btn = e.target.closest('.tile-btn[data-sec]');
-            if (!btn) return;
-            const i = parseInt(btn.dataset.sec, 10);
-            const best = btn.dataset.best === '1';
-            const mode = state.sectorMode || (state.sectorMode = [false, false, false]);
-            if (mode[i] !== best) { mode[i] = best; render(); }
+            if (btn) {
+                const i = parseInt(btn.dataset.sec, 10);
+                const best = btn.dataset.best === '1';
+                const mode = state.sectorMode || (state.sectorMode = [false, false, false]);
+                if (mode[i] !== best) { mode[i] = best; render(); }
+                return;
+            }
+            // Click a driver row → focus that driver (+ neighbours in a race) on the dashboard.
+            const row = e.target.closest('.driver-row[data-driver]');
+            if (row && window.F1Dashboard) window.F1Dashboard.focus(row.dataset.driver);
         });
         container.addEventListener('mousemove', (e) => {
             _mouseX = e.clientX;

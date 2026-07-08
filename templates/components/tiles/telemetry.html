@@ -1,16 +1,20 @@
 <div class="tile {{ width | default('w-50') }}" id="telemetryTile">
     <div class="tile-header telemetry-header">
-        <span>Telemetry</span>
+        <!-- View toggle: the trace chart (Telemetry) vs the live gauge dashboard -->
+        <div class="telemetry-view-toggle" id="telemetryViewToggle">
+            <button class="tile-btn active" data-view="telemetry">Telemetry</button>
+            <button class="tile-btn" data-view="dashboard">Dashboard</button>
+        </div>
         <!-- Qualifying lap-part toggle (Q1/Q2/Q3 or SQ1-3) — JS-populated, hidden outside quali (cards 66/83) -->
-        <div class="telemetry-part-tabs hidden" id="telemetryPartTabs"></div>
-        <button class="tile-btn telemetry-driver-toggle-all" id="telemetryAllDrivers" data-action="all">SHOW ALL</button>
-        <div class="telemetry-channels" id="telemetryChannels">
+        <div class="telemetry-part-tabs hidden telemetry-only" id="telemetryPartTabs"></div>
+        <button class="tile-btn telemetry-driver-toggle-all telemetry-only" id="telemetryAllDrivers" data-action="all">SHOW ALL</button>
+        <div class="telemetry-channels telemetry-only" id="telemetryChannels">
             <button class="telemetry-channel active" data-channel="speed">SPD</button>
             <button class="telemetry-channel" data-channel="rpm">RPM</button>
             <button class="telemetry-channel" data-channel="gear">GEAR</button>
             <button class="telemetry-channel" data-channel="throttleBrake">THR/BRK</button>
         </div>
-        <div class="telemetry-modes" id="telemetryModes">
+        <div class="telemetry-modes telemetry-only" id="telemetryModes">
             <button class="telemetry-mode active" data-mode="live">Live</button>
             <button class="telemetry-mode" data-mode="last">Last</button>
             <button class="telemetry-mode" data-mode="best">Best</button>
@@ -30,5 +34,7 @@
                 <div class="telemetry-legend" id="telemetryLegend"></div>
             </div>
         </div>
+        <!-- Live gauge dashboard (2–3 drivers) — JS-populated -->
+        <div class="dashboard-container" id="dashboardContainer"></div>
     </div>
 </div>

@@ -52,6 +52,8 @@
         lapNoData: {},        // num -> Set(lapNum) — laps that came in empty
         telemetryLaps: {},    // num -> Set(laps that have telemetry on disk)
         hiddenDrivers: new Set(),
+        view: 'telemetry',    // 'telemetry' (trace chart) | 'dashboard' (live gauges)
+        dashSlots: [null, null, null],  // driver nums shown in the 3 dashboard gauges
         canvas: null,
         ctx: null,
         renderPending: false,
@@ -92,12 +94,12 @@
     }
 
     function scheduleRender() {
-        if (state.mode === 'live' && _telPlaying) return;   // continuous animateLive covers live playback
+        if (_telPlaying && (state.view === 'dashboard' || state.mode === 'live')) return;   // animateLive covers it
         if (state.renderPending) return;
         state.renderPending = true;
         requestAnimationFrame(() => {
             state.renderPending = false;
-            renderChart();
+            if (state.view === 'dashboard') renderDashboard(); else renderChart();
         });
     }
 
@@ -132,7 +134,10 @@
     }
 
     function animateLive() {
-        if (state.mode === 'live' && _telPlaying) renderChart();
+        if (_telPlaying) {
+            if (state.view === 'dashboard') renderDashboard();
+            else if (state.mode === 'live') renderChart();
+        }
         requestAnimationFrame(animateLive);
     }
     requestAnimationFrame(animateLive);
@@ -140,6 +145,210 @@
     messageBus.on('playback:status', (data) => {
         if (data) { _telPlaying = !!data.isPlaying; scheduleRender(); }
     });
+
+    // ═══════════════════════ Live dashboard view ═══════════════════════
+    // 2–3 driver gauges (speed dial 0–360, throttle/brake arc, gear tape) that replace
+    // the trace chart on demand. Fed by the same interpolated liveSamples, so the speed
+    // sweeps smoothly between the ~3.7Hz samples (renderDashboard runs every rAF frame).
+    const D_A0 = 215, D_A1 = 360, D_B0 = 0, D_B1 = 145;   // throttle 215→360, brake 0→145
+    const D_SPAN = (D_A1 - D_A0) + (D_B1 - D_B0), D_VMAX = 360, D_CELL = 58;
+    let _dashPanels = [], _dashBuilt = false, _dashOpenIdx = null;
+
+    const dPt = (cx, cy, r, d) => { const t = d * Math.PI / 180; return [cx + r * Math.sin(t), cy - r * Math.cos(t)]; };
+    function dArc(cx, cy, r, d0, d1) {
+        const [x0, y0] = dPt(cx, cy, r, d0), [x1, y1] = dPt(cx, cy, r, d1);
+        const large = Math.abs(d1 - d0) > 180 ? 1 : 0, sweep = d1 > d0 ? 1 : 0;
+        return `M${x0.toFixed(2)} ${y0.toFixed(2)} A${r} ${r} 0 ${large} ${sweep} ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+    }
+    function dashInk(hex) {
+        const c = (hex || '').replace('#', ''); if (c.length < 6) return '#fff';
+        const l = parseInt(c.slice(0, 2), 16) * .299 + parseInt(c.slice(2, 4), 16) * .587 + parseInt(c.slice(4, 6), 16) * .114;
+        return l > 150 ? '#0b0d10' : '#fff';
+    }
+    function closeDashPickers() { _dashPanels.forEach(p => p.selector.classList.remove('open')); _dashOpenIdx = null; }
+
+    // Keyboard nav while a picker is open: a letter cycles through drivers whose TLA
+    // starts with it (A → ANT → ALO → ALB → ANT…); Backspace clears the slot. (user)
+    function dashKeyNav(e) {
+        if (_dashOpenIdx == null) return;
+        const i = _dashOpenIdx;
+        if (e.key === 'Backspace') {
+            e.preventDefault();
+            state.dashSlots[i] = null; paintDashSlot(i);
+            return;
+        }
+        if (e.key && e.key.length === 1 && /[a-z]/i.test(e.key)) {
+            const letter = e.key.toUpperCase();
+            const matches = getSortedDrivers().map(d => d.num)
+                .filter(n => ((state.drivers[n] || {}).tla || '').toUpperCase().startsWith(letter));
+            if (!matches.length) return;
+            e.preventDefault();
+            const ci = matches.indexOf(state.dashSlots[i]);
+            const next = matches[(ci + 1) % matches.length];   // ci=-1 (not a match) → first
+            state.dashSlots[i] = next; paintDashSlot(i);
+            const chip = _dashPanels[i].strip.querySelector(`.dash-chip[data-num="${next}"]`);
+            if (chip) chip.scrollIntoView({ block: 'nearest', inline: 'center' });
+        }
+    }
+
+    function buildDashboard() {
+        const cont = document.getElementById('dashboardContainer');
+        if (!cont) return;
+        cont.innerHTML = ''; _dashPanels = [];
+        let ticks = '';
+        for (const s of [60, 120, 180, 240, 300, 360]) {
+            let d = D_A0 + D_SPAN * (s / D_VMAX); if (d > 360) d -= 360;
+            const [tx, ty] = dPt(120, 120, 118, d);
+            ticks += `<text class="dash-tick" x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="middle" dominant-baseline="middle">${s}</text>`;
+        }
+        for (let i = 0; i < 3; i++) {
+            const el = document.createElement('div'); el.className = 'dash-panel';
+            el.innerHTML = `
+                <div class="dash-gauge">
+                    <svg viewBox="0 0 240 240" aria-hidden="true">
+                        <path class="dash-track" stroke-width="12" d="${dArc(120,120,105,D_A0,D_A1)} ${dArc(120,120,105,D_B0,D_B1)}"/>
+                        <path class="dash-track" stroke-width="16" d="${dArc(120,120,84,D_A0,D_A1)}"/>
+                        <path class="dash-track" stroke-width="16" d="${dArc(120,120,84,D_B0,D_B1)}"/>
+                        <path class="dash-fill d-spd" stroke="var(--c-blue)"  stroke-width="12" d=""/>
+                        <path class="dash-fill d-thr" stroke="var(--c-green)" stroke-width="16" d=""/>
+                        <path class="dash-fill d-brk" stroke="var(--c-red)"   stroke-width="16" d=""/>
+                        ${ticks}
+                    </svg>
+                    <div class="dash-readout">
+                        <div class="dash-speed d-v">0</div>
+                        <div class="dash-kmh">KM/H</div>
+                        <div class="dash-tape"><div class="dash-tape-mark"></div><div class="dash-tape-row d-tape"></div></div>
+                    </div>
+                </div>
+                <div class="dash-selector">
+                    <div class="dash-tla d-tla"></div>
+                    <div class="dash-picker">
+                        <button class="dash-arrow d-left" aria-label="scroll left">‹</button>
+                        <div class="dash-strip d-strip"></div>
+                        <button class="dash-arrow d-right" aria-label="scroll right">›</button>
+                    </div>
+                </div>`;
+            cont.appendChild(el);
+            const row = el.querySelector('.d-tape');
+            for (let g = 1; g <= 8; g++) { const c = document.createElement('div'); c.className = 'dash-tape-cell'; c.textContent = g; c.dataset.g = g; row.appendChild(c); }
+            const p = {
+                el, spd: el.querySelector('.d-spd'), thr: el.querySelector('.d-thr'), brk: el.querySelector('.d-brk'),
+                v: el.querySelector('.d-v'), tapeRow: row, cells: row.querySelectorAll('.dash-tape-cell'),
+                tla: el.querySelector('.d-tla'), strip: el.querySelector('.d-strip'), selector: el.querySelector('.dash-selector'),
+            };
+            const idx = i;
+            p.tla.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const wasOpen = p.selector.classList.contains('open');
+                closeDashPickers();
+                if (!wasOpen) {
+                    p.selector.classList.add('open');
+                    _dashOpenIdx = idx;
+                    const cur = p.strip.querySelector(`.dash-chip[data-num="${state.dashSlots[idx]}"]`);
+                    if (cur) cur.scrollIntoView({ block: 'nearest', inline: 'center' });
+                }
+            });
+            el.querySelector('.d-left').addEventListener('click', (e) => { e.stopPropagation(); p.strip.scrollBy({ left: -150 }); });
+            el.querySelector('.d-right').addEventListener('click', (e) => { e.stopPropagation(); p.strip.scrollBy({ left: 150 }); });
+            _dashPanels.push(p);
+        }
+        _dashBuilt = true;
+        refreshDashDrivers();
+    }
+
+    // Rebuild the ticker strips (telemetry-pill order) + fill any empty/stale slots.
+    function refreshDashDrivers() {
+        if (!_dashBuilt) return;
+        const sorted = getSortedDrivers().map(d => d.num);   // no auto-fill: slots start empty (user)
+        _dashPanels.forEach((p, i) => {
+            p.strip.innerHTML = '';
+            sorted.forEach(num => {
+                const d = state.drivers[num] || {};
+                const c = document.createElement('div'); c.className = 'dash-chip'; c.dataset.num = num;
+                c.style.background = d.color || '#888'; c.style.color = dashInk(d.color);
+                c.textContent = d.tla || num;
+                c.addEventListener('click', (e) => { e.stopPropagation(); state.dashSlots[i] = num; paintDashSlot(i); closeDashPickers(); });
+                p.strip.appendChild(c);
+            });
+            paintDashSlot(i);
+        });
+    }
+
+    function paintDashSlot(i) {
+        const p = _dashPanels[i]; if (!p) return;
+        const num = state.dashSlots[i], d = num && state.drivers[num];
+        p.el.classList.toggle('empty', !d);
+        p.tla.style.background = d ? d.color : 'transparent';
+        p.tla.style.color = d ? dashInk(d.color) : '';
+        p.tla.textContent = d ? d.tla : 'SELECT';
+        p.strip.querySelectorAll('.dash-chip').forEach(c => c.classList.toggle('cur', c.dataset.num === String(num)));
+    }
+
+    function renderDashboard() {
+        if (!_dashBuilt) return;
+        const t = telRenderNowMs();
+        _dashPanels.forEach((p, i) => {
+            const num = state.dashSlots[i];
+            const samples = num && state.liveSamples[num];
+            let spd = 0, thr = 0, brk = 0, gear = 1;
+            if (samples && samples.length && !liveTraceSuppressed(num)) {
+                const m = liveViewAt(samples, t).marker;
+                spd = m[1] || 0; gear = m[3] || 1;
+                thr = Math.max(0, Math.min(1, (m[4] || 0) / 100));
+                brk = Math.max(0, Math.min(1, (m[5] || 0) / 100));
+            }
+            p.thr.setAttribute('d', dArc(120, 120, 84, D_A0, D_A0 + (D_A1 - D_A0) * thr));
+            p.brk.setAttribute('d', dArc(120, 120, 84, D_B1 - (D_B1 - D_B0) * brk, D_B1));
+            p.spd.setAttribute('d', dArc(120, 120, 105, D_A0, D_A0 + D_SPAN * (Math.min(spd, D_VMAX) / D_VMAX)));
+            p.v.textContent = Math.round(spd);
+            const g = Math.max(1, Math.min(8, Math.round(gear)));
+            p.tapeRow.style.transform = `translateX(${50 - (g - 0.5) * D_CELL}%)`;
+            p.cells.forEach(c => c.classList.toggle('cur', +c.dataset.g === g));
+        });
+    }
+
+    function setView(view) {
+        state.view = view;
+        document.querySelectorAll('#telemetryViewToggle .tile-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+        const tile = document.getElementById('telemetryTile');
+        if (view === 'dashboard') {
+            if (!_dashBuilt) buildDashboard(); else refreshDashDrivers();
+            tile.classList.add('dashboard-mode');
+            renderDashboard();
+        } else {
+            tile.classList.remove('dashboard-mode');
+            closeDashPickers();
+            resizeCanvas(); renderChart();   // canvas was hidden → re-measure + redraw
+        }
+    }
+
+    // ── external selection API (standings / track map drive the dashboard) ──
+    // window.F1Dashboard.focus(num): P/Q → just that driver; race/sprint → that driver
+    // plus the one ahead and behind (from the running order) for closer following. (user)
+    let _dashOrder = [];   // running order [num,…] from the `standings` topic
+    messageBus.on('standings', (d) => {
+        if (d && Array.isArray(d.drivers)) _dashOrder = d.drivers.map(x => String(x.num));
+    });
+    function dashSelect(nums) {
+        for (let i = 0; i < 3; i++) state.dashSlots[i] = nums[i] ? String(nums[i]) : null;
+        setView('dashboard');   // populate + reveal the dashboard
+    }
+    let _dashFillIdx = 0;   // P/Q: which gauge the next click fills (rotates 0→1→2→0)
+    function dashFocus(num) {
+        num = String(num);
+        if (!state.drivers[num]) return;
+        const isRace = /race|sprint/i.test((window.SESSION_CONFIG || {}).sessionType || '');
+        const oi = _dashOrder.indexOf(num);
+        if (isRace && oi >= 0) {
+            dashSelect([_dashOrder[oi - 1] || null, num, _dashOrder[oi + 1] || null]);   // ahead | driver | behind
+        } else {
+            // P/Q: fill gauges in rotation — 1st click → gauge 1, 2nd → 2, 3rd → 3, then back to 1.
+            state.dashSlots[_dashFillIdx] = num;
+            _dashFillIdx = (_dashFillIdx + 1) % 3;
+            setView('dashboard');
+        }
+    }
+    window.F1Dashboard = { focus: dashFocus, select: dashSelect };
 
     /**
      * Return drivers grouped by team, teams ordered by lowest driver number.
@@ -274,6 +483,13 @@
         document.querySelectorAll('.telemetry-mode').forEach(btn => {
             btn.addEventListener('click', () => setMode(btn.dataset.mode));
         });
+
+        // View toggle: trace chart ↔ live gauge dashboard.
+        document.querySelectorAll('#telemetryViewToggle .tile-btn').forEach(btn => {
+            btn.addEventListener('click', () => setView(btn.dataset.view));
+        });
+        document.addEventListener('click', closeDashPickers);
+        document.addEventListener('keydown', dashKeyNav);
 
         // ALL DRIVERS toggle — event-delegated so it works regardless of
         // when the button is in the DOM (header or re-rendered driver
@@ -1258,6 +1474,7 @@
             };
         }
         renderDriverSelector();
+        refreshDashDrivers();   // dashboard ticker + slots follow the driver list
     });
 
     // Live trace: the server now emits a fully-decoded per-driver sample
