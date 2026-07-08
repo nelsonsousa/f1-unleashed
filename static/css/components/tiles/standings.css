@@ -89,7 +89,7 @@
        columns align. No flexible column: the row is width:max-content, so leftover
        space shows on the right and an over-wide row scrolls horizontally.
        rank color tla num status | best gap last S1 S2 S3 mini tyres laps | tla color rank */
-    grid-template-columns: 22px 8px 14px 4px 36px 8px 20px 10px 96px 10px 94px 8px 74px 22px 88px 12px 52px 12px 52px 12px 52px 14px 150px 22px 220px 12px 30px 16px 36px 4px 14px 4px 22px;
+    grid-template-columns: 22px 8px 14px 4px 36px 8px 20px 10px 96px 10px 94px 8px 74px 22px 88px 24px 52px 24px 52px 24px 52px 14px 150px 22px 184px 12px 30px 16px 36px 4px 14px 4px 22px;
 }
 
 .driver-list.standings-qualifying .driver-row,
