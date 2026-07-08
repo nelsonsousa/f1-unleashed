@@ -57,6 +57,7 @@ class RacePaceProcessor(Processor):
         self._fastest_lap_ms: dict[int, int] = {}   # lap -> fastest representative lap time on it
         self._colour: dict[str, str] = {}           # num -> last emitted colour (dedup)
         self._status: dict[str, Optional[str]] = {}
+        self._started = False                       # lights out (SessionStatus=Started)
 
     def subscribe(self) -> None:
         if self._is_race:
@@ -73,6 +74,10 @@ class RacePaceProcessor(Processor):
             if st != self._status.get(num):
                 self._status[num] = st
                 self._emit_colour(num, clock_time)
+        elif topic == "SessionStatus":
+            if isinstance(data, dict) and data.get("Status") == "Started" and not self._started:
+                self._started = True
+                self._recompute_all(clock_time)
 
     def _representative(self, num: str, lap: Optional[int]) -> bool:
         if lap is None:
@@ -145,7 +150,9 @@ class RacePaceProcessor(Processor):
             return
         cls = self._cls.get(num, {}).get(last["lap"])
         st = self._status.get(num)
-        if st == "DSQ":
+        if not self._started:
+            colour = "white"     # pre-lights-out (race): grey the lap time
+        elif st == "DSQ":
             colour = "blank"     # disqualified → clear last-lap (client)
         elif st in ("RET", "STOP"):
             colour = "white"     # retired / stopped → dimmed white
