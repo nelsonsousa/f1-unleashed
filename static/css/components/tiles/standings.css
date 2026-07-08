@@ -151,7 +151,7 @@
 .st-chequered-svg { vertical-align: middle; }
 
 /* Overall-fastest purple is fully data-driven via the JS-set
- * .lap-purple class on bestLapCell + lastLapCell (= driven by
+ * .c-purple class on bestLapCell + lastLapCell (= driven by
  * F1's overallFastest flag in driverTiming / driverLastLap, not
  * a row-index-based CSS rule). The old `.driver-row.p1` rule fired
  * on whatever driver happened to be at idx 0 at render time, which
@@ -194,54 +194,34 @@
     font-size: 16px;
 }
 
-.lap-time.lap-empty { color: var(--text-muted); }
-.lap-time.lap-yellow { color: #ffcc00; }
-.lap-time.lap-green { color: #00ff88; }
-.lap-time.lap-purple { color: #cc66ff; }
-.lap-time.lap-white { color: #ffffff; }   /* eliminated driver's best lap (card 1smo53RX) */
-/* Plain (uncoloured) — quali last-lap + current sector times are not pace-coloured. */
-.lap-time.lap-plain { color: #d4d4d4; }
-.sector-time.sector-plain { color: #d4d4d4; }
-
-/* P1-delta colour bands — gap / best / last (IeBKH1Xz) + sectors (cKNdwUoZ). */
-.lap-time.band-blue,   .sector-time.band-blue,   .gap.band-blue   { color: #33ccff; }
-.lap-time.band-green,  .sector-time.band-green,  .gap.band-green  { color: #00ff88; }
-.lap-time.band-yellow, .sector-time.band-yellow, .gap.band-yellow { color: #ffcc00; }
-.lap-time.band-orange, .sector-time.band-orange, .gap.band-orange { color: #ff9933; }
-.lap-time.band-red,    .sector-time.band-red,    .gap.band-red    { color: #ff5555; }
-
-/* Race "current pace" bands — last lap vs the leader's reference lap. */
-.lap-time.lap-pace-white  { color: #ffffff; opacity: 0.5; }   /* slow / out / post-flag lap — dimmed, like .seg-white */
-.lap-time.lap-pace-purple { color: #cc66ff; }
-.lap-time.lap-pace-blue   { color: #33ccff; }   /* match .band-blue (best-lap/gap/sectors) */
-.lap-time.lap-pace-green  { color: #00ff88; }
-.lap-time.lap-pace-yellow { color: #ffcc00; }
-.lap-time.lap-pace-orange { color: #ff9933; }
-.lap-time.lap-pace-red    { color: #ff5555; }
+/* ─── Timing colour scale ───
+ * ONE class set (.c-*) for every colour-coded standings cell — best-lap, last-lap,
+ * gap, interval, sector times. Driven by the --c-* variables (base.css). Compound
+ * .<cell>.c-* selectors so the scale beats each cell's base colour (the codebase
+ * convention). Neutral tiers: c-white (full opacity), c-dim / c-faint (greyed),
+ * c-plain (uncoloured but active), c-empty (no data → text-muted). Mini-sectors
+ * reuse the scale as backgrounds (.seg-bar.c-*, below). */
+.lap-time.c-purple, .sector-time.c-purple, .gap.c-purple, .interval.c-purple { color: var(--c-purple); }
+.lap-time.c-blue,   .sector-time.c-blue,   .gap.c-blue,   .interval.c-blue   { color: var(--c-blue); }
+.lap-time.c-green,  .sector-time.c-green,  .gap.c-green,  .interval.c-green  { color: var(--c-green); }
+.lap-time.c-yellow, .sector-time.c-yellow, .gap.c-yellow, .interval.c-yellow { color: var(--c-yellow); }
+.lap-time.c-orange, .sector-time.c-orange, .gap.c-orange, .interval.c-orange { color: var(--c-orange); }
+.lap-time.c-red,    .sector-time.c-red,    .gap.c-red,    .interval.c-red    { color: var(--c-red); }
+.lap-time.c-white,  .sector-time.c-white,  .gap.c-white,  .interval.c-white  { color: var(--c-white); }
+.lap-time.c-dim,    .sector-time.c-dim,    .gap.c-dim,    .interval.c-dim    { color: var(--c-dim); }
+.lap-time.c-faint,  .sector-time.c-faint,  .gap.c-faint,  .interval.c-faint  { color: var(--c-faint); }
+.lap-time.c-plain,  .sector-time.c-plain,  .gap.c-plain,  .interval.c-plain  { color: var(--c-plain); }
+.lap-time.c-empty,  .sector-time.c-empty,  .gap.c-empty,  .interval.c-empty  { color: var(--text-muted); }
 
 .gap {
     text-align: right;
     font-size: 17px;
-    color: #d4d4d4;
+    color: var(--c-plain);
     min-width: 0;
 }
 
-.gap.gap-red { color: #ff5555; }
-.gap.gap-white { color: #ffffff; }   /* eliminated driver's frozen bubble gap (card 1smo53RX) */
-.gap.gap-empty { color: var(--text-muted); }
-
-/* Race gap trend vs the previous value (±0.1 s deadzone stays default/white). */
-/* Lap-over-lap gap-to-leader trend, 7 colours (t46cHyov). Cool = catching. */
-.gap.gap-trend-purple { color: #cc66ff; }
-.gap.gap-trend-blue   { color: #33ccff; }
-.gap.gap-trend-green  { color: #00ff88; }
-.gap.gap-trend-white  { color: #ffffff; }
-.gap.gap-trend-yellow { color: #ffcc00; }
-.gap.gap-trend-orange { color: #ff9933; }
-.gap.gap-trend-red    { color: #ff5555; }
-
 .gap.p1-lap {
-    color: #ffcc00;
+    color: var(--c-yellow);
     font-weight: 700;
 }
 
@@ -255,25 +235,11 @@
     min-width: 0;
 }
 
-.delta-empty { color: var(--text-muted); }
-.delta-yellow { color: #ffcc00; }
-.delta-green { color: #00ff88; }
-.delta-purple { color: #cc66ff; }
-
 .sector-time {
     text-align: right;
     font-size: 14px;
     min-width: 0;
 }
-
-.sector-empty { color: var(--text-muted); }
-.sector-yellow { color: #ffcc00; }
-.sector-green { color: #00ff88; }
-.sector-purple { color: #cc66ff; }
-.sector-blue { color: #33ccff; }
-.sector-orange { color: #ff9933; }
-.sector-red { color: #ff5555; }
-.sector-white { color: #ffffff; opacity: 0.5; }   /* slow / out / post-flag lap — dimmed, like .seg-white */
 
 /* Mini-segments — bars 80% of the driver-colour stripe height (24px×0.8 ≈ 19px),
  * centred vertically inside the row, with breathing room on both sides
@@ -294,11 +260,13 @@
     background: #333;
 }
 
-.seg-empty { background: #333; }
-.seg-yellow { background: #ffcc00; }
-.seg-green { background: #00ff88; }
-.seg-purple { background: #cc66ff; }
-.seg-white { background: #ffffff; opacity: 0.5; }
+.seg-bar.c-purple { background: var(--c-purple); }
+.seg-bar.c-blue   { background: var(--c-blue); }
+.seg-bar.c-green  { background: var(--c-green); }
+.seg-bar.c-yellow { background: var(--c-yellow); }
+.seg-bar.c-orange { background: var(--c-orange); }
+.seg-bar.c-red    { background: var(--c-red); }
+.seg-bar.c-dim    { background: var(--c-dim); }
 
 .seg-spacer {
     width: 4px;
@@ -351,32 +319,15 @@
     text-align: right;
     font-weight: 700;
     font-size: 17px;
-    color: #d4d4d4;
+    color: var(--c-plain);
     min-width: 0;
 }
-/* Race lap counter coloured by laps-down (card YqchNVrn): green = same lap as
-   leader, white = 1 lap behind on the counter (gap still a time), yellow = a
-   full lap or more down (gap shows laps). */
-.lap-count.lap-count-green  { color: #00ff88; }
-.lap-count.lap-count-white  { color: #ffffff; }
-.lap-count.lap-count-yellow { color: #ffcc00; }
 
 .interval {
     text-align: right;
-    color: #cfcfcf;
+    color: var(--c-plain);
     min-width: 0;
 }
-
-/* Race interval trend vs the previous value (±0.1 s deadzone stays default). */
-/* Interval battle trend, 7 colours (t46cHyov). Closing green→blue→purple,
-   opening red→orange→yellow. */
-.interval.int-trend-purple { color: #cc66ff; }
-.interval.int-trend-blue   { color: #33ccff; }
-.interval.int-trend-green  { color: #00ff88; }
-.interval.int-trend-white  { color: #ffffff; }
-.interval.int-trend-yellow { color: #ffcc00; }
-.interval.int-trend-orange { color: #ff9933; }
-.interval.int-trend-red    { color: #ff5555; }
 
 /* Penalties cell (race) */
 .pens {

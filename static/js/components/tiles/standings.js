@@ -31,11 +31,13 @@
     const IS_QUALI = SESSION_TYPE === 'qualifying';
     const IS_PRACTICE = !IS_RACE && !IS_QUALI;
 
+    // Server segment hex → the shared colour scale (.seg-bar.c-* paints it as bg).
+    // The mini "white" is the suppressed state (slow/out/pre-race) → dimmed grey.
     const SEGMENT_COLOR_CLASS = {
-        '#ffd700': 'seg-yellow',
-        '#00ff00': 'seg-green',
-        '#ff00ff': 'seg-purple',
-        '#ffffff': 'seg-white',
+        '#ffd700': 'c-yellow',
+        '#00ff00': 'c-green',
+        '#ff00ff': 'c-purple',
+        '#ffffff': 'c-dim',
     };
 
     const state = {
@@ -542,7 +544,7 @@
     // ─── Render ───
 
     function emptySectorCells() {
-        return '<span class="sector-time sector-empty"></span>'.repeat(3);
+        return '<span class="sector-time c-empty"></span>'.repeat(3);
     }
 
     function emptySegmentsHtml() {
@@ -551,7 +553,7 @@
         for (let si = 0; si < 3; si++) {
             if (si > 0) html += '<span class="seg-spacer"></span>';
             for (let j = 0; j < (layout[si] || 0); j++) {
-                html += '<span class="seg-bar seg-empty"></span>';
+                html += '<span class="seg-bar"></span>';
             }
         }
         return html;
@@ -627,9 +629,9 @@
     // Δ-to-fastest colour bands moved server-side. atcmh1cL)
 
     const BEST_LAP_COLOUR_CLASS = {
-        purple: 'lap-purple', blue: 'band-blue', green: 'band-green',
-        yellow: 'band-yellow', orange: 'band-orange', red: 'band-red',
-        white: 'lap-white',
+        purple: 'c-purple', blue: 'c-blue', green: 'c-green',
+        yellow: 'c-yellow', orange: 'c-orange', red: 'c-red',
+        white: 'c-white',   // eliminated driver's best — full-opacity neutral
     };
 
     function bestLapCell(num) {
@@ -638,12 +640,12 @@
         const txt = e.bestLap || t.bestLapTime || '';
         // Server-emitted best-lap colour (atcmh1cL): purple = fastest-overall
         // holder, else Δ-to-fastest band. Client just applies the class.
-        const cls = txt ? (BEST_LAP_COLOUR_CLASS[e.bestLapColour] || '') : 'lap-empty';
+        const cls = txt ? (BEST_LAP_COLOUR_CLASS[e.bestLapColour] || '') : 'c-empty';
         return `<span class="lap-time ${cls}">${txt || '--:--.---'}</span>`;
     }
 
     function gapCellEmpty() {
-        return '<span class="gap gap-empty">--.---</span>';
+        return '<span class="gap c-empty">--.---</span>';
     }
 
     // (isSlowLapClass / lapTypeAt / isRetired removed — client-side suppression
@@ -671,11 +673,12 @@
         const pc = (state.driverData[num] || {}).paceColour;
         // "blank" = server suppression (retired/finished/eliminated, P/Q out/in/slow).
         if (pc === 'blank') {
-            return `<span class="lap-time lap-last lap-empty">--:--.---</span>`;
+            return `<span class="lap-time lap-last c-empty">--:--.---</span>`;
         }
-        let cls = 'lap-empty';
+        let cls = 'c-empty';
         if (last) {
-            cls = pc ? `lap-pace-${pc}` : 'lap-pace-white';
+            // pace "white" (slow / out / no colour yet) → dimmed grey; else the band.
+            cls = (!pc || pc === 'white') ? 'c-dim' : `c-${pc}`;
         }
         return `<span class="lap-time lap-last ${cls}">${last || '--:--.---'}</span>`;
     }
@@ -696,12 +699,13 @@
             const v = s.value || '';
             let cls;
             if (!v) {
-                cls = 'sector-empty';
+                cls = 'c-empty';
             } else if (s.white) {
-                cls = 'sector-white';               // slow / out / post-flag → dimmed white
+                cls = 'c-dim';                       // slow / out / post-flag → dimmed grey
             } else {
                 const c = colours[i];
-                cls = c ? `sector-${c}` : '';
+                // P/Q out/in/stop sector colour is also "white" → dimmed grey.
+                cls = c === 'white' ? 'c-dim' : (c ? `c-${c}` : '');
             }
             out.push(`<span class="sector-time ${cls}">${v || '--.---'}</span>`);
         }
@@ -734,7 +738,7 @@
             const cnt = layout[si] || 0;
             for (let j = 0; j < cnt; j++) {
                 const seg = j < segs.length ? segs[j] : null;
-                const cls = seg ? (SEGMENT_COLOR_CLASS[seg] || 'seg-empty') : 'seg-empty';
+                const cls = seg ? (SEGMENT_COLOR_CLASS[seg] || '') : '';
                 html += `<span class="seg-bar ${cls}"></span>`;
             }
         }
@@ -828,16 +832,16 @@
     function gapCell(num) {
         const e = state.driverData[num] || {};
         const txt = e.gap || '';
-        if (!txt) return '<span class="gap gap-empty">+-.---</span>';
-        // Eliminated (quali): gap is the frozen bubble gap, shown white.
+        if (!txt) return '<span class="gap c-empty">+-.---</span>';
+        // Eliminated (quali): gap is the frozen bubble gap, shown full white.
         if (state.eliminated && state.eliminated.has(num)) {
-            return `<span class="gap gap-white">${txt}</span>`;
+            return `<span class="gap c-white">${txt}</span>`;
         }
         // Elimination zone → red (red is reserved for the zone only).
-        if (e.gapIsRed) return `<span class="gap gap-red">${txt}</span>`;
+        if (e.gapIsRed) return `<span class="gap c-red">${txt}</span>`;
         // P/Q + practice: server-emitted Δ-to-P1 band (blue/green/yellow/orange;
         // red is reserved for the elimination zone above). atcmh1cL.
-        const band = e.gapBand ? ` band-${e.gapBand}` : '';
+        const band = e.gapBand ? ` c-${e.gapBand}` : '';
         return `<span class="gap${band}">${txt}</span>`;
     }
 
@@ -867,7 +871,7 @@
         const e = state.driverData[num] || {};
         // 7-colour lap-over-lap trend (server-computed): purple/blue/green (catching)
         // white (flat) yellow/orange/red (dropping back). (t46cHyov)
-        const t = e.gapTrend ? ` gap-trend-${e.gapTrend}` : '';
+        const t = e.gapTrend ? ` c-${e.gapTrend}` : '';
         return `<span class="gap${t}">${e.gap || ''}</span>`;
     }
 
@@ -875,7 +879,7 @@
         const e = state.driverData[num] || {};
         // 7-colour battle trend (server-computed): closing green→blue→purple,
         // opening (any band) yellow, white out of range. (t46cHyov)
-        const t = e.intTrend ? ` int-trend-${e.intTrend}` : '';
+        const t = e.intTrend ? ` c-${e.intTrend}` : '';
         return `<span class="interval${t}">${e.interval || ''}</span>`;
     }
 
