@@ -1,22 +1,26 @@
 """
-Lap Prediction Processor — Qualifying only (SME redesign — 2026-06-10).
+Lap Prediction Processor — Qualifying only (SME rework 2026-07-08).
 
-Subscribes to: driverDelta:{num}, driverLapClassification:{num},
-               driverLaps:{num}, qualifyingSegment
-Emits: lapPrediction:{num}  { lap, delta, placesGained, observed }   (persisted)
+Subscribes to: driverDelta:{num}, driverLapClassification:{num}, driverLaps:{num},
+               driverStatus:{num}, qualifyingSegment, qualifyingPart
+Emits: lapPrediction:{num}
+       { lap, delta, placesGained, predictedPos, deltaColour, posColour }
 
-While a driver is on a PUSH lap and the live delta to their best lap is negative
-(on course to improve), projects the predicted lap time = bestLapMs + deltaMs
-and ranks it against every non-knocked-out driver's current best lap. Reports
-how many places that improvement would gain over the driver's current position
-(observed=false). When that push lap completes, re-emits the ACTUAL outcome —
-delta = completed lap − reference best, plus the real places gained
-(observed=true, cards 62/67). New live predictions are then gated briefly so the
-result stays readable (card 67).
+While a driver is on a PUSH lap, projects predicted lap time = reference lap
+(lap_delta.refFullMs = the driver's personal-best reference) + live delta, and ranks
+it against every non-eliminated driver's best-THIS-part (the live quali order):
 
-  - best laps from lap_timing's driverLaps.bestLap.time;
-  - knocked-out set from standings' qualifyingSegment.eliminated;
-  - only PUSH laps (driverLapClassification) with delta < 0 produce a prediction.
+  - driver HAS a best this part → publish delta (ms) + placesGained (>=0);
+  - no best this part           → publish predictedPos (Pxx), no delta.
+
+Colours (server): delta green if improving (<0) else yellow; the position — places
+gained OR predicted — is coloured by the BAND the predicted lap time earns, using the
+same P/Q pace bands (purple = would be fastest, blue/green/yellow by Δ, red = slower
+than the bubble). The client renders only: gains → coloured up-arrow, =0 → white,
+Pnn → coloured.
+
+Runs on PUSH laps only. PUSH→SLOW/out, pit/retire, or lap completion → clear (blank);
+no observed result is published (nothing to gain there).
 """
 
 from datetime import datetime
@@ -37,136 +41,144 @@ def _parse_ms(s: Any) -> Optional[int]:
         return None
 
 
-class LapPredictionProcessor(Processor):
+_BLANK = {"lap": None, "delta": None, "placesGained": None,
+          "predictedPos": None, "deltaColour": None, "posColour": None}
 
-    # After a push lap's OBSERVED result is emitted, hold off new live
-    # predictions this long (session seconds) so the user can read it (card 67).
-    _GATE_S = 5.0
+
+class LapPredictionProcessor(Processor):
 
     def __init__(self, bus: SessionMessageBus, session_type: str):
         super().__init__(bus, session_type)
         self._active = session_type == "qualifying"
-        self._best: dict[str, int] = {}          # num -> best lap ms (all drivers)
-        self._cur_lap: dict[str, int] = {}        # num -> current lap (classification)
-        self._cls: dict[str, str] = {}            # num -> current lap type
+        self._part_best: dict[str, int] = {}      # num -> best-THIS-part ms (ranking + has-lap)
+        self._cur_lap: dict[str, int] = {}
+        self._cls: dict[str, str] = {}
         self._eliminated: set[str] = set()
-        # Live-prediction → observed-result bookkeeping (cards 62/67).
-        self._pending_lap: dict[str, int] = {}    # num -> lap a live prediction is active for
-        self._ref_best: dict[str, int] = {}       # num -> best ms the pending lap is measured against
-        self._gate_until: dict[str, float] = {}   # num -> session epoch sec until which predictions are gated
-        self._status: dict[str, Any] = {}         # num -> driverStatus (clear on PIT/RET/STOP)
+        self._part: Optional[int] = None
+        self._status: dict[str, Any] = {}
+        self._pending: dict[str, int] = {}         # num -> lap a prediction is active for
+        self._emitted: dict[str, Optional[tuple]] = {}   # dedup
 
     def subscribe(self) -> None:
         if self._active:
             self._bus.on("*", self._handle)
 
     def _handle(self, topic: str, data: Any, clock_time: datetime) -> None:
-        if topic.startswith("driverLaps:"):
-            self._on_laps(topic.split(":", 1)[1], data, clock_time)
+        if topic.startswith("driverDelta:"):
+            self._on_delta(topic.split(":", 1)[1], data, clock_time)
         elif topic.startswith("driverLapClassification:"):
             self._on_cls(topic.split(":", 1)[1], data, clock_time)
+        elif topic.startswith("driverLaps:"):
+            self._on_laps(topic.split(":", 1)[1], data, clock_time)
         elif topic.startswith("driverStatus:"):
             self._on_status(topic.split(":", 1)[1], data, clock_time)
         elif topic == "qualifyingSegment":
             if isinstance(data, dict) and isinstance(data.get("eliminated"), list):
                 self._eliminated = set(data["eliminated"])
-        elif topic.startswith("driverDelta:"):
-            self._on_delta(topic.split(":", 1)[1], data, clock_time)
+        elif topic == "qualifyingPart":
+            if isinstance(data, int) and data != self._part:
+                self._part = data
+                self._part_best.clear()            # best-this-part resets each part
 
     def _on_laps(self, num: str, data: Any, clock_time: datetime) -> None:
         if not isinstance(data, dict):
             return
-        # Observed result: the push lap we issued a live prediction for has now
-        # completed — replace it with the ACTUAL delta + places gained (cards
-        # 62/67). Computed BEFORE _best updates below, against the reference best
-        # captured while predicting (overallBestLap would by now include this
-        # lap if it was a PB).
-        pend = self._pending_lap.get(num)
-        ll = data.get("lastLap")
-        if (pend is not None and isinstance(ll, dict)
-                and ll.get("lap") == pend and ll.get("time")):
-            last_ms = _parse_ms(ll["time"])
-            ref = self._ref_best.get(num)
-            if last_ms is not None and ref is not None:
-                others = [m for d, m in self._best.items()
-                          if d != num and d not in self._eliminated]
-                rank_before = 1 + sum(1 for o in others if o < ref)
-                rank_after = 1 + sum(1 for o in others if o < last_ms)
-                self._bus.emit(f"lapPrediction:{num}", {
-                    "lap": pend,
-                    "delta": last_ms - ref,           # actual delta vs the reference lap
-                    "placesGained": rank_before - rank_after,
-                    "observed": True,
-                }, clock_time)
-            self._pending_lap.pop(num, None)
-            self._ref_best.pop(num, None)
-            # Hold off new predictions briefly so the result is readable (card 67).
-            self._gate_until[num] = clock_time.timestamp() + self._GATE_S
-
-        # Session-wide best (overallBestLap): predicted = bestMs + deltaMs, and
-        # deltaMs is measured against the overall reference lap (lap_delta), so
-        # the benchmark here must match it (card 63).
-        bl = data.get("overallBestLap")
-        if isinstance(bl, dict) and bl.get("time"):
+        bl = data.get("bestLap")
+        if isinstance(bl, dict) and bl.get("part") == self._part and bl.get("time"):
             ms = _parse_ms(bl["time"])
             if ms is not None:
-                self._best[num] = ms
+                self._part_best[num] = ms
+        else:
+            self._part_best.pop(num, None)         # no best this part (null / earlier part)
+        # Lap complete → clear (no observed result). (user 2026-07-08)
+        pend = self._pending.get(num)
+        ll = data.get("lastLap")
+        if pend is not None and isinstance(ll, dict) and ll.get("lap") == pend:
+            self._clear(num, clock_time)
 
     def _on_cls(self, num: str, data: Any, clock_time: datetime) -> None:
         if not isinstance(data, dict):
             return
         lap = data.get("lap")
-        # Only the current (highest) lap drives the gate — ignore Rule 1
-        # reclassifications of earlier laps.
         if isinstance(lap, int) and lap >= self._cur_lap.get(num, 0):
             prev = self._cls.get(num)
             self._cur_lap[num] = lap
             self._cls[num] = data.get("type")
-            # Left the push lap with a live prediction still pending (aborted /
-            # cooled) → clear it server-side so the client needn't gate on PUSH.
-            if prev == "PUSH" and self._cls[num] != "PUSH" and num in self._pending_lap:
+            # PUSH → SLOW / out → blank and stop.
+            if prev == "PUSH" and self._cls[num] != "PUSH" and num in self._pending:
                 self._clear(num, clock_time)
 
     def _on_status(self, num: str, data: Any, clock_time: datetime) -> None:
         st = data if isinstance(data, str) else None
         prev = self._status.get(num)
         self._status[num] = st
-        # Pitted / retired / stopped → blank the delta (item 3), server-side.
         if st in ("PIT", "RET", "STOP") and prev not in ("PIT", "RET", "STOP"):
             self._clear(num, clock_time)
 
     def _clear(self, num: str, clock_time: datetime) -> None:
-        """Blank the driver's live prediction — server-driven, so the client no
-        longer gates on PUSH/PIT."""
-        self._pending_lap.pop(num, None)
-        self._ref_best.pop(num, None)
-        self._bus.emit(f"lapPrediction:{num}", {"delta": None, "observed": False}, clock_time)
+        self._pending.pop(num, None)
+        if self._emitted.get(num) is not None:
+            self._emitted[num] = None
+            self._bus.emit(f"lapPrediction:{num}", dict(_BLANK), clock_time)
+
+    # ── ranking / colour helpers (best-this-part = live quali order) ──
+    def _others(self, num: str) -> list:
+        return [m for d, m in self._part_best.items()
+                if d != num and d not in self._eliminated]
+
+    def _bubble_ms(self) -> Optional[int]:
+        cut = 16 if self._part == 1 else 10 if self._part == 2 else None
+        vals = sorted(m for d, m in self._part_best.items() if d not in self._eliminated)
+        return vals[cut - 1] if cut is not None and len(vals) >= cut else None
+
+    def _band(self, predicted: int) -> str:
+        """Band the predicted lap time earns vs the fastest-this-part + bubble."""
+        vals = [m for d, m in self._part_best.items() if d not in self._eliminated]
+        ref = min(vals) if vals else None
+        if ref is None or predicted <= ref:
+            return "purple"
+        bubble = self._bubble_ms()
+        if bubble is not None and predicted > bubble:
+            return "red"
+        d = (predicted - ref) / 1000.0
+        if d < 0.2:
+            return "blue"
+        if d < 0.5:
+            return "green"
+        if d < 1.0:
+            return "yellow"
+        return "orange"
 
     def _on_delta(self, num: str, data: Any, clock_time: datetime) -> None:
         if not isinstance(data, dict):
             return
         if self._cls.get(num) != "PUSH" or num in self._eliminated:
             return
-        # Gate: just after the previous push lap's observed result, hold off new
-        # live predictions so the user can read it (card 67).
-        if clock_time.timestamp() < self._gate_until.get(num, 0.0):
-            return
         delta = data.get("deltaMs")
-        best = self._best.get(num)
-        if delta is None or delta >= 0 or best is None:
+        ref_full = data.get("refFullMs")
+        if delta is None or ref_full is None:
             return
-        predicted = best + delta
-        others = [ms for d, ms in self._best.items()
-                  if d != num and d not in self._eliminated]
+        predicted = ref_full + delta
+        others = self._others(num)
         predicted_rank = 1 + sum(1 for o in others if o < predicted)
-        current_rank = 1 + sum(1 for o in others if o < best)
-        self._bus.emit(f"lapPrediction:{num}", {
-            "lap": data.get("lap"),
-            "delta": delta,
-            "placesGained": current_rank - predicted_rank,
-            "observed": False,
-        }, clock_time)
-        # Remember the lap + reference best so we can emit the observed result
-        # when this lap completes (cards 62/67).
-        self._pending_lap[num] = data.get("lap")
-        self._ref_best[num] = best
+        pos_colour = self._band(predicted)
+        my_best = self._part_best.get(num)
+        payload = dict(_BLANK)
+        payload["lap"] = data.get("lap")
+        payload["posColour"] = pos_colour
+        if my_best is not None:
+            # Has a lap this part → delta + places gained (floored at 0 = "=0").
+            current_rank = 1 + sum(1 for o in others if o < my_best)
+            payload["delta"] = delta
+            payload["placesGained"] = max(0, current_rank - predicted_rank)
+            payload["deltaColour"] = "green" if delta < 0 else "yellow"
+        else:
+            # No lap this part → predicted position only.
+            payload["predictedPos"] = predicted_rank
+        key = (payload["delta"], payload["placesGained"], payload["predictedPos"],
+               payload["deltaColour"], payload["posColour"])
+        if self._emitted.get(num) == key:
+            return
+        self._emitted[num] = key
+        self._pending[num] = data.get("lap")
+        self._bus.emit(f"lapPrediction:{num}", payload, clock_time)
