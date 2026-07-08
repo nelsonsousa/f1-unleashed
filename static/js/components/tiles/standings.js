@@ -729,9 +729,9 @@
             else if (white) cls = 'c-dim';
             // P/Q out/in/stop sector colour is also "white" → dimmed grey.
             else cls = c === 'white' ? 'c-dim' : (c ? `c-${c}` : '');
-            out.push(`<span class="sector-time${i === 2 ? ' sector-last' : ''} ${cls}">${v || '--.---'}</span>`);
+            out.push(`<span class="sector-time ${cls}">${v || '--.---'}</span>`);
         }
-        return out;   // [S1, S2, S3] — S3 gets .sector-last (wider trailing margin)
+        return out;   // [S1, S2, S3] — gaps between them are grid spacer tracks
     }
 
     function segmentBarsCell(num) {
@@ -956,7 +956,10 @@
                    sec[0], sec[1], sec[2], mini,
                    `<span class="tyres">${tyreCell(num, false)}</span>`, laps];
         }
-        const cols = idStart.concat(mid, idEnd).join('');   // spacing is per-role margin (CSS)
+        // Join columns with spacer spans; each spacer's WIDTH is a gap track in the
+        // grid template (content track, gap track, …). Tune gaps in CSS; the spans
+        // are static. Row = width:max-content, so growing a gap grows the row.
+        const cols = idStart.concat(mid, idEnd).join('<span class="col-spacer"></span>');
         return `<div class="${cls.join(' ')}" data-driver="${num}">${cols}</div>`;
     }
 
@@ -995,7 +998,7 @@
             mid = ['<span>Best lap</span>', '<span>Gap</span>', '<span>Lap time</span>',
                    sec[0], sec[1], sec[2], mini, '<span>Tyres</span>', laps];
         }
-        const cells = idStart.concat(mid, idEnd).join('');   // spacing is per-role margin (CSS)
+        const cells = idStart.concat(mid, idEnd).join('<span class="col-spacer"></span>');
         return '<div class="driver-header">' + cells + '</div>';
     }
 
