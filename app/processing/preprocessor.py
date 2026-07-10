@@ -452,11 +452,6 @@ class SessionPreProcessor:
                     _tyre_save(self._session_path)
                 except Exception:
                     logger.exception("Tyre phase analysis failed")
-                try:
-                    from app.analysis.pecking_order import compute_and_save as _po_save
-                    _po_save(self._session_path)
-                except Exception:
-                    logger.exception("Pecking-order analysis failed")
                 # Strategy prediction runs only at Qualifying finalize
                 # (= predicts the upcoming Race).
                 try:
@@ -480,6 +475,15 @@ class SessionPreProcessor:
             self._flush_buffer()
             self._db.set_meta("status", "complete")
             self._db.set_meta("message_count", str(self._message_count))
+
+            # FP-based pecking-order prediction: independent of the (dormant) pace
+            # chain above — reads the finalized session DB + the prior session's
+            # pecking_order.json and publishes this session's running prediction.
+            try:
+                from app.analysis.pecking_order import compute_and_save as _po_save
+                _po_save(self._session_path)
+            except Exception:
+                logger.exception("Pecking-order analysis failed")
 
             if on_progress:
                 on_progress(100.0)
