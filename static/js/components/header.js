@@ -656,12 +656,13 @@
         // user-spec'd: 0.5 px dark stroke on each SVG handles the
         // visual separation).
         for (const ev of events) {
-            // No-spoiler rule (live + replay): never render a marker ahead of the current
-            // playback point. Markers reveal progressively as the playhead crosses them
-            // (handleClockUpdate re-renders on that). (user 2026-07-08)
-            if (ev.offset_ms > state.offset * 1000) continue;
             const pct = offsetToPct(ev.offset_ms);
             if (pct < 0 || pct > 100) continue;
+            // No-spoiler rule (live + replay): ALWAYS inject every marker (so the scrubber's
+            // full extent + limits are stable), but hide the ones ahead of the playhead with a
+            // CSS class. They reveal progressively as the playhead crosses them (handleClockUpdate
+            // re-renders on that). (user 2026-07-13)
+            const sp = ev.offset_ms > state.offset * 1000 ? ' evt-spoiler' : '';
 
             const d = typeof ev.data === 'string' ? ev.data : (ev.data?.event || ev.data || '');
             const upper = String(d).toUpperCase();
@@ -684,15 +685,15 @@
                           + `<path d="M1 3 Q4 1 8 3 T15 3 V13 Q12 15 8 13 T1 13 Z"/>`
                           + `</svg>`;
             if (upper === 'CHEQUERED') {
-                marker = `<div class="scrubber-flag chequered" style="left:${pct}%" title="${title}" ${dataAttrs}>&#127937;</div>`;
+                marker = `<div class="scrubber-flag chequered${sp}" style="left:${pct}%" title="${title}" ${dataAttrs}>&#127937;</div>`;
             } else if (upper === 'RED' || upper === 'RED FLAG') {
-                marker = `<div class="scrubber-flag red" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
+                marker = `<div class="scrubber-flag red${sp}" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
             } else if (upper.includes('SC') || upper.includes('VSC') || upper.includes('SAFETY')) {
-                marker = `<div class="scrubber-flag yellow" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
+                marker = `<div class="scrubber-flag yellow${sp}" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
             } else if (upper === 'GREEN') {
-                marker = `<div class="scrubber-flag green" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
+                marker = `<div class="scrubber-flag green${sp}" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
             } else {
-                marker = `<div class="scrubber-event" style="left:${pct}%;background:#888" title="${title}" ${dataAttrs}></div>`;
+                marker = `<div class="scrubber-event${sp}" style="left:${pct}%;background:#888" title="${title}" ${dataAttrs}></div>`;
             }
 
             html += marker;

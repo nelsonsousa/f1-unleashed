@@ -760,6 +760,10 @@
 .scrubber-flag.chequered { color: #ffffff; }
 .scrubber-flag:hover { transform: translate(-50%, -50%) scale(1.4); }
 
+/* No-spoiler: markers ahead of the playhead are injected but hidden until crossed. */
+.scrubber-event.evt-spoiler,
+.scrubber-flag.evt-spoiler { display: none; }
+
 /* Live button */
 .scrubber-live {
     position: absolute;
