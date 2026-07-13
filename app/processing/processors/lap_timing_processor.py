@@ -75,9 +75,9 @@ class LapTimingProcessor(Processor):
         self._is_race = session_type == "race"   # "race" covers race + sprint
         self._is_quali = session_type == "qualifying"
         self._started = False
-        # Race: NoL at lights out (formation-lap crossings) — subtracted so racing
-        # lap 1 = currentLap 1. currentLap 1 is otherwise never emitted: NoL is
-        # already 1 before lights out, so the first driverLaps gives currentLap 2.
+        # Race: the NoL that corresponds to 0 racing laps completed (lights-out). Set to
+        # (first post-lights-out NoL − 1), since that first message reports lap 1's FINISH.
+        # Subtracting it makes _completed(nol) count racing laps and currentLap start at 1.
         self._race_nol_base: Optional[int] = None
         self._pos: dict[str, int] = {}                       # num -> Position (quali zone-red)
         self._nol: dict[str, int] = {}                       # num -> current NoL
@@ -101,6 +101,7 @@ class LapTimingProcessor(Processor):
         self._frozen_best: dict[str, dict] = {}              # outgoing-part bests, for boundary-knocked drivers
         self._current_race_lap: Optional[int] = None
         self._total_race_laps: Optional[int] = None
+        self._roster: set[str] = set()   # all driver numbers (for the lights-out lap-1 emit)
 
     def subscribe(self) -> None:
         self._bus.on("SessionStatus", self._handle_session_status)
@@ -108,6 +109,11 @@ class LapTimingProcessor(Processor):
         self._bus.on("qualifyingPart", self._handle_qualifying_part)
         if self._is_race:
             self._bus.on("LapCount", self._handle_lap_count)
+            self._bus.on("driverList", self._handle_driver_list)
+
+    def _handle_driver_list(self, data: Any, clock_time: datetime) -> None:
+        if isinstance(data, dict):
+            self._roster |= {k for k in data if isinstance(k, str)}
 
     # ── Qualifying part (Q1/Q2/Q3) ──
     def _handle_qualifying_part(self, data: Any, clock_time: datetime) -> None:
@@ -140,7 +146,14 @@ class LapTimingProcessor(Processor):
     # ── Session gate ──
     def _handle_session_status(self, data: Any, clock_time: datetime) -> None:
         if isinstance(data, dict) and data.get("Status") == "Started":
+            first = not self._started
             self._started = True   # latches True on the first start (stays set across Q1/Q2/Q3, restarts)
+            # Race: lights-out = every driver STARTS lap 1 → send their lap-1 count now, before
+            # any NoL message (those arrive at lap FINISH). The client holds currentLap=1 through
+            # lap 1 until the first finish bumps it to 2. Roster from driverList. (user 2026-07-13)
+            if first and self._is_race:
+                for num in (self._roster or set(self._nol) | set(self._laps)):
+                    self._emit(num, clock_time)
 
     # ── Race lap counter ──
     def _handle_lap_count(self, data: Any, clock_time: datetime) -> None:
@@ -161,10 +174,9 @@ class LapTimingProcessor(Processor):
         if nol is None:
             return 0
         if self._is_race:
-            # Subtract the formation-lap crossings (NoL is already ~1 at lights
-            # out), so racing lap 1 completes at NoL=base+1, not NoL=1. Without
-            # this, currentLap started at 2 and lap-1 sectors leaked into the
-            # lap-2 reference. (user 2026-07-08)
+            # Racing laps completed = NoL − lights-out base. base is anchored at the first
+            # post-lights-out NoL − 1 (that message reports lap 1's finish), so lap 1 completes
+            # at NoL=base+1 and currentLap (=_completed+1) reads 1 through lap 1. (user 2026-07-13)
             base = self._race_nol_base if self._race_nol_base is not None else 1
             return max(0, nol - base)
         return nol - 1
@@ -280,8 +292,11 @@ class LapTimingProcessor(Processor):
 
     def _advance(self, num: str, new_nol: int, bundled_ll: Optional[dict],
                  clock_time: datetime) -> bool:
-        if self._is_race and self._race_nol_base is None:
-            self._race_nol_base = new_nol   # first NoL after lights out = formation offset
+        if self._is_race and self._started and self._race_nol_base is None:
+            # The FIRST NoL message after lights-out ENDS lap 1 (race NoL is reported at lap
+            # completion), so it must map to currentLap 2. base = new_nol − 1 anchors lights-out
+            # at currentLap 1: _completed(new_nol) = new_nol − base = 1 (lap 1 done). (user 2026-07-13)
+            self._race_nol_base = new_nol - 1
         prev = self._nol.get(num)
         self._nol[num] = new_nol
         laps = self._laps.setdefault(num, {})
@@ -528,11 +543,17 @@ class LapTimingProcessor(Processor):
         last = max(timed) if timed else None
         best = self._best.get(num)
         overall = self._session_best.get(num)
-        # currentLap = the lap the driver is CURRENTLY on. P/Q: NoL (NoL=N means
-        # lap N is starting). Race: NoL+1 (NoL=N means lap N has ended, so the
-        # driver is on N+1). `_completed(nol)+1` gives both.
+        # currentLap = the lap the driver is CURRENTLY on = laps completed + 1.
+        # P/Q: NoL means lap N is starting. Race: lights-out is lap 1, and each NoL
+        # message (a lap FINISH) advances to the next. Before the first race NoL the
+        # driver is on lap 1 (nol still unset).
         nol = self._nol.get(num)
-        current_lap = self._completed(nol) + 1 if nol is not None else None
+        if nol is not None:
+            current_lap = self._completed(nol) + 1
+        elif self._is_race and self._started:
+            current_lap = 1
+        else:
+            current_lap = None
         # Thin message: just the value(s) required. The per-lap time HISTORY is
         # not re-sent here — consumers accumulate it from `lastLap` as laps
         # arrive, and a seek/restore replays the full driverLaps history up to
