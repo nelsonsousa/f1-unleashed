@@ -750,6 +750,26 @@ async def get_pecking_order(session_name: str):
     raise HTTPException(status_code=404, detail="No pecking order available")
 
 
+@router.get("/analysis/pit_loss_estimate/{session_name:path}")
+async def get_pit_loss_estimate(session_name: str):
+    """Return the geometric pit-stop time-loss PREDICTION for this session (the prior
+    session's accumulated FP→Q estimate — so playing the Race surfaces the quali-final
+    prediction). Low-confidence pre-race; the in-race measurement supersedes it."""
+    from app.processing import analysis_store
+    from app.analysis.pit_loss_estimate import find_prior_session
+
+    session_path = session_manager._find_session_path(session_name)
+    if not session_path or not session_path.exists():
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    prior = find_prior_session(session_path)
+    if prior:
+        est = analysis_store.load(prior, "pit_loss_estimate")
+        if est:
+            return est
+    raise HTTPException(status_code=404, detail="No pit-loss estimate available")
+
+
 @router.delete("/cached/{session_name:path}")
 async def delete_cached_session(session_name: str):
     """Delete a cached session by its cache key."""
