@@ -360,40 +360,40 @@
         if (!el) return;
         const isDay = state.currentIsDay !== 0 ? 1 : 0;
 
+        // Gate the WHOLE widget (now + forecast) on a captured snapshot that COVERS the clock.
+        // Forecast capture can begin after the session data stream does, so early in the session
+        // the only snapshots are in the future — and a future reading must NEVER be shown as the
+        // current condition. If no snapshot's window contains the clock, show nothing. (user)
+        const clock = messageBus.clockTime;
+        const snaps = state.forecastSnapshots;
+        let snap = null, c = -1;
+        if (clock && snaps && snaps.length) {
+            const clockMs = clock.getTime();
+            snap = _snapshotAt(clockMs);
+            if (snap && snap.time && snap.time.length) {
+                const times = snap.time.map(t => Date.parse(t + 'Z'));   // UTC, no 'Z'
+                for (let i = 0; i < times.length; i++) { if (times[i] <= clockMs) c = i; else break; }
+            }
+        }
+        if (c < 0 || state.currentCode == null) { el.classList.add('hidden'); return; }
+
         // "Now" = the current condition (from the hourly /weather data).
-        if (state.currentCode == null) { el.classList.add('hidden'); return; }
         const [nk, nl] = conditionFor(state.currentCode, isDay);
         const now = { key: nk, label: nl, wet: false, prob: null };
 
-        // 15'/30'/60' from the captured forecast snapshots, indexed by the clock.
-        let f15 = null, f30 = null, f60 = null;
-        const clock = messageBus.clockTime;
-        const snaps = state.forecastSnapshots;
-        if (clock && snaps && snaps.length) {
-            const clockMs = clock.getTime();
-            const snap = _snapshotAt(clockMs);
-            if (snap && snap.time && snap.time.length) {
-                const times = snap.time.map(t => Date.parse(t + 'Z'));   // UTC, no 'Z'
-                let c = -1;
-                for (let i = 0; i < times.length; i++) { if (times[i] <= clockMs) c = i; else break; }
-                if (c >= 0) {
-                    const slotAt = (steps) => {
-                        const i = c + steps;
-                        if (i >= snap.weather_code.length) return null;
-                        const [key, label] = conditionFor(snap.weather_code[i], isDay);
-                        const wet = key === 'rain' || key === 'thunder' || key === 'snow';
-                        const prob = snap.precipitation_probability ? snap.precipitation_probability[i] : null;
-                        return { key, label, wet, prob };
-                    };
-                    f15 = slotAt(1); f30 = slotAt(2); f60 = slotAt(4);
-                }
-            }
-        }
+        // 15'/30'/60' from the covering snapshot, indexed forward from the current 15-min slot.
+        const slotAt = (steps) => {
+            const i = c + steps;
+            if (i < 0 || i >= snap.weather_code.length) return null;
+            const [key, label] = conditionFor(snap.weather_code[i], isDay);
+            const wet = key === 'rain' || key === 'thunder' || key === 'snow';
+            const prob = snap.precipitation_probability ? snap.precipitation_probability[i] : null;
+            return { key, label, wet, prob };
+        };
+        // Show whatever forecast slots resolve — NOT all-or-nothing. Each available slot shows
+        // independently so a +60' slot past the snapshot's 2 h horizon doesn't hide the rest. (a4QfXvwZ)
+        const f15 = slotAt(1), f30 = slotAt(2), f60 = slotAt(4);
 
-        // Show whatever forecast slots resolve — NOT all-or-nothing. The old
-        // `f15 && f30 && f60` gate hid EVERY icon the moment the +60' slot ran
-        // past a snapshot's 2 h horizon, which read as "forecast only near the
-        // start". Now each available slot shows independently, throughout. (a4QfXvwZ)
         let slots = [['Now', now]];
         if (f15) slots.push(["15'", f15]);
         if (f30) slots.push(["30'", f30]);
