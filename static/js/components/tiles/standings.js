@@ -858,10 +858,12 @@
     }
 
     function gapOrLapForRaceP1(num, position) {
-        if (position === 1) {
-            return `<span class="gap p1-lap">L${state.currentLap || ''}</span>`;
-        }
         const e = state.driverData[num] || {};
+        if (position === 1) {
+            // Leader's lap comes from the timing feed (driverGap = "LAP N") — the official
+            // source — not the raceLaps counter. (per SME 2026-07-12)
+            return `<span class="gap p1-lap">${e.gap || ''}</span>`;
+        }
         // 7-colour lap-over-lap trend (server-computed): purple/blue/green (catching)
         // white (flat) yellow/orange/red (dropping back). (t46cHyov)
         const t = e.gapTrend ? ` c-${e.gapTrend}` : '';
