@@ -48,6 +48,7 @@ from app.processing.processors.best_sector_processor import BestSectorProcessor
 from app.processing.processors.team_radio_processor import TeamRadioProcessor
 from app.processing.processors.data_health_processor import DataHealthProcessor
 from app.processing.processors.heartbeat_processor import HeartbeatProcessor
+from app.processing.processors.pit_stop_loss_processor import PitStopLossProcessor
 from app.processing.processors.sector_timing_processor import SectorTimingProcessor
 from app.processing.processors.tyre_processor import TyreProcessor
 from app.processing.processors.track_status_processor import TrackStatusProcessor
@@ -485,6 +486,15 @@ class SessionPreProcessor:
             except Exception:
                 logger.exception("Pecking-order analysis failed")
 
+            # Geometric pit-loss PREDICTION: refined across the event's FP/Q sessions
+            # (event-scoped), superseded by the in-race measurement. Independent of the
+            # dormant pace chain, like pecking-order above.
+            try:
+                from app.analysis.pit_loss_estimate import compute_and_save as _ple_save
+                _ple_save(self._session_path)
+            except Exception:
+                logger.exception("Pit-loss estimate analysis failed")
+
             if on_progress:
                 on_progress(100.0)
 
@@ -588,6 +598,10 @@ class SessionPreProcessor:
             TeamRadioProcessor(self._bus, self._session_type),
             DataHealthProcessor(self._bus, self._session_type),
             HeartbeatProcessor(self._bus, self._session_type),
+            # In-race pit-stop time-loss measurement — races only (needs driverInt/gap +
+            # the F1 pit topics). No-ops in P/Q (subscribe() early-returns).
+            *([PitStopLossProcessor(self._bus, self._session_type)]
+              if self._session_type == "race" else []),
             # self._pace_proc,  # COMMENTED OUT — pace placeholder (see _init above)
         ]
         for p in self._processors:

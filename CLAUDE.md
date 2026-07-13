@@ -25,6 +25,10 @@ Trello board (the "F1 Unleashed" board).
    finished flags, championship, etc.) is computed in the processing pipeline and
    emitted as `display:*` / per-driver topics. The frontend should render what the
    server sends, not re-derive it.
+6. **Expose surprising results, don't fix them** — the SME identifies bugs far
+   faster than you can. When a result you don't understand appears, surface it
+   plainly (data + what's odd) and stop; do not guess-fix it. If asked to collect
+   more data, follow the instructions exactly.
 
 ## Architecture
 
