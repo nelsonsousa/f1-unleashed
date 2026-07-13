@@ -284,27 +284,30 @@ async def live_session_monitor():
                         s = cached_next_session
                         radar_window_start = s["session_date"] - timedelta(minutes=15)
                         radar_window_end = s["session_date"] + timedelta(hours=4)
-                        # Start the radar only once the live feed is up — so the
-                        # F1 meeting/session keys are known and the session cache
-                        # dir exists — AND we're within the 15-min-before → end
-                        # window. Tiles co-locate in that session dir (card).
+                        # Both start only once the live feed is up — so the F1 keys are known and
+                        # the session cache dir exists. Tiles co-locate in that session dir.
                         live_sid = _active_live_capture["session_id"]
-                        if (radar_window_start <= now_utc <= radar_window_end
-                                and live_sid):
-                            cache_path = live_capture.cache_path_for(live_sid)
-                            if cache_path and radar_capture.active_key != str(cache_path):
-                                radar_capture.start(
-                                    session_dir=cache_path,
-                                    meeting_name=s["event_name"],
-                                    stop_at=radar_window_end,
-                                )
-                            # Forecast capture rides the same window (card 118).
-                            if cache_path and forecast_capture.active_key != str(cache_path):
-                                forecast_capture.start(
-                                    session_dir=cache_path,
-                                    meeting_name=s["event_name"],
-                                    stop_at=radar_window_end,
-                                )
+                        cache_path = live_capture.cache_path_for(live_sid) if live_sid else None
+                        # Forecast + current conditions: begin as soon as the session data STREAM
+                        # begins (live feed up), NOT only from 15-min-before — otherwise the
+                        # opening minutes of the session have no forecast/condition coverage and
+                        # the tile shows nothing. minutely_15 is quarter-hour aligned, so the first
+                        # capture already covers from the marker containing the stream. (user)
+                        if (cache_path and now_utc <= radar_window_end
+                                and forecast_capture.active_key != str(cache_path)):
+                            forecast_capture.start(
+                                session_dir=cache_path,
+                                meeting_name=s["event_name"],
+                                stop_at=radar_window_end,
+                            )
+                        # Radar stays gated to the 15-min-before → end window (Rainbow.ai call budget).
+                        if (radar_window_start <= now_utc <= radar_window_end and cache_path
+                                and radar_capture.active_key != str(cache_path)):
+                            radar_capture.start(
+                                session_dir=cache_path,
+                                meeting_name=s["event_name"],
+                                stop_at=radar_window_end,
+                            )
 
                     # ── Pre-session notifications (gated + lead from settings, card 27) ──
                     if cached_next_session and settings.get("ntfy.preSession", True):
