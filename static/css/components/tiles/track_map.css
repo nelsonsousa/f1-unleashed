@@ -195,3 +195,36 @@
     stroke: #ff0000;
   }
 }
+
+/* Position-data warning — GPS/telemetry health. Yellow badge matches the SC/VSC
+ * track-status style; red when both position AND telemetry feeds are down. */
+.pos-warning {
+    position: absolute;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 92%;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: left;
+    z-index: 20;
+    pointer-events: none;
+    background: rgba(255, 215, 0, 0.15);
+    color: var(--yellow, #ffd700);
+    border: 1px solid var(--yellow, #ffd700);
+}
+.pos-warning[hidden] { display: none; }
+.pos-warning.red {
+    background: rgba(225, 6, 0, 0.18);
+    color: var(--c-red, #ff5555);
+    border-color: var(--c-red, #ff5555);
+}
+.pos-warning-icon { width: 20px; height: 20px; flex-shrink: 0; }
+.pos-warning-tri { fill: currentColor; }
+.pos-warning-excl { fill: #12121a; }

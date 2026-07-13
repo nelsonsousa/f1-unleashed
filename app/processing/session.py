@@ -165,10 +165,24 @@ class SessionEngine:
         #    it's reprocessed by the latest code each time.
         self._db = SessionDatabase(self._session_path)
         capturing = live_capture.is_capturing_path(self._session_path)
+        reuse = False
         if not capturing:
             base = self._db._db_path
-            for suffix in ("", "-wal", "-shm"):
-                base.with_name(base.name + suffix).unlink(missing_ok=True)
+            # Reuse an existing COMPLETE transient DB instead of rebuilding, so a
+            # pre-built DB (e.g. a simulated-outage build) can be replayed as-is.
+            if base.exists():
+                try:
+                    import sqlite3
+                    c = sqlite3.connect(f"file:{base}?mode=ro", uri=True)
+                    row = c.execute(
+                        "SELECT value FROM processing_meta WHERE key='status'").fetchone()
+                    c.close()
+                    reuse = bool(row and row[0] == "complete")
+                except Exception:
+                    reuse = False
+            if not reuse:
+                for suffix in ("", "-wal", "-shm"):
+                    base.with_name(base.name + suffix).unlink(missing_ok=True)
         self._db.open()
 
         # Determine session time bounds from JSONL file
@@ -176,11 +190,13 @@ class SessionEngine:
 
         self._running = True
 
-        if capturing:
+        if capturing or reuse:
             self._preprocess_done.set()
-            # Live capture has already populated the DB — baseline is present.
+            # Live capture populated the DB, OR we're replaying a pre-built complete DB.
             self._baseline_ready.set()
-            logger.info(f"Session DB built live by capture: {self._session_name}")
+            logger.info(
+                f"{'Reusing complete transient DB' if reuse else 'Session DB built live by capture'}"
+                f": {self._session_name}")
         else:
             logger.info(f"Building transient DB for {self._session_name}")
             self._preprocessor = SessionPreProcessor(

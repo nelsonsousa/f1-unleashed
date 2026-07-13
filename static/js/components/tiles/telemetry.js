@@ -1464,6 +1464,29 @@
         }
     });
 
+    // Position-data warning (above the x-axis), driven by the server's dataHealth:
+    // yellow when the GPS OR telemetry feed is down; red when BOTH are down.
+    function updatePosWarning(health) {
+        const el = document.getElementById('telePosWarning');
+        const msg = document.getElementById('telePosWarningMsg');
+        if (!el || !msg) return;
+        const posRed = !!(health && health.position && health.position.level === 'red');
+        const telRed = !!(health && health.telemetry && health.telemetry.level === 'red');
+        if (posRed && telRed) {
+            el.classList.add('red');
+            msg.textContent = 'Telemetry and position data unavailable. Data is unreliable';
+            el.hidden = false;
+        } else if (posRed || telRed) {
+            el.classList.remove('red');
+            msg.textContent = 'Position data unavailable. Track position estimated from telemetry';
+            el.hidden = false;
+        } else {
+            el.hidden = true;
+        }
+    }
+    messageBus.on('dataHealth', updatePosWarning);
+    messageBus.on('state:reset', () => updatePosWarning(null));
+
     messageBus.on('driverList', (data) => {
         if (!data || typeof data !== 'object') return;
         for (const [num, info] of Object.entries(data)) {

@@ -339,6 +339,25 @@
     // The circuit comes from the server (SessionInfo.Meeting.Circuit.ShortName,
     // normalised to the SVG basename, e.g. "Monte_Carlo"). On connect/seek
     // the latest trackCircuit row is restored, so this fires before drawing.
+    function updatePosWarning(health) {
+        const el = document.getElementById('trackPosWarning');
+        const msg = document.getElementById('trackPosWarningMsg');
+        if (!el || !msg) return;
+        const posRed = !!(health && health.position && health.position.level === 'red');
+        const telRed = !!(health && health.telemetry && health.telemetry.level === 'red');
+        if (posRed && telRed) {
+            el.classList.add('red');
+            msg.textContent = 'Telemetry and position data unavailable. Data is unreliable';
+            el.hidden = false;
+        } else if (posRed || telRed) {
+            el.classList.remove('red');
+            msg.textContent = 'Position data unavailable. Track position estimated from telemetry';
+            el.hidden = false;
+        } else {
+            el.hidden = true;
+        }
+    }
+
     messageBus.on('trackCircuit', (name) => {
         if (name && !state.location) {
             loadTrackSvg(name);
@@ -349,6 +368,12 @@
     messageBus.on('driverList', handleDriverList);
     messageBus.on('trackStatus', handleTrackStatus);
     messageBus.on('yellowFlag', handleYellowFlag);
+
+    // Position-data warning driven by the server's dataHealth: yellow when the GPS
+    // OR telemetry feed is down (position is being estimated from telemetry); red
+    // when BOTH are down (nothing to estimate from → unreliable).
+    messageBus.on('dataHealth', updatePosWarning);
+    messageBus.on('state:reset', () => updatePosWarning(null));
 
     // Driver status — remove a car's marker the moment it retires / stops
     // (card 55). The position feed may keep emitting after RET/STOP, so

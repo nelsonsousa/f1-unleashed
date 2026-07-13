@@ -234,7 +234,10 @@ class DriverGapProcessor(Processor):
                     if old is not None and newlap > old:
                         self._update_gap_trend(num, newlap)
             if g is not None:
-                self._emit_gap(num, g, False, clock_time, self._gap_trend.get(num, ""))
+                # A non-numeric gap ("N L" — lapped) can't carry a lap-over-lap trend; blank the
+                # colour (else the stale trend from when the car was on the lead lap sticks).
+                gt = self._gap_trend.get(num, "") if _secs(g) is not None else ""
+                self._emit_gap(num, g, False, clock_time, gt)
             if "IntervalToPositionAhead" in d:
                 v = d["IntervalToPositionAhead"]
                 if isinstance(v, dict):
