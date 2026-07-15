@@ -50,6 +50,29 @@ body {
 .help-home:hover { text-decoration: underline; }
 .help-title { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; }
 
+/* Section nav — the four guide parts (main window + each session type). */
+.help-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 20px;
+}
+.help-nav-link {
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 600;
+}
+.help-nav-link:hover { color: var(--text); border-color: var(--muted); }
+.help-nav-link.active {
+    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
 .help-content h1,
 .help-content h2,
 .help-content h3,

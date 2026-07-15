@@ -463,18 +463,33 @@ def root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+# The in-app user guide (release v2.0.0) is split into four context pages: the
+# main window + player, and one per session type. Sources live in docs/guide/.
+GUIDE_PARTS = [
+    ("main", "Main window"),
+    ("practice", "Practice"),
+    ("qualifying", "Qualifying"),
+    ("race", "Race"),
+]
+
+
 @app.get("/help")
-def help_page(request: Request):
-    """Render DOCUMENTATION.md as a styled HTML page (card 119)."""
+@app.get("/help/{part}")
+def help_page(request: Request, part: str = "main"):
+    """Render one part of the split user guide (docs/guide/{part}.md)."""
     import markdown as _md
+    valid = {k for k, _ in GUIDE_PARTS}
+    if part not in valid:
+        part = "main"
     try:
-        text = Path("DOCUMENTATION.md").read_text(encoding="utf-8")
+        text = Path(f"docs/guide/{part}.md").read_text(encoding="utf-8")
         content = _md.markdown(
             text, extensions=["tables", "fenced_code", "toc", "sane_lists"])
     except OSError:
         content = "<p>Documentation not found.</p>"
+    nav = [(k, label, k == part) for k, label in GUIDE_PARTS]
     return templates.TemplateResponse(
-        "help.html", {"request": request, "content": content})
+        "help.html", {"request": request, "content": content, "nav": nav})
 
 
 @app.get("/api/v1/version")
