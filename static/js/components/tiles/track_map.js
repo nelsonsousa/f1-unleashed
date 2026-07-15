@@ -92,6 +92,8 @@
 
                 const calibrating = document.getElementById('trackCalibrating');
                 if (calibrating) calibrating.style.display = 'none';
+
+                if (_mini.pending) mountMini(_mini.pending);   // dashboard requested it before load
             }
         } catch (e) {
             console.warn('Failed to load track SVG:', e);
@@ -163,6 +165,129 @@
         g.appendChild(text);
 
         return g;
+    }
+
+    // =========================================================================
+    // Mini-map — zoomed clone of the track map for the race dashboard (card J3V1CFdS)
+    // =========================================================================
+    // A cloned track SVG whose viewBox is a zoomed window that follows the "chaser" driver, so it
+    // stays centered on them while showing every nearby car marker + the same yellow-flag/track-
+    // status colouring as the main map (mirrored each frame). Only the markers are drawn smaller so
+    // they don't blow up with the zoom. No rotation, no weather overlay.
+    const MINI_ZOOM = 10;              // viewBox zoom (crop = trackViewBox / MINI_ZOOM)
+    const MINI_MARKER_SCALE = 0.3;     // marker size (F1 radius)
+    const MINI_SMOOTH = 0.18;          // viewBox-centre low-pass (0..1) — damps GPS jitter at high zoom
+    const _mini = { svg: null, group: null, container: null, markers: {}, focus: null,
+                    baseVB: null, matrix: null, pending: null, fx: null, fy: null };
+
+    function mountMini(container) {
+        if (!container) return;
+        if (!state.trackSvg) { _mini.pending = container; return; }   // SVG not loaded yet → retry on load
+        _mini.pending = null;
+        const svg = state.trackSvg.cloneNode(true);
+        const group = svg.querySelector('#car-markers');
+        if (group) { group.innerHTML = ''; group.style.pointerEvents = 'none'; }
+        container.innerHTML = ''; container.appendChild(svg);
+        const vb = (state.trackSvg.getAttribute('viewBox') || '0 0 100 100').split(/\s+/).map(Number);
+        const root = svg.querySelector('#track-root');
+        _mini.svg = svg; _mini.group = group; _mini.container = container; _mini.markers = {};
+        _mini.baseVB = { w: vb[2], h: vb[3] };
+        // Constant F1-coords → SVG-user-space matrix (track-root transform); markers are direct
+        // children of track-root, so this maps a car's (x,y) to the viewBox coordinate system.
+        _mini.matrix = (root && root.transform.baseVal.numberOfItems)
+            ? root.transform.baseVal.consolidate().matrix : null;
+    }
+    function unmountMini() {
+        if (_mini.container) _mini.container.innerHTML = '';
+        _mini.svg = _mini.group = _mini.container = _mini.matrix = null; _mini.markers = {};
+    }
+    function setMiniFocus(num) {
+        num = num || null;
+        if (num !== _mini.focus) { _mini.fx = _mini.fy = null; }   // snap to the new chaser (no glide)
+        _mini.focus = num;
+    }
+
+    function createMiniMarker(color, tla) {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('class', 'car-marker');
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        circle.setAttribute('r', state.markerRadius * MINI_MARKER_SCALE);   // smaller relative to the track
+        circle.setAttribute('fill', color);
+        circle.setAttribute('stroke', '#ffffff');
+        circle.setAttribute('stroke-width', state.markerStrokeWidth * MINI_MARKER_SCALE);
+        g.appendChild(circle);
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('fill', getContrastColor(color));
+        text.setAttribute('font-size', state.markerFontSize * MINI_MARKER_SCALE);
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('dominant-baseline', 'central');
+        text.setAttribute('transform', `scale(1, -1) rotate(${state.rotation || 0})`);
+        text.textContent = tla;
+        g.appendChild(text);
+        return g;
+    }
+    function removeMiniMarker(num) {
+        const m = _mini.markers[num];
+        if (m) { m.remove(); delete _mini.markers[num]; }
+    }
+    function updateMiniMarker(num, x, y) {
+        const info = state.driverInfo[num] || {};
+        let m = _mini.markers[num];
+        if (!m && _mini.group) {
+            m = createMiniMarker(info.color || DEFAULT_CAR_COLOR, info.tla || num);
+            _mini.markers[num] = m; _mini.group.appendChild(m);
+        }
+        if (m) m.setAttribute('transform', `translate(${x.toFixed(1)}, ${y.toFixed(1)})`);
+    }
+
+    function renderMini(t) {
+        if (!_mini.svg || !_mini.group) return;
+        const focus = _mini.focus;
+        for (const num in posBuf) {
+            const buf = posBuf[num]; if (!buf.length) continue;
+            const st = state.driverStatus[num];
+            if (st === 'RET' || st === 'STOP') { removeMiniMarker(num); continue; }
+            if (num === focus) continue;   // focus is drawn from its smoothed position below
+            const p = interpAt(buf, t);
+            updateMiniMarker(num, p.x, p.y);
+        }
+        for (const num in _mini.markers) if (!posBuf[num]) removeMiniMarker(num);
+        // Follow the chaser: low-pass its interpolated position ONCE and use the same value for BOTH
+        // the marker and the viewBox centre. Because both read the identical (fx, fy), the focus car
+        // sits pinned dead-centre with zero swim, while the low-pass still absorbs the GPS
+        // sample-boundary kinks that magnify into jitter at high zoom.
+        const fb = focus && posBuf[focus];
+        if (fb && fb.length && _mini.matrix) {
+            const c = interpAt(fb, t);
+            if (_mini.fx == null) { _mini.fx = c.x; _mini.fy = c.y; }
+            else { _mini.fx += MINI_SMOOTH * (c.x - _mini.fx); _mini.fy += MINI_SMOOTH * (c.y - _mini.fy); }
+            updateMiniMarker(focus, _mini.fx, _mini.fy);
+            const M = _mini.matrix;
+            const sx = M.a * _mini.fx + M.c * _mini.fy + M.e;
+            const sy = M.b * _mini.fx + M.d * _mini.fy + M.f;
+            const w = _mini.baseVB.w / MINI_ZOOM, h = _mini.baseVB.h / MINI_ZOOM;
+            _mini.svg.setAttribute('viewBox',
+                `${(sx - w / 2).toFixed(2)} ${(sy - h / 2).toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)}`);
+        }
+        syncMiniFlags();
+    }
+
+    // Mirror the main map's track-status flash + yellow-flag sectors onto the clone.
+    function syncMiniFlags() {
+        if (!_mini.svg || !state.trackSvg) return;
+        ['#track-outline', '#track-sectors'].forEach(sel => {
+            const a = state.trackSvg.querySelector(sel), b = _mini.svg.querySelector(sel);
+            if (!a || !b) return;
+            b.classList.toggle('flag-blink', a.classList.contains('flag-blink'));
+            const col = a.style.getPropertyValue('--flag-color');
+            if (col) b.style.setProperty('--flag-color', col);
+        });
+        const yellow = new Set();
+        state.trackSvg.querySelectorAll('[data-sector].sector-yellow')
+            .forEach(e => yellow.add(e.getAttribute('data-sector')));
+        _mini.svg.querySelectorAll('[data-sector]').forEach(p => {
+            p.classList.toggle('sector-yellow', yellow.has(p.getAttribute('data-sector')));
+        });
     }
 
     // =========================================================================
@@ -277,6 +402,7 @@
                 updateCarMarker(num, p.x, p.y);
                 while (buf.length >= 2 && buf[1].t <= t) buf.shift();   // drop passed, keep the lo bracket
             }
+            renderMini(t);   // race dashboard mini-map (no-op unless mounted)
         }
         requestAnimationFrame(animateMarkers);
     }
@@ -401,5 +527,8 @@
             });
         }
     });
+
+    // Race dashboard drives a zoomed mini-map instance through this interface (card J3V1CFdS).
+    window.F1TrackMap = { mountMini, setMiniFocus, unmountMini };
 
 })();

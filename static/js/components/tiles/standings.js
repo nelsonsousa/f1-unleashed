@@ -53,7 +53,7 @@
         lapTimes: {},         // num → {lap → time_str} from driverLaps.laps
         status: {},           // num → DSQ/ELIMINATED/RET/STOP/OUT/PIT/FINISHED/TRACK
         lapCls: {},           // num → {lap, status} (latest classification type)
-        prediction: {},       // num → lapPrediction {lap, delta, placesGained}
+        prediction: {},       // num → lapPrediction {lap, projectedMs, improving, predictedPos, posColour}
         currentLap: 0,        // race-only (from raceLaps)
         qualifyingSegment: null,
         eliminated: new Set(),
@@ -789,28 +789,20 @@
     }
 
     function predictionCell(num) {
-        // Render only — lap_prediction (server) computes everything (quali). Payload:
-        // { delta(ms), predictedPos, deltaColour, posColour }. Always shows the
-        // predicted position `Pnn` (coloured by the band the predicted lap time earns);
-        // when the driver has a lap this part, the live delta `±s.S` (green improving /
-        // yellow slower) shows to its left.
+        // Render only — lap_prediction (server, P/Q) computes everything. Payload:
+        // { lap, projectedMs, improving, predictedPos, posColour }. On a PUSH lap shows the
+        // PROJECTED lap time (to 0.1 s) + predicted position, both coloured by the band the
+        // projected time earns when improving, WHITE when not. (card Z4PfDRry)
         const p = state.prediction[num];
-        if (!p) return '<span class="pred"></span>';
-        const hasDelta = p.delta != null;
-        const hasPos = p.predictedPos != null;
-        if (!hasDelta && !hasPos) return '<span class="pred"></span>';
-        const posCol = p.posColour ? ` c-${p.posColour}` : '';
-        const posHtml = hasPos ? `<span class="pred-pos-gain${posCol}">P${p.predictedPos}</span>` : '';
-        // Always render the delta slot (empty when no delta) so the position keeps the
-        // same place whether or not a delta shows. (user 2026-07-08)
-        let deltaHtml = '<span class="pred-delta"></span>';
-        if (hasDelta) {
-            const deltaSec = p.delta / 1000;
-            const deltaText = (deltaSec < 0 ? '−' : '+') + Math.abs(deltaSec).toFixed(1);
-            const deltaCls = p.deltaColour === 'green' ? 'pred-delta-neg' : 'pred-delta-pos';
-            deltaHtml = `<span class="pred-delta ${deltaCls}">${deltaText}</span>`;
-        }
-        return `<span class="pred">${deltaHtml}${posHtml}</span>`;
+        // On 'lapEnd' clear the forecast (the driver's actual lap time takes over). (user 2026-07-15)
+        if (!p || p.status === 'lapEnd' || (p.projectedMs == null && p.predictedPos == null)) return '<span class="pred"></span>';
+        const col = p.posColour ? ` c-${p.posColour}` : '';
+        const projHtml = p.projectedMs != null
+            ? `<span class="pred-proj${col}">${formatLapTimeOneDecimal(p.projectedMs)}</span>`
+            : `<span class="pred-proj${col}">-:--.-</span>`;   // no reference yet → placeholder
+        const posHtml = p.predictedPos != null
+            ? `<span class="pred-pos${col}">P${p.predictedPos}</span>` : '';
+        return `<span class="pred">${projHtml}${posHtml}</span>`;
     }
 
     function formatLapTimeOneDecimal(ms) {
@@ -962,7 +954,7 @@
                    sec[0], sec[1], sec[2], mini, '<span>Best lap</span>',
                    '<span>Tyres</span>', laps];
         } else if (IS_QUALI) {
-            mid = ['<span>Best lap</span>', '<span>Gap</span>', '<span>Lap time</span>', '<span>Delta</span>',
+            mid = ['<span>Best lap</span>', '<span>Gap</span>', '<span>Lap time</span>', '<span>Forecast</span>',
                    sec[0], sec[1], sec[2], mini, '<span>Tyre</span>', laps];
         } else {
             mid = ['<span>Best lap</span>', '<span>Gap</span>', '<span>Lap time</span>',
@@ -1028,9 +1020,6 @@
                 if (mode[i] !== best) { mode[i] = best; render(); }
                 return;
             }
-            // Click a driver row → focus that driver (+ neighbours in a race) on the dashboard.
-            const row = e.target.closest('.driver-row[data-driver]');
-            if (row && window.F1Dashboard) window.F1Dashboard.focus(row.dataset.driver);
         });
         container.addEventListener('mousemove', (e) => {
             _mouseX = e.clientX;

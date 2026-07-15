@@ -147,7 +147,7 @@
     // mid-session distraction (= per SME 2026-06-07).
     function isPeckingSession() {
         const t = window.SESSION_CONFIG?.sessionType || '';
-        return t !== 'practice';
+        return t !== 'practice' && !isRaceSession();   // quali-only: hidden in practice AND race/sprint (card)
     }
 
     function buildChampHtml(drivers, constructors) {

@@ -171,12 +171,32 @@
 /* Tab split — Messages / Pecking order / Championship.
  * Tabs sit to the right of the tile title; panes are mutually
  * exclusive (= only the .active pane is shown). */
-.tile-header .rc-tabs {
+.rc-tabs {
     display: inline-flex;
-    gap: 4px;
+    gap: 3px;
     margin-left: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
 }
-/* Tab buttons use the shared .tile-btn (base.css) — grey outline, white active. */
+/* Old-school tabs: top/left/right border, darker inactive, lighter active, the baseline runs
+   under the strip but is broken under the active tab. */
+.rc-tabs .tile-btn {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 5px 5px 0 0;
+    color: var(--text-secondary);
+    padding: 4px 11px 5px;
+    margin-bottom: -1px;   /* overlap the strip baseline */
+}
+.rc-tabs .tile-btn:hover {
+    background: rgba(255, 255, 255, 0.09);
+    color: var(--text-primary);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+.rc-tabs .tile-btn.active {
+    background: rgba(255, 255, 255, 0.15);
+    color: var(--text-primary);
+    border-bottom-color: transparent;   /* break the baseline under the active tab */
+}
 
 .rc-pane { display: none; }
 .rc-pane.active { display: block; }

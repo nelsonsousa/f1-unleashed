@@ -143,16 +143,16 @@ class LapDeltaProcessor(Processor):
         elapsed = data.get("lapElapsedMs")
         if dp is None or elapsed is None or elapsed < MIN_ELAPSED_MS:
             return
+        # With no reference yet (the session's first runner, before anyone has set a lap) still
+        # publish trackPct so the prediction can fire a placeholder forecast; delta/ref stay
+        # null. (user 2026-07-15)
         curve, ref_full = self._ref(num)
-        if not curve:
-            return
-        best_t = self._interp(curve, dp)
-        if best_t is None:
-            return
+        best_t = self._interp(curve, dp) if curve else None
+        has_ref = best_t is not None
         self._bus.emit(f"driverDelta:{num}", {
-            "deltaMs": int(elapsed - best_t),
-            "refMs": int(best_t),   # reference lap's time to THIS point (SLOW ratio denominator)
-            "refFullMs": ref_full,  # reference lap's FULL time → predicted = this + delta
+            "deltaMs": int(elapsed - best_t) if has_ref else None,
+            "refMs": int(best_t) if has_ref else None,   # ref lap's time to THIS point (SLOW ratio denom)
+            "refFullMs": ref_full if has_ref else None,  # ref lap's FULL time → predicted = this + delta
             "lap": data.get("lap"),
             "trackPct": dp,
         }, clock_time)

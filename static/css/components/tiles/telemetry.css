@@ -3,26 +3,44 @@
 .telemetry-header {
     display: flex;
     align-items: center;
-    gap: 8px;
+}
+
+/* View switcher (Dashboard / Telemetry) — old-school tabs: top/left/right border, darker inactive,
+   lighter active, the baseline runs under the strip but is broken under the active tab. */
+.telemetry-view-toggle {
+    display: inline-flex;
+    gap: 3px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+.telemetry-view-toggle .tile-btn {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 5px 5px 0 0;
+    color: var(--text-secondary);
+    padding: 4px 11px 5px;
+    margin-bottom: -1px;   /* overlap the strip baseline */
+}
+.telemetry-view-toggle .tile-btn:hover {
+    background: rgba(255, 255, 255, 0.09);
+    color: var(--text-primary);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+.telemetry-view-toggle .tile-btn.active {
+    background: rgba(255, 255, 255, 0.15);
+    color: var(--text-primary);
+    border-bottom-color: transparent;   /* break the baseline under the active tab */
 }
 
 .telemetry-channels {
     display: flex;
     gap: 4px;
-}
-
-/* ALL DRIVERS button, lives in the tile header between the title and
- * the channel buttons. Styled to match the channel/mode controls. */
-/* .telemetry-driver-toggle-all uses the shared .tile-btn; keep only header spacing
-   (active state is .tile-btn.active, toggled in JS). */
-.telemetry-header .telemetry-driver-toggle-all {
-    margin: 0 6px;
+    margin-left: auto;   /* 3 header groups (Q parts / channels / modes) spread evenly */
 }
 
 .telemetry-channel {
     background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text-muted);
+    border: 1px solid var(--text-primary);
+    color: var(--text-primary);
     font-family: 'Monaco', 'Consolas', monospace;
     font-size: 12px;
     font-weight: 600;
@@ -33,9 +51,13 @@
 }
 
 .telemetry-channel.active {
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    border-color: var(--text-muted);
+    background: var(--text-secondary);
+    color: var(--bg-primary);
+    border-color: var(--text-secondary);
+}
+
+.telemetry-channel:hover:not(.active) {
+    background: rgba(255, 255, 255, 0.08);
 }
 
 .telemetry-modes {
@@ -46,8 +68,8 @@
 
 .telemetry-mode {
     background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text-muted);
+    border: 1px solid var(--text-primary);
+    color: var(--text-primary);
     font-family: 'Monaco', 'Consolas', monospace;
     font-size: 12px;
     font-weight: 600;
@@ -58,26 +80,54 @@
 }
 
 .telemetry-mode.active {
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    border-color: var(--text-muted);
+    background: var(--text-secondary);
+    color: var(--bg-primary);
+    border-color: var(--text-secondary);
 }
 
-/* Qualifying lap-part toggle (cards 66/83): one button showing the active
-   Q part; click cycles through the parts reached so far. */
+.telemetry-mode:hover:not(.active) {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+/* Qualifying lap-part buttons: three always-visible Q1/Q2/Q3 (or SQ1-3), styled like the
+   channel/mode controls; a part that hasn't started yet is disabled. Divider separates them
+   from the channel buttons. */
 .telemetry-part-tabs {
     display: flex;
-    margin-left: 8px;
+    gap: 4px;
+    margin-left: 20px;   /* just some space after the view tabs; groups spread via auto-margins */
 }
 
 .telemetry-part-tabs.hidden {
     display: none;
 }
 
-/* .telemetry-part-toggle uses the shared .tile-btn (base.css); keep only :disabled. */
-.telemetry-part-toggle:disabled {
-    cursor: default;
-    opacity: 0.7;
+.telemetry-part {
+    background: transparent;
+    border: 1px solid var(--text-primary);
+    color: var(--text-primary);
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.telemetry-part.active {
+    background: var(--text-secondary);
+    color: var(--bg-primary);
+    border-color: var(--text-secondary);
+}
+
+.telemetry-part:hover:not(.active):not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.telemetry-part:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
 }
 
 .telemetry-container {
@@ -142,6 +192,7 @@
     flex-direction: column;
     width: max-content;
     min-width: 100%;
+    min-height: 100%;   /* rows distribute to fill the panel height */
 }
 
 /* Each driver row is a grid: [tla] min-content, then one 22px column
@@ -157,6 +208,7 @@
     padding: 0;
     border-bottom: 1px solid rgba(255, 255, 255, 0.04);
     min-height: 18px;
+    flex: 1 1 0;   /* grow so rows share the panel height evenly */
     justify-content: start;
 }
 
@@ -175,12 +227,15 @@
     border-right: 1px solid var(--border);
 }
 
+/* Driver select chip — dashboard-button style: SELECTED (shown on the chart) = filled team colour +
+   contrast ink; UNSELECTED (.hidden) = transparent + team-colour text/border. (card) */
 .telemetry-side .telemetry-driver-tla {
-    font-size: 12.5px;
+    font-family: 'Monaco', 'Consolas', monospace; font-weight: 700; font-size: 12px;
+    line-height: 14.5px; padding: 0 4px; border-radius: 3px;
+    background: var(--swatch-color); color: var(--swatch-ink, #0b0d10); border: 1px solid var(--swatch-color);
 }
-
-.telemetry-side .telemetry-driver-swatch {
-    height: 14px;
+.telemetry-side .telemetry-driver-entry.hidden .telemetry-driver-tla {
+    background: transparent; color: var(--swatch-color);
 }
 
 /* Lap pills sit in their explicit grid-column = lap+1, set inline. */
@@ -198,28 +253,31 @@
 }
 
 .telemetry-lap-pill {
+    box-sizing: border-box;
     font-family: 'Monaco', 'Consolas', monospace;
-    font-size: 12.5px;
-    line-height: 1;
+    font-size: 12px;
+    line-height: 14.5px;
     padding: 1px 4px;
     border-radius: 2px;
     cursor: pointer;
-    background: rgba(255, 255, 255, 0.06);
+    /* dashboard-button treatment (much smaller): transparent fill + coloured border/text when
+       unselected. The pill's semantic colour drives all three via --pill. */
+    background: transparent;
+    color: var(--pill, #fff);
+    border: 1px solid var(--pill, #fff);
 }
 
-/* Classification colours per spec — purple "overall fastest" pill was
- * dropped (confusing). */
-.telemetry-lap-pill.lap-push    { color: #00ff88; }   /* P/Q push or long; Race green-flag */
-.telemetry-lap-pill.lap-long    { color: #00ff88; }   /* (same as push per SME 2026-06-01) */
-.telemetry-lap-pill.lap-sc      { color: #ffd700; }   /* SC affected (Race) */
-.telemetry-lap-pill.lap-vsc     { color: #ffd700; }   /* VSC affected (Race) */
-.telemetry-lap-pill.lap-cool    { color: #ffffff; }   /* cool / abort */
-.telemetry-lap-pill.lap-skip    { color: var(--text-secondary); }   /* IN / OUT / PIT */
-.telemetry-lap-pill.lap-no-data { color: #888888; border: 1px dashed #555; background: transparent; }
-.telemetry-lap-pill.lap-unknown { color: #ffffff; }
-/* Driver's own fastest lap — purple (placed last so it wins over the type
-   colour above). Recomputed each render from state.bestLapNum. */
-.telemetry-lap-pill.lap-purple  { color: #c77dff; font-weight: 700; }
+/* Classification colours per spec set --pill (border + text; the fill when selected). */
+.telemetry-lap-pill.lap-push    { --pill: #00ff88; }   /* P/Q push or long; Race green-flag */
+.telemetry-lap-pill.lap-long    { --pill: #00ff88; }   /* (same as push per SME 2026-06-01) */
+.telemetry-lap-pill.lap-sc      { --pill: #ffd700; }   /* SC affected (Race) */
+.telemetry-lap-pill.lap-vsc     { --pill: #ffd700; }   /* VSC affected (Race) */
+.telemetry-lap-pill.lap-cool    { --pill: #ffffff; }   /* cool / abort */
+.telemetry-lap-pill.lap-skip    { --pill: var(--text-secondary); }   /* IN / OUT / PIT */
+.telemetry-lap-pill.lap-no-data { --pill: #888888; border-style: dashed; }
+.telemetry-lap-pill.lap-unknown { --pill: #ffffff; }
+/* Driver's own fastest lap — purple (placed last so its --pill wins over the type colour above). */
+.telemetry-lap-pill.lap-purple  { --pill: #c77dff; font-weight: 700; }
 
 /* Q1/Q2/Q3 section divider in the lap-list (qualifying only). */
 .telemetry-lap-divider {
@@ -235,13 +293,15 @@
     align-items: center;
 }
 
+/* selected: filled with the pill's colour + dark contrast text (no outline marker). */
 .telemetry-lap-pill.selected {
-    background: rgba(255, 255, 255, 0.18);
-    border-color: #fff;
+    background: var(--pill, #fff);
+    color: #0b0d10;
+    border-color: var(--pill, #fff);
 }
 
-.telemetry-lap-pill:hover {
-    background: rgba(255, 255, 255, 0.14);
+.telemetry-lap-pill:hover:not(.selected) {
+    background: rgba(255, 255, 255, 0.10);
 }
 
 /* Selection legend — bottom-right overlay over the chart, listing
@@ -327,9 +387,7 @@
     flex-shrink: 0;
 }
 
-.telemetry-driver-entry.hidden {
-    opacity: 0.3;
-}
+/* unselected drivers are shown by the outlined TLA chip, not by dimming (card) */
 
 .telemetry-driver-swatch {
     width: 6px;

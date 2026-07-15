@@ -49,6 +49,8 @@ from app.processing.processors.team_radio_processor import TeamRadioProcessor
 from app.processing.processors.data_health_processor import DataHealthProcessor
 from app.processing.processors.heartbeat_processor import HeartbeatProcessor
 from app.processing.processors.pit_stop_loss_processor import PitStopLossProcessor
+from app.processing.processors.dashboard_info_processor import DashboardInfoProcessor
+from app.processing.processors.dashboard_autoselect_processor import DashboardAutoSelectProcessor
 from app.processing.processors.sector_timing_processor import SectorTimingProcessor
 from app.processing.processors.tyre_processor import TyreProcessor
 from app.processing.processors.track_status_processor import TrackStatusProcessor
@@ -602,6 +604,10 @@ class SessionPreProcessor:
             # the F1 pit topics). No-ops in P/Q (subscribe() early-returns).
             *([PitStopLossProcessor(self._bus, self._session_type)]
               if self._session_type == "race" else []),
+            # Live-dashboard per-driver info tile — P/Q only (subscribe() early-returns otherwise).
+            DashboardInfoProcessor(self._bus, self._session_type),
+            # Dashboard auto-select recommendation (card wfMzaSwh) — all session types.
+            DashboardAutoSelectProcessor(self._bus, self._session_type),
             # self._pace_proc,  # COMMENTED OUT — pace placeholder (see _init above)
         ]
         for p in self._processors:
