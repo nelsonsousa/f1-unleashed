@@ -178,7 +178,7 @@
     const MINI_MARKER_SCALE = 0.3;     // marker size (F1 radius)
     const MINI_SMOOTH = 0.18;          // viewBox-centre low-pass (0..1) — damps GPS jitter at high zoom
     const _mini = { svg: null, group: null, container: null, markers: {}, focus: null,
-                    baseVB: null, matrix: null, pending: null, fx: null, fy: null };
+                    baseVB: null, matrix: null, pending: null, sm: {} };
 
     function mountMini(container) {
         if (!container) return;
@@ -199,12 +199,10 @@
     }
     function unmountMini() {
         if (_mini.container) _mini.container.innerHTML = '';
-        _mini.svg = _mini.group = _mini.container = _mini.matrix = null; _mini.markers = {};
+        _mini.svg = _mini.group = _mini.container = _mini.matrix = null; _mini.markers = {}; _mini.sm = {};
     }
     function setMiniFocus(num) {
-        num = num || null;
-        if (num !== _mini.focus) { _mini.fx = _mini.fy = null; }   // snap to the new chaser (no glide)
-        _mini.focus = num;
+        _mini.focus = num || null;
     }
 
     function createMiniMarker(color, tla) {
@@ -240,31 +238,36 @@
         if (m) m.setAttribute('transform', `translate(${x.toFixed(1)}, ${y.toFixed(1)})`);
     }
 
+    // Low-pass a car's interpolated position into its persistent smoothed point (_mini.sm[num]).
+    // At high zoom the GPS sample-boundary kinks magnify into jitter, so EVERY marker is smoothed —
+    // not just the focus — otherwise the others shake against the (smooth) focus-anchored frame.
+    function miniSmoothed(num, t) {
+        const p = interpAt(posBuf[num], t);
+        const s = _mini.sm[num];
+        if (!s) { _mini.sm[num] = { x: p.x, y: p.y }; return _mini.sm[num]; }
+        s.x += MINI_SMOOTH * (p.x - s.x);
+        s.y += MINI_SMOOTH * (p.y - s.y);
+        return s;
+    }
+
     function renderMini(t) {
         if (!_mini.svg || !_mini.group) return;
-        const focus = _mini.focus;
         for (const num in posBuf) {
             const buf = posBuf[num]; if (!buf.length) continue;
             const st = state.driverStatus[num];
-            if (st === 'RET' || st === 'STOP') { removeMiniMarker(num); continue; }
-            if (num === focus) continue;   // focus is drawn from its smoothed position below
-            const p = interpAt(buf, t);
-            updateMiniMarker(num, p.x, p.y);
+            if (st === 'RET' || st === 'STOP') { removeMiniMarker(num); delete _mini.sm[num]; continue; }
+            const s = miniSmoothed(num, t);
+            updateMiniMarker(num, s.x, s.y);
         }
-        for (const num in _mini.markers) if (!posBuf[num]) removeMiniMarker(num);
-        // Follow the chaser: low-pass its interpolated position ONCE and use the same value for BOTH
-        // the marker and the viewBox centre. Because both read the identical (fx, fy), the focus car
-        // sits pinned dead-centre with zero swim, while the low-pass still absorbs the GPS
-        // sample-boundary kinks that magnify into jitter at high zoom.
-        const fb = focus && posBuf[focus];
-        if (fb && fb.length && _mini.matrix) {
-            const c = interpAt(fb, t);
-            if (_mini.fx == null) { _mini.fx = c.x; _mini.fy = c.y; }
-            else { _mini.fx += MINI_SMOOTH * (c.x - _mini.fx); _mini.fy += MINI_SMOOTH * (c.y - _mini.fy); }
-            updateMiniMarker(focus, _mini.fx, _mini.fy);
+        for (const num in _mini.markers) if (!posBuf[num]) { removeMiniMarker(num); delete _mini.sm[num]; }
+        // Follow the chaser: anchor the viewBox on the focus car's SAME smoothed point, so it sits
+        // pinned dead-centre (marker + frame read the identical value → zero swim) while every marker
+        // shares the low-pass, keeping the whole field steady at high zoom.
+        const s = _mini.focus && _mini.sm[_mini.focus];
+        if (s && _mini.matrix) {
             const M = _mini.matrix;
-            const sx = M.a * _mini.fx + M.c * _mini.fy + M.e;
-            const sy = M.b * _mini.fx + M.d * _mini.fy + M.f;
+            const sx = M.a * s.x + M.c * s.y + M.e;
+            const sy = M.b * s.x + M.d * s.y + M.f;
             const w = _mini.baseVB.w / MINI_ZOOM, h = _mini.baseVB.h / MINI_ZOOM;
             _mini.svg.setAttribute('viewBox',
                 `${(sx - w / 2).toFixed(2)} ${(sy - h / 2).toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)}`);
