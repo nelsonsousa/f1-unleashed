@@ -338,15 +338,22 @@
 .tyres::-webkit-scrollbar { display: none; }   /* Chrome / Safari */
 
 /* Hover reveals the full stint history: the strip pops out over the neighbouring
-   columns (opaque stint backing) so past sets show without scrolling. */
+   columns (opaque stint backing) so past sets show without scrolling. A border +
+   shadow on the popped-out strip separates it from the columns it overlays. */
 .tyres { position: relative; }
 .tyres:hover { overflow: visible; z-index: 10; }
-.tyres:hover .tyre-stint { background: var(--bg-secondary); }
+.tyres:hover .tyre-stint {
+    background: var(--bg-secondary);
+    border-color: var(--border, #3a3a3a);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
 
 .tyre-stint {
     display: inline-flex;
     align-items: center;
     gap: 2px;
+    /* reserved transparent border so the hover reveal's border adds no layout shift */
+    border: 1px solid transparent;
 }
 
 .tyre-stint-icon {
@@ -428,41 +435,33 @@
     padding: 0 12px;
 }
 
-/* Delta value — same size/face as the sector-time cells (card 67); always
-   left-aligned in a constant slot (wide enough for the 0.001s observed delta)
-   so positions stay aligned right. */
-.pred-delta {
+/* Projected lap time (0.1 s) — wide enough for "1:23.4". Its colour matches the position:
+   the band the projected time earns when improving, white when not. (card Z4PfDRry) */
+.pred-proj {
     font-size: 14px;
     text-align: left;
     flex: 0 0 auto;
-    min-width: 4em;
+    min-width: 4.6em;
+    font-variant-numeric: tabular-nums;
+    color: var(--c-white, #fff);
 }
 
-/* Negative delta = currently faster than best lap = green. */
-.pred-delta-neg { color: #00ff88; }
-
-/* Positive delta = currently slower = yellow (= caution, attempt slipping). */
-.pred-delta-pos { color: #ffd700; }
-
-/* Positions gained: green up-triangle + count, right-aligned. Delta's font
-   face, but kept at the smaller size used before (card 67/64). */
-.pred-pos-gain {
-    color: #00ff88;
+/* Predicted position Pnn — same colour rule as the projected time. */
+.pred-pos {
     font-size: 16px;
     flex: 0 0 auto;
     text-align: left;
     min-width: 2.5em;
+    color: var(--c-white, #fff);
 }
 
-/* Position (places gained OR predicted Pnn) coloured by the band the predicted lap
-   time earns (server posColour); the arrow/num inherit. =0 (no gain) is white. */
-.pred-pos-gain.c-purple { color: var(--c-purple); }
-.pred-pos-gain.c-blue   { color: var(--c-blue); }
-.pred-pos-gain.c-green  { color: var(--c-green); }
-.pred-pos-gain.c-yellow { color: var(--c-yellow); }
-.pred-pos-gain.c-orange { color: var(--c-orange); }
-.pred-pos-gain.c-red    { color: var(--c-red); }
-.pred-pos-gain.pred-pos-zero { color: var(--c-white); }
+.pred-proj.c-purple, .pred-pos.c-purple { color: var(--c-purple); }
+.pred-proj.c-blue,   .pred-pos.c-blue   { color: var(--c-blue); }
+.pred-proj.c-green,  .pred-pos.c-green  { color: var(--c-green); }
+.pred-proj.c-yellow, .pred-pos.c-yellow { color: var(--c-yellow); }
+.pred-proj.c-orange, .pred-pos.c-orange { color: var(--c-orange); }
+.pred-proj.c-red,    .pred-pos.c-red    { color: var(--c-red); }
+.pred-proj.c-white,  .pred-pos.c-white  { color: var(--c-white, #fff); }
 
 /* FIA Stewards penalty / flag stack.
  * Lives inside the status badge. Horizontal flexbox, h-scrolls when

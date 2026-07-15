@@ -87,7 +87,7 @@
     border-radius: 2px;
     color: #111;
 }
-.pit-badge.pit-sc { background: #ff5c3a; }
+.pit-badge.pit-sc { background: var(--yellow, #ffd700); }
 .pit-badge.pit-vsc { background: var(--yellow, #ffd700); }
 
 /* stop-time colour scale (fastest = purple) */

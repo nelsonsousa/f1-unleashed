@@ -360,6 +360,10 @@ class TelemetryProcessor(Processor):
             est = 1 if (len(coords) >= 4 and coords[3]) else 0
             drv = self._drv(num)
             if not drv.activated:
+                # Pre-race (before lights-out): pair positions with CarData so LIVE telemetry passes
+                # through (dashboard gauges) — but run NO S/F/lap logic and store no samples; there
+                # are no laps to persist yet. (SME 2026-07-15)
+                drv.pending_pos = (dp, clock_time, est)
                 drv.last_dp = dp
                 continue
             if drv.in_pit:
@@ -435,14 +439,18 @@ class TelemetryProcessor(Processor):
                 if not isinstance(ch, dict):
                     continue
                 drv = self._drv(num)
-                if not drv.activated or drv.pending_pos is None:
-                    continue   # not yet running, or no pending position → skip this CarData
+                if drv.pending_pos is None:
+                    continue   # no pending position to pair with → skip this CarData
                 dp, pos_ts, est = drv.pending_pos
                 drv.pending_pos = None
                 abs_ms = _epoch_ms(pos_ts)
                 speed = ch.get("2", 0)
                 thr = ch.get("4", 0)
                 brk = ch.get("5", 0)
+                gear = ch.get("3", 0)
+                # The ECU reports REVERSE as an out-of-range gear value (>8) → map to -1 = R. (SME 2026-07-15)
+                if isinstance(gear, (int, float)) and gear > 8:
+                    gear = -1
                 # speed==0 is a channel dropout ON TRACK (position moving) → nulled; but in
                 # the pit it is a REAL standstill → kept, so stationary time is measurable.
                 invalid = (
@@ -451,14 +459,18 @@ class TelemetryProcessor(Processor):
                     or (speed == 0 and not drv.in_pit)
                 )
                 if invalid:
-                    sample = [dp, None, None, None, None, None, abs_ms, est]
-                    live = {"dp": dp, "speed": None, "rpm": None, "gear": None,
+                    # R at a standstill is real state (reverse selected while stopped), not a
+                    # dropout — keep the gear so the dash can show R. (SME 2026-07-15)
+                    g = -1 if gear == -1 else None
+                    sample = [dp, None, None, g, None, None, abs_ms, est]
+                    live = {"dp": dp, "speed": None, "rpm": None, "gear": g,
                             "throttle": None, "brake": None}
                 else:
-                    sample = [dp, speed, ch.get("0", 0), ch.get("3", 0), thr, brk, abs_ms, est]
+                    sample = [dp, speed, ch.get("0", 0), gear, thr, brk, abs_ms, est]
                     live = {"dp": dp, "speed": speed, "rpm": ch.get("0", 0),
-                            "gear": ch.get("3", 0), "throttle": thr, "brake": brk}
-                drv.samples.append(sample)
+                            "gear": gear, "throttle": thr, "brake": brk}
+                if drv.activated:
+                    drv.samples.append(sample)   # store only once running — nothing to persist pre-race
                 live["ts"] = abs_ms
                 live["lap"] = drv.live_lap
                 live["lapElapsedMs"] = (abs_ms - _epoch_ms(drv.live_zero_ts)

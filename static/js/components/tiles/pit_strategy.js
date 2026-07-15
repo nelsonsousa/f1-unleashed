@@ -70,6 +70,8 @@
 
     // ── inject the two tabs + panes into the race-control tile ──────────────
     function injectTabs() {
+        const t = (window.SESSION_CONFIG || {}).sessionType || '';
+        if (t !== 'race' && t !== 'sprint') return false;   // Pit stops/Strategy: race-style only (card)
         const tabs = document.getElementById('rcTabs');
         if (!tabs || document.getElementById('pitPaneStops')) return false;
         const content = tabs.closest('.tile') &&
@@ -91,9 +93,8 @@
             return d;
         };
         tabs.appendChild(mkBtn('pitstops', 'Pit stops'));
-        tabs.appendChild(mkBtn('strategy', 'Strategy'));
         content.appendChild(mkPane('pitstops', 'pitPaneStops'));
-        content.appendChild(mkPane('strategy', 'pitPaneStrategy'));
+        // Strategy tab not shipped yet (v2.0.0) — omitted until it's finished.
         return true;
     }
 
