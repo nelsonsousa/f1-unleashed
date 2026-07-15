@@ -6,9 +6,15 @@ A Formula 1 live-timing and replay application with synchronised audio commentar
 
 **Release 1.0.0** — June 7, 2026, day of the 2016 Monaco Grand Prix. Celebrating Mclaren's 1000th Grand Prix and 60th anniversary of their first Grand Prix.
 
-**Current release**: 1.3.0, 2026-06-29
+**Current release**: 2.0.0, 2026-07-18 — on the eve of the Belgian Grand Prix.
 
-For what it does, how it works, and a tour of the interface, see [DOCUMENTATION.md](DOCUMENTATION.md).
+For what it does and how it works, see [DOCUMENTATION.md](DOCUMENTATION.md). For a tour of the
+interface, the in-app **user guide** (the **Help (?)** icon on the home page) is split into the
+main window and one page per session type.
+
+<!-- SCREENSHOT (new): the live Dashboard view in a race — two cars under a second apart with
+     the zoomed mini track-map — as the hero image once captured. -->
+![F1Unleashed — Dashboard view](static/images/screenshots/race.png)
 
 ---
 
@@ -83,6 +89,23 @@ python -m app.cli.login          # browser-based F1 login
 The application covers Practice / Qualifying / Race in usable form today. Active development is focused on these next:
 
 
+### Recently shipped (v2.0)
+
+- **Live Dashboard view** — a focused two-driver view on the telemetry tile. In practice /
+  qualifying: live gauges with a **lap-time forecast** (a projected lap time, updated as the
+  driver runs). In the race: a **battle panel** (positions, interval, tyres, pit/close-gap
+  indicators) with a **zoomed, self-centring mini track-map** that follows the chasing car.
+- **Auto-select** — the app picks the two most interesting drivers for you, per session type
+  (closest to finishing a push lap; the at-risk drivers in Q1/Q2; the fight for pole in Q3;
+  the best on-track battle in the race), and re-picks as the session evolves.
+- **Pecking-order predictor** — a predicted team ranking and pace from practice and qualifying
+  running.
+- **Pit-stop measurement** — every in-race stop with stationary time, total time lost,
+  green/SC/VSC context, position change and rejoin-traffic flags, plus a pre-race pit-lane
+  time-loss estimate.
+- **Split user guide + player help** — the in-app guide is now one page per context, and a
+  **Player help** pop-up (status-bar link) explains the controls without pausing playback.
+
 ### Recently shipped (v1.3)
 
 - **Automatic audio sync** — commentary auto-anchors to the broadcast PDT of ffmpeg's first captured segment, so it aligns to the data clock with no manual step (the Delay box is now just a fallback).
@@ -113,6 +136,15 @@ The application covers Practice / Qualifying / Race in usable form today. Active
 - Dockerised deploy.
 - Robustness + reconnect logic for long sessions.
 - Memory management improvements.
+
+---
+
+## Support the project
+
+F1 Unleashed is a free, personal project built to make watching Formula 1 better. If it
+improves your race weekends, you can support it with a coffee:
+
+**[Buy me a coffee](https://www.buymeacoffee.com/nsousa)** <!-- TODO: confirm handle -->
 
 ---
 

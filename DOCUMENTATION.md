@@ -4,11 +4,14 @@ A Formula 1 live-timing and replay application with synchronised audio commentar
 
 **Release 1.0.0** — June 7, 2026, day of the 2016 Monaco Grand Prix. Celebrating Mclaren's 1000th Grand Prix and 60th anniversary of their first Grand Prix.
 
-**Current release**: 1.3.0, 2026-06-29
+**Current release**: 2.0.0, 2026-07-18 — on the eve of the Belgian Grand Prix.
 
 The server listens on port **1950**, an homage to the first F1 World Championship.
 
-This document describes what the application does and how it's structured. For install instructions see [README.md](README.md).
+This document describes what the application does and how it's structured. For install
+instructions see [README.md](README.md). For an end-user walkthrough, the in-app **user
+guide** (served at `/help`, split into the main window + one page per session type) is the
+place to start.
 
 ## Contents
 
@@ -103,6 +106,27 @@ Optimised for the race: gaps to leader and to the car ahead, tyre history, penal
 - **Audio controls** — mute, volume, a **Delay** box (`ss.SSS`; manual fallback offset — positive plays the commentary later, negative earlier), and a traffic light (green = audio in sync; yellow = seeking / loading; red = no audio for the current data-clock position).
 - **Status footer** — see [Status footer + data-health monitor](#status-footer-data-health-monitor).
 - **Video sync** — align the data clock to a TV broadcast you're watching alongside; see [Video sync](#video-sync).
+- **Player help** — a link on the right of the status footer opens a modal with the playback-control reference; it is a client-only overlay, so it does not pause playback.
+
+### Dashboard view
+
+The telemetry tile has a **Dashboard** toggle that swaps the multi-driver traces for a focused
+**two-driver** view, tuned per session type:
+
+- **Practice / Qualifying** — live gauges per driver plus a mini telemetry (speed-trace) viewer.
+  In qualifying the stopwatch shows a **lap-time forecast** (label `FORECAST`) while a lap is
+  running, switching to `LAP TIME` once the lap is confirmed.
+- **Race** — a battle panel per driver (TLA, position, the interval between the pair, a pit
+  indicator, tyre compound/age, and a close-gap highlight) plus a **zoomed, self-centring mini
+  track-map** (`track_map.js` secondary SVG instance) that follows the chasing car.
+
+**Auto-select** (`DashboardAutoSelectProcessor`, `dashAutoSelect` topic; on by default) picks
+the two drivers most worth watching and re-picks as the session evolves: closest to finishing
+a push lap (practice); the at-risk drivers on a push lap (Q1/Q2); predicted/current top-5 (Q3);
+the frontmost close battle (race). A manual TLA click hands control back to the user (auto
+off); the picker holds a changed pick for a few seconds of session time so a just-completed lap
+can be read before switching. The two-driver panels are computed by `DashboardInfoProcessor`
+(`dashInfo` topic) — server-computed, client-rendered, as everywhere else.
 
 ---
 
@@ -350,9 +374,19 @@ Each processor subscribes to raw F1 topics and emits processed messages. Per-dri
 | `TelemetryProcessor` | CarData.z, position, driverStatus | `lapTelemetry:{num}` (DB), `~telemetry:{num}` (live only) |
 | `LapClassificationProcessor` | driverLastLap, driverStatus, etc. | `lapClassification:{num}` (PUSH/COOL/OUT/IN/LONG/RACE/WET/PIT/STOP) |
 | `PaceProcessor` | driverLastLap, lapClassification, tyres | `pace.json` post-session (per-driver and per-team quali + race pace) |
+| `TyreProcessor` | TimingAppData, driverStatus | `currentTyre:{num}` (compound, isNew, age) |
+| `LapPredictionProcessor` | lapTelemetry, driverLastLap, lapClassification | `lapPrediction:{num}` (predicted lap time + predicted position, updated as a lap runs) |
+| `PitStopLossProcessor` | driverStatus, driverGap/Int, tyres, trackStatus | `pitStopTimeLoss` (per in-race stop: stationary time, total loss, SC/VSC context, position change, rejoin traffic) |
+| `DashboardInfoProcessor` | standings, driverInt, driverStatus, currentTyre, lapPrediction, lapClassification | `dashInfo` (per-driver two-driver-panel state: position, interval, indicators, tyre, lap-time label) |
+| `DashboardAutoSelectProcessor` | position, standings, qualifyingPart, lapClassification, lapPrediction, driverInt, driverStatus, sessionInfo | `dashAutoSelect` ([num1, num2] — the recommended watch pair, per session type) |
 | `ChampionshipProcessor` | ChampionshipPrediction | `championshipPrediction` |
 | `TeamRadioProcessor` | TeamRadio | `teamRadio` (per-clip play event at its broadcast Utc) |
 | `DataHealthProcessor` | TimingData, Position.z, CarData.z, Heartbeat, driverList, trackStatus, driverStatus | `dataHealth` (per-stream timing / telemetry / position health over on-track drivers) |
+
+> The table lists the headline processors; the full chain (sector/timing/gap/pace
+> decomposition, FIA stewards, best-sector, heartbeat, etc.) lives under
+> `app/processing/processors/`, and post-session analysis (pecking order, pit-loss estimate &
+> measurement, tyre phases, strategy) under `app/analysis/`.
 
 **Playback engine**
 
@@ -465,6 +499,22 @@ Data analysis and predictions are the hardest part of this project.
 Not only is the available data very sparse, when compared to each teams own telemetry, but there are data outages on occasion (GPS failures, telemetry failures, timing data delays, etc.). 
 
 But, as much as possible, I'll work to enrich the analysis of the data and provide what I hope is a better viewing experience for the Formula 1 fans.
+
+### Delivered in v2.0
+
+- **Live Dashboard view** — a two-driver focus on the telemetry tile: live gauges + lap-time
+  forecast (practice/qualifying) and a battle panel + zoomed self-centring mini track-map
+  (race). See [Dashboard view](#dashboard-view).
+- **Auto-select** — server-computed recommendation of the two drivers most worth watching,
+  re-picked per session type as the session evolves (`DashboardAutoSelectProcessor`).
+- **Pecking-order predictor** — predicted team ranking and pace from practice and qualifying
+  running (`app/analysis/pecking_order.py`).
+- **Pit-stop measurement + time-loss** — per-stop stationary time, total time lost, SC/VSC
+  context, position change and rejoin traffic, plus a pre-race pit-lane time-loss estimate
+  (`PitStopLossProcessor`, `app/analysis/pit_loss_*`).
+- **Split user guide + player help** — the in-app guide (`/help`) is now one page per context,
+  and a **Player help** modal (status-footer link) documents the controls without pausing
+  playback.
 
 ### Delivered in v1.3
 
