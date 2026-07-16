@@ -45,3 +45,7 @@ htmlcov/
 
 # Release collateral drafts (blog/promo) — attached to Trello cards, not part of the code release
 docs/release/
+
+# Internal review notes — not for the repo
+CODE_REVIEW.md
+DOCO_REVIEW.md
