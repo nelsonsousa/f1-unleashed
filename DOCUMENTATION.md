@@ -122,7 +122,7 @@ Optimised for free practice: lots of timed-lap context, pace classification, tyr
 - **Header** — local + session clock, track status, playback controls, audio controls.
 - **Standings** — position, driver, lap type, best lap, gap to leader, mini-sectors, S1/S2/S3 times, last lap time, tyre history, number of laps.
 - **Track map** — track SVG with the position of each driver, the Current Conditions weather panel, the rain-radar overlay, and a short-range weather forecast widget (In 15' / 30' / 60', with rain probability for wet slots).
-- **Telemetry** — opens in the two-driver **Dashboard** view (see [Dashboard view](#dashboard-view)); a **Telemetry** toggle switches to multi-driver SPD / RPM / GEAR / THR-BRK traces with a per-driver lap list. The trace view can show the live trace, last lap, best lap, and a selection of laps for comparison; in qualifying a toggle groups the lap list by part (Q1/Q2/Q3). Corner labels along the x-axis match the circuit map.
+- **Telemetry** — opens in the two-driver **Dashboard** view (see [Dashboard view](#dashboard-view)); a **Telemetry** toggle switches to multi-driver SPD / RPM / GEAR / THR-BRK traces with a per-driver lap list. The trace view can show the live trace, last lap, best lap, and a selection of laps for comparison; in qualifying, part tabs (Q1/Q2/Q3) show one part's laps at a time. Corner labels along the x-axis match the circuit map.
 - **Race control** — RC message stream (with team-radio clips interleaved by time) plus a **Team Radio** tab listing every clip. Each clip has Play / Stop buttons; playing a clip ducks the commentary for its duration and then restores it.
 
 ### Qualifying view
@@ -148,7 +148,7 @@ Optimised for the race: gaps to leader and to the car ahead, tyre history, penal
 - **Scrubber** — drag to seek to any point in the session. Click an event marker to jump to ~60 s before that event. Marked events: session start; session finished; safety car / virtual safety car; green flags; red flags.
 - **LIVE button** (live sessions only) — replaces the speed button; red when at the live edge, black when behind. Click to snap to the latest available state.
 - **Speed** — 1× during live; 1×–10× during replay (cycles 1× / 2× / 5× / 10×).
-- **Audio controls** — mute, volume, a **Delay** box (`ss.SSS`; manual fallback offset — positive plays the commentary later, negative earlier), and a traffic light (green = audio in sync; yellow = seeking / loading; red = no audio for the current data-clock position). By default Firefox prevents audio auto-play without user intervention. Click the Mute/Unmute button to enable audio.
+- **Audio controls** — mute, volume, a **Delay** box (`ss.SSS`; manual fallback offset — positive plays the commentary later, negative earlier), and a traffic light (green = audio in sync; yellow = seeking / loading; red = audio expected but not ready; a genuine content gap shows no light). By default Firefox prevents audio auto-play without user intervention. Click the Mute/Unmute button to enable audio.
 - **Status footer** — see [Status footer + data-health monitor](#status-footer-data-health-monitor).
 - **SYNC TO** — seek the data clock to a shared reference marker to line up with a TV broadcast; see [Sync to a TV broadcast](#sync-to-a-tv-broadcast).
 - **Player help** — a link on the right of the status footer opens a modal with the playback-control reference and keyboard shortcuts; it is a client-only overlay, so it does not pause playback.
@@ -187,7 +187,7 @@ The data stream is a sequence of typed messages on a server-side message bus, re
 | Header | Local time, session clock, track status, playback controls, audio controls (= mute, volume, sync indicator) |
 | Standings | Position; time gaps; penalty + flag indicators (R); timing sectors; lap classifications; tyre history, etc. |
 | Track map | Circuit SVG with per-driver positions, yellow-flag sector overlays, Current Conditions weather, rain radar overlay, and a short-range weather forecast widget |
-| Telemetry | Opens in the two-driver **Dashboard** view; a **Telemetry** toggle shows the multi-driver speed / RPM / gear / throttle / brake traces with lap selection and lap history |
+| Telemetry | Opens in the two-driver **Dashboard** view; a **Telemetry** toggle shows the multi-driver speed / RPM / gear / throttle+brake (one combined channel) traces with lap selection and lap history |
 | Race control | RC message stream (with team-radio clips interleaved by time); a Team Radio tab; provisional championship standings |
 | Status footer | A slim bar at the bottom of the player: live/replay indicator, stream throughput (msg/s), total messages, on-disk cache size, audio bitrate, live download speeds, and the data-health monitor (timing / telemetry / position) |
 
@@ -253,7 +253,7 @@ The weather tile header is **Current Conditions**. The data is drawn from three 
 - **Live measurements** — temperature, track temperature, humidity, pressure and wind come from the F1 `WeatherData` feed.
 - **Rain radar** — the precipitation overlay only; Rainbow.ai is used solely for the radar imagery, not the condition icon.
 
-A **Weather Forecast** widget overlays the top-right of the radar/weather tile, showing the In 15' / 30' / 60' forecast condition icons (collapsing to current + 60' when the condition is unchanged across the window) and a rain probability (%) for wet slots.
+A **Weather Forecast** widget overlays the top-right of the radar/weather tile, showing the In 15' / 30' / 60' forecast condition icons and a rain probability (%) for wet slots.
 
 The forecast is **captured live**: `ForecastCapture` (`app/services/weather_forecast.py`) fetches the Open-Meteo `minutely_15` forecast (`weather_code` + `precipitation_probability`) every 10 minutes during a live session and appends snapshots to `{session}/weather_forecast.jsonl`. Because Open-Meteo does not archive past forecasts, capturing live is the only way to replay what was predicted. Replay reads the snapshots via `GET /api/v1/weather/forecast?session=…` and indexes them by the playback clock.
 

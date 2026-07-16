@@ -70,7 +70,7 @@ and their gaps — an at-a-glance read of the competitive order as the session r
 ## Telemetry (trace) view
 
 Toggled from the Dashboard, the trace view works as in practice, with one addition: a control
-**groups the lap list by part (Q1 / Q2 / Q3)** so you can compare a driver's laps within and
+shows **part tabs (Q1 / Q2 / Q3)** — one part's laps at a time — so you can compare a driver's laps within and
 across segments. Corner labels line up with the circuit map.
 
 ---

@@ -48,7 +48,7 @@ A focused **two-driver** view: live gauges plus a mini telemetry viewer per driv
 
 ### Telemetry view
 
-Toggle to **Telemetry** for the trace chart: **speed / RPM / gear / throttle / brake** traces
+Toggle to **Telemetry** for the trace chart: **speed / RPM / gear / throttle+brake** traces (throttle and brake share one channel)
 with a per-driver lap list, so you can compare laps and drivers.
 
 - Show the **live** trace, the driver's **last** lap, their **best** lap, or a **selection**
