@@ -249,9 +249,9 @@ class SessionEngine:
             self._rates_task = asyncio.create_task(self._live_rates_loop())
 
     async def _scan_time_bounds(self) -> None:
-        """Quick scan to find first and last timestamps from JSONL.
+        """Find the first and last payload timestamps in the JSONL (session bounds).
 
-        Only reads first and last lines for speed (avoids full file scan).
+        Scans the file linearly (the last non-empty line gives the end); it is not O(1).
         """
         import json as _json
         from app.processing.file_reader import _parse_timestamp

@@ -96,8 +96,8 @@ class LapDeltaProcessor(Processor):
         #   1. best lap THIS part (driverLaps.bestLap) if set;
         #   2. else best lap across all parts (overallBestLap).
         # (Priority 3 — another driver's lap when the driver has none — is handled
-        #  in lap_prediction / TODO here for the curve.) Outside quali bestLap ==
-        #  overallBestLap, so behaviour is unchanged there.
+        #  in lap_prediction, not here.) Outside quali bestLap == overallBestLap, so
+        #  behaviour is unchanged there.
         ref = data.get("bestLap")
         if not (isinstance(ref, dict) and ref.get("lap") is not None):
             ref = data.get("overallBestLap")
