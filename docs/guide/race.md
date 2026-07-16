@@ -73,12 +73,18 @@ The Race control tile has several tabs:
 
 ---
 
-## Track map & position reconstruction
+## Track map
 
 The circuit map shows every car's position throughout the race, with yellow-flag sectors and
-the weather overlay. The positions are **reconstructed to stay faithful even through GPS and
-telemetry outages**, so the map keeps a correct picture of the field when the raw feed drops
-out.
+the weather overlay.
+
+Car positions come from **live timing's GPS position data**. That feed has known issues: it
+sometimes produces unreliable information — **especially around the pit lane** — and suffers
+occasional **data outages**. When GPS data is missing or unreliable, the app does its best to
+**reconstruct the position from the telemetry data**, then tries to match the calculated speed
+trace to a known circuit signature. This algorithm is **still in its early stages and lacks
+reliability** — the car is always placed on the map, but the positions will suffer from
+**frequent corrections**.
 
 ---
 
