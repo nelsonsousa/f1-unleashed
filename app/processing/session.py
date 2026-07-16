@@ -421,13 +421,15 @@ class SessionEngine:
             ).fetchall()
             events = [{"offset_ms": r[0], "topic": r[1], "data": json.loads(r[2])} for r in rows]
 
+        # Build the audio-info (probes bitrate via ffprobe) off the event loop (H4).
+        audio_info = await asyncio.to_thread(self._build_audio_info_for_client)
         # Send initial state to new client
         await self._send_to_client(ws, {
             "topic": "state:full",
             "data": {
                 "sessionType": self._session_type,
                 "isLive": self._live,
-                "audioInfo": self._build_audio_info_for_client(),
+                "audioInfo": audio_info,
                 "startTime": self._start_time.isoformat() if self._start_time else None,
                 "endTime": self._end_time.isoformat() if self._end_time else None,
                 "duration": self._duration,

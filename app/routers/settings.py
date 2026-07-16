@@ -13,6 +13,7 @@ wherever the cache lives, so it must not move.
 """
 
 import logging
+import asyncio
 import shutil
 import subprocess
 import sys
@@ -82,7 +83,29 @@ def _native_pick_folder() -> Optional[str]:
 
 @router.post("/settings/pick-folder")
 async def pick_folder() -> dict:
-    return {"path": _native_pick_folder() or ""}
+    # The native dialog blocks until the user closes it — off the event loop (H4).
+    return {"path": (await asyncio.to_thread(_native_pick_folder)) or ""}
+
+
+def _move_cache_contents(old: Path, new: Path) -> list[str]:
+    """Move the cache root's CONTENTS (season folders 2026/, 2025/, …) directly into
+    `new` — no wrapper level. Blocking (copytree/rmtree/move) — call via
+    asyncio.to_thread (H4)."""
+    moved: list[str] = []
+    new.mkdir(parents=True, exist_ok=True)
+    for child in list(old.iterdir()):
+        dst = new / child.name
+        if dst.exists():
+            if child.is_dir():
+                shutil.copytree(child, dst, dirs_exist_ok=True)
+                shutil.rmtree(child)
+            else:
+                shutil.copy2(child, dst)
+                child.unlink()
+        else:
+            shutil.move(str(child), str(dst))
+        moved.append(child.name)
+    return moved
 
 
 @router.post("/settings/cache-location")
@@ -97,21 +120,8 @@ async def set_cache_location(body: dict) -> dict:
 
     if do_move and old.exists() and old.resolve() != new.resolve():
         try:
-            new.mkdir(parents=True, exist_ok=True)
-            # Move the cache root's CONTENTS (the season folders 2026/, 2025/, …)
-            # directly into the chosen folder — no extra wrapper level.
-            for child in list(old.iterdir()):
-                dst = new / child.name
-                if dst.exists():
-                    if child.is_dir():
-                        shutil.copytree(child, dst, dirs_exist_ok=True)
-                        shutil.rmtree(child)
-                    else:
-                        shutil.copy2(child, dst)
-                        child.unlink()
-                else:
-                    shutil.move(str(child), str(dst))
-                moved.append(child.name)
+            # copytree/rmtree/move can be large — off the event loop (H4).
+            moved = await asyncio.to_thread(_move_cache_contents, old, new)
         except OSError as e:
             logger.exception("cache move failed")
             raise HTTPException(status_code=500, detail=f"move failed: {e}")
