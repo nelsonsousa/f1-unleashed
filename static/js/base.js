@@ -57,9 +57,6 @@ const messageBus = {
     finished: false,   // server: feed's terminal SessionStatus=Ends reached
     speed: 1,
 
-    // Seek state
-    skipAnimations: false,
-
     // Streaming state
     streamComplete: false,
     isLive: false,

@@ -109,20 +109,13 @@ class SessionDatabase:
     # ── Messages ──
 
     def save_messages(self, messages: list[tuple]) -> None:
-        """Batch insert messages. Each tuple is either
-        (offset_ms, topic, data_json) — for backward compatibility —
-        or (offset_ms, wall_clock, topic, data_json) in column order."""
-        if messages and len(messages[0]) == 4:
-            self._conn.executemany(
-                "INSERT INTO messages (offset_ms, wall_clock, topic, data) "
-                "VALUES (?, ?, ?, ?)",
-                messages,
-            )
-        else:
-            self._conn.executemany(
-                "INSERT INTO messages (offset_ms, topic, data) VALUES (?, ?, ?)",
-                messages,
-            )
+        """Batch insert messages; each tuple is
+        (offset_ms, wall_clock, topic, data_json) in column order."""
+        self._conn.executemany(
+            "INSERT INTO messages (offset_ms, wall_clock, topic, data) "
+            "VALUES (?, ?, ?, ?)",
+            messages,
+        )
         self._conn.commit()
 
     def get_state_at(self, offset_ms: int) -> dict[str, Any]:
@@ -213,13 +206,6 @@ class SessionDatabase:
                 except ValueError:
                     pass
         return out
-
-    def get_all_topics(self) -> list[str]:
-        """Get list of all distinct topics."""
-        rows = self._conn.execute(
-            "SELECT DISTINCT topic FROM messages"
-        ).fetchall()
-        return [r[0] for r in rows]
 
     # ── Processing Metadata ──
 

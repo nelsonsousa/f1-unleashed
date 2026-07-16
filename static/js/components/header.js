@@ -354,14 +354,6 @@
     // the scrubber maps the audible timeline to roughly the same span
     // as the data scrubber. (Date.now() − startUtc was wrong for past
     // replays — gave days-long denominators and a stationary dot.)
-    function audioPlayableDuration() {
-        const audio = state.audio.element;
-        if (!audio) return 0;
-        if (isFinite(audio.duration) && audio.duration > 0) return audio.duration;
-        if (state.duration > 0) return state.duration;
-        return 0;
-    }
-
     function formatSessionTime(ms, format) {
         const totalSec = Math.floor(ms / 1000);
         const h = Math.floor(totalSec / 3600);
@@ -1310,27 +1302,6 @@
         // syncAudio will be called on the next clock:update / playback
         // status; force one now so the audio element flips immediately.
         syncAudio();
-    };
-
-    // Audio-only play/pause (key: P). Toggles between 'playing' and
-    // 'paused' states; first invocation from 'sync' switches to the
-    // OPPOSITE of audio's current state.
-    window.toggleAudioPlay = function() {
-        const audio = state.audio.element;
-        if (!audio) return;
-        const wasPlaying = !audio.paused;
-        state.audio.playState = wasPlaying ? 'paused' : 'playing';
-        if (wasPlaying) {
-            audio.pause();
-        } else {
-            // If audio wasn't initialised yet, alignAudioToClock will
-            // set src + start streaming; otherwise just resume.
-            if (state.audio.startUtc) {
-                audio.play().catch(() => {});
-            }
-        }
-        updateAudioPlayButton();
-        updateAudioStatusLight();
     };
 
     // Audio-only ±N s skip (called by arrow keys when audio is playing).

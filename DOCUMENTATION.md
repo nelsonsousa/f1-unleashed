@@ -13,9 +13,17 @@ instructions see [README.md](README.md). For an end-user walkthrough, the in-app
 guide** (served at `/help`, split into the main window + one page per session type) is the
 place to start.
 
+**Disclaimer**: This is a personal project, to improve my own experience while watching Formula 1. It's not intended to infringe on any organisation's copyright or trademarks. 
+
+This project is intended for personal and educational use only, and solely by persons legally allowed to stream and download live timing data and Formula 1 TV coverage.
+
+While Formula 1's timing data is publicly available (with some limitations), it's still protected by copyright and its distribution is almost certainly a violation of copyright law in most jurisdictions.
+
+Distribution of the processed data is therefore not allowed. Streaming of the client UI to others is nor permitted. Sharing of formula1.com credentials is a violation of Formula 1's usage policy. 
+
+
 ## Contents
 
-- [Legal disclaimer](#legal-disclaimer)
 - [What it does](#what-it-does)
 - [Installation & first-run configuration](#installation-first-run-configuration)
 - [The interface](#the-interface)
@@ -34,16 +42,6 @@ place to start.
 - [Future developments](#future-developments)
 
 ---
-
-## Legal disclaimer
-
-This is a personal project, to improve my own experience while watching Formula 1. It's not intended to infringe on any organisation's copyright or trademarks. 
-
-This project is intended for personal use only, and solely by persons legally allowed to stream and download live timing data and Formula 1 TV coverage.
-
-While Formula 1's timing data is publicly available (with some limitations), it's still protected by copyright and its distribution is almost certainly a violation of copyright law in most jurisdictions.
-
-Distribution of the processed data is therefore not allowed. Streaming of the client UI to others is nor permitted. Sharing of formula1.com credentials is a violation of Formula 1's usage policy. 
 
 
 ## What it does
@@ -94,7 +92,7 @@ There is **no `.env`** — every setting has a default, so the app runs immediat
      to save disk or skip audio for a session type.
    See [Settings](#settings) for the full reference and defaults.
 3. **Get some data** — on the home page, open a past event, pick a session, and **Download** it
-   (runs in the background); then **Open** to replay. Live sessions capture automatically.
+   (runs in the background); then **Open** to replay. Live sessions capture automatically. **Note**: past audio comentary, team radio and weather forecasts and radar images are not downloaded. Only the historic live timing data is available to download.
 
 ---
 
@@ -109,7 +107,8 @@ A tour of what each part of the UI shows and does.
 The landing page lists every Grand Prix weekend in the current season and the prior weekend's cached sessions, plus controls for login and live-capture status.
 
 - **Race calendar** — one card per event. Past events are clickable and open the session popover; upcoming events appear faded.
-- **Session popover** — opens beneath the event card and lists the FP / Q / Sprint / Race sessions for that weekend. Each session row offers **Download** (pull the raw F1 timing data for a finished session — one-shot, runs in the background), **Open** (launch the session view at speed 1×), and **Delete** (remove the cached session from disk).
+- **Session popover** — opens beneath the event card and lists the FP / Q / Sprint / Race sessions for that weekend. Each session row offers **Download** (pull the raw F1 timing data for a finished session — one-shot, runs in the background) and **Open** (launch the session view at speed 1×).
+- **Cached sessions** - offers an overview of all cached data and allows selectively deleting cached files for a particular event or session.
 - **Login button** — opens the browser-based F1 login. After login the token is stored at `~/Library/Application Support/fastf1/f1auth.json` for ~72 h.
 - **Live-capture status** — shows when a live session is being captured automatically by the adaptive session monitor.
 - **Footer** — the app name and version sit in the centre, a Help (?) icon on the left opens this documentation page, and a settings gear on the right opens the settings dialog (see [Settings](#settings)).
@@ -146,13 +145,13 @@ Optimised for the race: gaps to leader and to the car ahead, tyre history, penal
 
 ### Common controls
 
-- **Scrubber** — drag to seek to any point in the session. Click an event marker to jump to ~60 s before that event. Marked events: 2' notice before the race; session start; session finished; safety car / virtual safety car; green flags; red flags.
+- **Scrubber** — drag to seek to any point in the session. Click an event marker to jump to ~60 s before that event. Marked events: session start; session finished; safety car / virtual safety car; green flags; red flags.
 - **LIVE button** (live sessions only) — replaces the speed button; red when at the live edge, black when behind. Click to snap to the latest available state.
 - **Speed** — 1× during live; 1×–10× during replay (cycles 1× / 2× / 5× / 10×).
-- **Audio controls** — mute, volume, a **Delay** box (`ss.SSS`; manual fallback offset — positive plays the commentary later, negative earlier), and a traffic light (green = audio in sync; yellow = seeking / loading; red = no audio for the current data-clock position).
+- **Audio controls** — mute, volume, a **Delay** box (`ss.SSS`; manual fallback offset — positive plays the commentary later, negative earlier), and a traffic light (green = audio in sync; yellow = seeking / loading; red = no audio for the current data-clock position). By default Firefox prevents audio auto-play without user intervention. Click the Mute/Unmute button to enable audio.
 - **Status footer** — see [Status footer + data-health monitor](#status-footer-data-health-monitor).
 - **SYNC TO** — seek the data clock to a shared reference marker to line up with a TV broadcast; see [Sync to a TV broadcast](#sync-to-a-tv-broadcast).
-- **Player help** — a link on the right of the status footer opens a modal with the playback-control reference; it is a client-only overlay, so it does not pause playback.
+- **Player help** — a link on the right of the status footer opens a modal with the playback-control reference and keyboard shortcuts; it is a client-only overlay, so it does not pause playback.
 
 ### Dashboard view
 
@@ -161,7 +160,7 @@ to the multi-driver trace chart. The Dashboard is a focused **two-driver** view,
 session type:
 
 - **Practice / Qualifying** — live gauges per driver plus a mini telemetry (speed-trace) viewer.
-  In qualifying the stopwatch shows a **lap-time forecast** (label `FORECAST`) while a lap is
+  The stopwatch shows a **lap-time forecast** (label `FORECAST`) while a lap is
   running, switching to `LAP TIME` once the lap is confirmed.
 - **Race** — a battle panel per driver (TLA, position, the interval between the pair, a pit
   indicator, tyre compound/age, and a close-gap highlight) plus a **zoomed, self-centring mini

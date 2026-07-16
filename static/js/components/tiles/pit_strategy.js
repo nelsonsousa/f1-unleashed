@@ -150,13 +150,7 @@
         el.innerHTML = html + head + rows;
     }
 
-    // Strategy tab: intentionally empty for now (future: drop-position prediction).
-    function renderStrategy() {
-        const el = document.getElementById('pitPaneStrategy');
-        if (el) el.innerHTML = '';
-    }
-
-    function renderAll() { renderStops(); renderStrategy(); }
+    function renderAll() { renderStops(); }
 
     // ── data ────────────────────────────────────────────────────────────────
     async function fetchTransit() {
