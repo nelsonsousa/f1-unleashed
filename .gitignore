@@ -42,3 +42,6 @@ htmlcov/
 
 # Claude Code (local/personal config; a shared .claude/settings.json may be committed)
 .claude/settings.local.json
+
+# Release collateral drafts (blog/promo) — attached to Trello cards, not part of the code release
+docs/release/
