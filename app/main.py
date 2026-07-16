@@ -54,15 +54,18 @@ async def _chequered_grace_expired(session_id: str, now_utc: datetime) -> bool:
     db_path = transient_db_path(cache_path)   # live DB is the transient scratch file
     if not db_path.exists():
         return False
+    conn = None
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         row = conn.execute(
             "SELECT data FROM messages WHERE topic='trackStatus' "
             "ORDER BY offset_ms DESC LIMIT 1"
         ).fetchone()
-        conn.close()
     except sqlite3.Error:
         return False
+    finally:
+        if conn is not None:
+            conn.close()   # closed even if execute raises (M6)
     if not row:
         _chequered_first_seen.pop(session_id, None)
         return False
@@ -423,6 +426,19 @@ async def lifespan(app: FastAPI):
             await live_capture.stop(_active_live_capture["session_id"])
         except Exception:
             pass
+
+    # Stop the background weather captures and close the shared HTTP session so
+    # nothing is left running/open at shutdown (M6).
+    for cap in (radar_capture, forecast_capture):
+        try:
+            cap.stop()
+        except Exception:
+            pass
+    try:
+        from app.services.livetiming_fetcher import livetiming_fetcher
+        await livetiming_fetcher.close()
+    except Exception:
+        pass
 
 
 app = FastAPI(

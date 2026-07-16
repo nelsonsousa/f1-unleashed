@@ -138,6 +138,10 @@ class ForecastCapture:
                 await asyncio.sleep(REFRESH_INTERVAL_S)
         except asyncio.CancelledError:
             raise
+        except Exception:
+            # Don't let an unexpected error kill the capture silently (M6) —
+            # matches WeatherRadarCapture._loop.
+            logger.exception("forecast capture loop failed")
 
 
 forecast_capture = ForecastCapture()

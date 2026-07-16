@@ -488,7 +488,9 @@ class LiveCaptureService:
         # just trusting the live-write timestamp).
         start_utc = now.replace(microsecond=0).isoformat() + "Z"
 
+        audio_log = None
         try:
+            audio_log = open(cache_path / "audio_ffmpeg.log", "wb")
             self._audio_process = subprocess.Popen(
                 [
                     "ffmpeg", "-nostdin", "-hide_banner",
@@ -512,7 +514,7 @@ class LiveCaptureService:
                 stdout=subprocess.DEVNULL,
                 # Per-run ffmpeg log (fresh each run); PdtTracker tails it for the
                 # first opened segment. Child keeps its own dup of the fd.
-                stderr=open(cache_path / "audio_ffmpeg.log", "wb"),
+                stderr=audio_log,
             )
             self._audio_url = url   # for the stale-download restart watchdog
             logger.info(f"Started audio recording: {url} -> {output_path}")
@@ -546,6 +548,11 @@ class LiveCaptureService:
         except Exception as e:
             logger.error(f"Failed to start audio recording: {e}")
             self._audio_process = None
+        finally:
+            # The child dup'd its own fd during Popen; close the parent's copy so it
+            # doesn't leak per (re)start (the stale-download watchdog restarts this). (M6)
+            if audio_log is not None:
+                audio_log.close()
 
     @staticmethod
     def _rotate_audio_segment(cache_path: Path) -> None:
