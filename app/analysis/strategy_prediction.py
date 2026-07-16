@@ -516,7 +516,7 @@ def compute(quali_session_path: Path) -> Optional[dict]:
         comps = entry.get("compounds") or {}
         if not comps:
             continue
-        # Coerce compound keys to uppercase for matching DEFAULT_TYRE_ASSUMPTIONS.
+        # Coerce compound keys to uppercase for matching the tyre-assumption keys.
         comps_upper = {c.upper(): d for c, d in comps.items()}
         strats = _enumerate_strategies_for_team(comps_upper, tyre_stats, race_laps, pit_loss)
         if not strats:

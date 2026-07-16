@@ -15,7 +15,7 @@ drive-through time:
 Validated vs F1 `PitLaneTimeCollection.Duration` on the RACE (5/9 within ±2 s), but from FP/Q it
 undershoots ~2–4 s (slow cool-down / warm-up laps) and is unreliable where the pit-lane dp is
 frozen (Shanghai) or the entry/exit geometry is odd (Monaco, Silverstone) — hence a capped
-confidence. Refines each session (FP1→FP2→FP3→Q, event-scoped). Offline ref: `scripts/pit_lane_speed.py`.
+confidence. Refines each session (FP1→FP2→FP3→Q, event-scoped).
 
 Output schema (pit_loss_estimate.json):
   {

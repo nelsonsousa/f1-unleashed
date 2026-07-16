@@ -756,8 +756,9 @@ class LiveTimingFetcher:
                     if progress_callback else None
                 )
             )
-            # TODO(analysis, item 4): run the analysis pipeline here and
-            # persist results to data/analysis/ before the DB is deleted.
+            # Note: no analysis pipeline runs here. Post-session analysis
+            # (pecking_order / pit_loss_estimate) runs in the preprocessor's finalize
+            # path; the transient DB is deleted below once the build completes.
         finally:
             pre.close()
         if not REPLAY_DEBUG:
