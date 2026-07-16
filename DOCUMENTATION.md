@@ -194,12 +194,14 @@ The data stream is a sequence of typed messages on a server-side message bus, re
 The frontend listens via a message bus pattern:
 
 ```javascript
-messageBus.on('TopicName', (data, clockTime) => {
-    const t = clockTime.getTime();  // single source of time
+messageBus.on('TopicName', (data, offsetMs) => {
+    // The 2nd arg is offset_ms — a NUMBER (ms from session start), NOT a Date.
+    // Read the current playback clock from the global messageBus.clockTime (a Date):
+    const now = messageBus.clockTime.getTime();
 });
 ```
 
-All clock-relative computations use the message's payload timestamp for faithful replay and skip forwards/backwards.
+Read the clock only from `messageBus.clockTime`; never `Date.now()`. (Calling `.getTime()` on the handler's 2nd argument would throw — it's a number.)
 
 ---
 
