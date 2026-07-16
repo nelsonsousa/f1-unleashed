@@ -113,6 +113,10 @@ class SessionEngine:
         # WebSocket clients
         self._clients: dict[int, WebSocket] = {}
         self._client_counter = 0
+        # True once a client has ever attached. A freshly-built engine that hasn't
+        # had its first client yet must not be discarded/reaped by a concurrent
+        # connect (H3) — only genuinely idle engines (had clients, all left) are.
+        self._ever_had_client = False
 
         # Lifecycle
         self._preprocess_task: Optional[asyncio.Task] = None
@@ -392,6 +396,7 @@ class SessionEngine:
         self._client_counter += 1
         client_id = self._client_counter
         self._clients[client_id] = ws
+        self._ever_had_client = True
 
         # Live: audio can start AFTER this engine did (audio begins ~10 min
         # pre-session), so a client that connected before then would never learn
@@ -1335,31 +1340,38 @@ class SessionManager:
         # Default to the OS-appropriate cache location (card 25).
         self._cache_dir = Path(cache_dir) if cache_dir else CACHE_DIR
         self._engines: dict[str, SessionEngine] = {}
+        # Per-session-name lock: serialize concurrent connects for the SAME session so
+        # two near-simultaneous WS connects can't both build+start an engine (the second
+        # would overwrite the first, orphaning its tasks/DB/scratch file). (H3)
+        self._locks: dict[str, asyncio.Lock] = {}
 
     async def get_or_create(self, session_name: str, live: bool = False) -> SessionEngine:
         """Get an existing engine or create a new one for the session."""
-        if session_name in self._engines:
-            engine = self._engines[session_name]
-            # Reuse if it has clients, or if it's a live engine (a live
-            # engine follows the still-growing DB — keep it alive across
-            # reloads rather than re-creating it).
-            if engine.client_count > 0 or engine._live:
-                return engine
-            # Replay engine with no clients — discard and rebuild.
-            await engine.stop()
-            del self._engines[session_name]
+        # setdefault is atomic on the single event loop (no await between get and set).
+        lock = self._locks.setdefault(session_name, asyncio.Lock())
+        async with lock:
+            if session_name in self._engines:
+                engine = self._engines[session_name]
+                # Reuse if it has clients, is live (follows the growing DB across reloads),
+                # or was just built and hasn't had its first client yet — a concurrent connect
+                # must attach to it, not discard it (H3).
+                if engine.client_count > 0 or engine._live or not engine._ever_had_client:
+                    return engine
+                # Genuinely idle replay engine (had clients, all left) — discard and rebuild.
+                await engine.stop()
+                del self._engines[session_name]
 
-        session_path = self._find_session_path(session_name)
-        if not session_path:
-            raise ValueError(f"Session not found: {session_name}")
+            session_path = self._find_session_path(session_name)
+            if not session_path:
+                raise ValueError(f"Session not found: {session_name}")
 
-        # Infer session type from directory name
-        session_type = self._infer_session_type(session_path)
+            # Infer session type from directory name
+            session_type = self._infer_session_type(session_path)
 
-        engine = SessionEngine(session_path, session_name, session_type, live=live)
-        await engine.start()
-        self._engines[session_name] = engine
-        return engine
+            engine = SessionEngine(session_path, session_name, session_type, live=live)
+            await engine.start()
+            self._engines[session_name] = engine
+            return engine
 
     @staticmethod
     def _infer_session_type(session_path: Path) -> str:
@@ -1388,7 +1400,7 @@ class SessionManager:
         """Remove engines with no connected clients (excluding live ones)."""
         empty = [
             name for name, engine in self._engines.items()
-            if engine.client_count == 0 and not engine._live
+            if engine.client_count == 0 and not engine._live and engine._ever_had_client
         ]
         for name in empty:
             await self.remove(name)
