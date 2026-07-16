@@ -4,7 +4,7 @@
 
 A Formula 1 live-timing and replay application with synchronised audio commentary and per-session deep analysis.
 
-**Release 1.0.0** — June 7, 2026, day of the 2016 Monaco Grand Prix. Celebrating Mclaren's 1000th Grand Prix and 60th anniversary of their first Grand Prix.
+**Release 1.0.0** — 7 June 2026, the day of the 2026 Monaco Grand Prix: McLaren's 1000th Grand Prix start. McLaren's first-ever race was also a Monaco Grand Prix, in 1966 — so the day marked both 1000 races and 60 years of McLaren in Formula 1.
 
 **Current release**: 2.0.0 "Spa-Francorchamps", 2026-07-16 — on the eve of the Belgian Grand Prix weekend.
 
