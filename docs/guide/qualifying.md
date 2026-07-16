@@ -30,16 +30,18 @@ the qualifying-specific features. (Sprint Qualifying uses this same view.)
 During a flying lap the app **forecasts the lap time** from the telemetry as the driver
 progresses, rather than waiting for the lap to complete.
 
-- In the Dashboard view the driver's stopwatch is labelled **FORECAST** while the lap is
-  running and shows the projected time; it switches to **LAP TIME** once the lap is confirmed.
+- In the Dashboard view (the telemetry tile's default) the driver's stopwatch is labelled
+  **FORECAST** while the lap is running and shows the projected time; it switches to **LAP
+  TIME** once the lap is confirmed.
 - The forecast is what drives the live "positions gained" projection in the standings.
 
 ---
 
 ## Dashboard view & auto-select
 
-As in practice, the telemetry tile has a **Dashboard** toggle (two-driver gauges + mini
-telemetry viewers). **Auto-select** is tuned for qualifying:
+As in practice, the telemetry tile opens in the **Dashboard** view (two-driver gauges + mini
+telemetry viewers; toggle to **Telemetry** for the trace chart). **Auto-select** is tuned for
+qualifying:
 
 - **Q1 / Q2** — it prioritises the **at-risk** drivers on a push lap: those in the drop zone
   plus the four places just above the cutoff, ordered by who is closest to finishing their
@@ -65,11 +67,11 @@ and their gaps — an at-a-glance read of the competitive order as the session r
 
 ---
 
-## Telemetry
+## Telemetry (trace) view
 
-The telemetry tile works as in practice, with one addition: a toggle **groups the lap list by
-part (Q1 / Q2 / Q3)** so you can compare a driver's laps within and across segments. Corner
-labels line up with the circuit map.
+Toggled from the Dashboard, the trace view works as in practice, with one addition: a control
+**groups the lap list by part (Q1 / Q2 / Q3)** so you can compare a driver's laps within and
+across segments. Corner labels line up with the circuit map.
 
 ---
 

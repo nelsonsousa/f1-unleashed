@@ -25,8 +25,9 @@ Like the practice/qualifying standings, but race-focused:
 
 ## Dashboard view — watch the battles
 
-The telemetry tile's **Dashboard** toggle gives the best seat for the race: a two-driver
-panel plus a **zoomed, self-centring mini track-map**.
+The telemetry tile opens in the **Dashboard** view — the best seat for the race: a two-driver
+panel plus a **zoomed, self-centring mini track-map**. (Toggle to **Telemetry** for the trace
+chart.)
 
 - Each side shows the driver's **TLA**, **position**, the **interval** between the two cars,
   and status — a **pit** indicator, tyre compound and age, and a close-battle highlight when
@@ -63,7 +64,7 @@ A **Pit stops** tab in the Race control tile lists every in-race stop as it happ
 
 The Race control tile has several tabs:
 
-- **RCM** — the live race-control message stream, with team-radio clips interleaved by time.
+- **Race control** — the live race-control message stream, with team-radio clips interleaved by time.
 - **Team Radio** — every captured clip, each with Play / Stop; playing one ducks the
   commentary.
 - **Pecking order** — the pre-race predicted team ranking and pace.
