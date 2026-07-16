@@ -173,16 +173,23 @@ class SessionEngine:
         reuse = False
         if not capturing:
             base = self._db._db_path
-            # Reuse an existing COMPLETE transient DB instead of rebuilding, so a
-            # pre-built DB (e.g. a simulated-outage build) can be replayed as-is.
+            # Reuse an existing COMPLETE transient DB instead of rebuilding — BUT only if it
+            # was built by the CURRENT processor code. A DB built by older code (e.g. kept
+            # across a DEBUG reconnect) would replay stale-processor output, so a version
+            # mismatch forces a rebuild. This keeps replay on the latest code while still
+            # skipping the rebuild when nothing changed. (M1)
             if base.exists():
                 try:
                     import sqlite3
+                    from app.processing.preprocessor import processor_code_version
                     c = sqlite3.connect(f"file:{base}?mode=ro", uri=True)
-                    row = c.execute(
+                    status = c.execute(
                         "SELECT value FROM processing_meta WHERE key='status'").fetchone()
+                    ver = c.execute(
+                        "SELECT value FROM processing_meta WHERE key='processor_version'").fetchone()
                     c.close()
-                    reuse = bool(row and row[0] == "complete")
+                    reuse = bool(status and status[0] == "complete"
+                                 and ver and ver[0] == processor_code_version())
                 except Exception:
                     reuse = False
             if not reuse:
