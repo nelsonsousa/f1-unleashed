@@ -26,11 +26,45 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from app.analysis.tyre_phases import _load_driver_list, _parse_ms
 from app.processing.database import transient_db_path
 from app.processing.preprocessor import SessionPreProcessor
 
 logger = logging.getLogger(__name__)
+
+
+# Relocated from the removed tyre_phases analysis module (M2) — small shared helpers
+# used by this dataset builder and (transitively) the live pecking-order path.
+def _parse_ms(s: Optional[str]) -> Optional[int]:
+    if not s or not isinstance(s, str):
+        return None
+    try:
+        if ":" in s:
+            m_part, rest = s.split(":", 1)
+            sec_part, frac = (rest.split(".", 1) if "." in rest else (rest, "0"))
+            return int(m_part) * 60_000 + int(sec_part) * 1000 + int(frac.ljust(3, "0")[:3])
+        sec_part, frac = (s.split(".", 1) if "." in s else (s, "0"))
+        return int(sec_part) * 1000 + int(frac.ljust(3, "0")[:3])
+    except (ValueError, AttributeError):
+        return None
+
+
+def _load_driver_list(conn: sqlite3.Connection) -> dict[str, dict]:
+    drv: dict[str, dict] = {}
+    for (data,) in conn.execute(
+        "SELECT data FROM messages WHERE topic='driverList'"
+    ):
+        try:
+            d = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(d, dict):
+            for num, info in d.items():
+                if isinstance(info, dict):
+                    drv[num] = {
+                        "tla": info.get("tla") or num,
+                        "team": (info.get("teamName") or "").strip(),
+                    }
+    return drv
 
 
 @dataclass
