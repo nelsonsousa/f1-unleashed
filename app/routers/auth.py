@@ -106,18 +106,6 @@ def set_token(request: SetTokenRequest):
     return SetTokenResponse(**result)
 
 
-@router.post("/auto-login")
-def auto_login():
-    """
-    Automatically log in using stored credentials.
-
-    Requires F1_EMAIL and F1_PASSWORD to be set in the .env file.
-    Uses headless browser automation to perform the login.
-    """
-    result = auth_service.auto_login()
-    return result
-
-
 @router.post("/browser-login")
 def browser_login():
     """
