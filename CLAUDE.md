@@ -11,8 +11,10 @@ Trello board (the "F1 Unleashed" board).
 
 ## Critical rules
 
-1. **Handlers receive `(data, clockTime)`** — use `clockTime.getTime()` for all
-   timing. Never use `Date.now()`.
+1. **Handlers receive `(data, offsetMs)`** — the 2nd arg is `offset_ms`, a NUMBER
+   (ms from session start), NOT a Date. Read the playback clock from the global
+   `messageBus.clockTime` (a Date); never `Date.now()`. (`.getTime()` on the 2nd
+   arg throws — it's a number.)
 2. **Only payload timestamps matter** — the only timestamp that counts is the one
    INSIDE the message payload (e.g. `Utc` in CarData.z entries, `Timestamp` in
    Position.z entries). Never use the envelope/recording timestamp for ordering
@@ -101,8 +103,9 @@ credits detection — `audio_sync.py` was removed).
 ## Client message bus
 
 ```javascript
-messageBus.on('TopicName', (data, clockTime) => {
-    const messageTime = clockTime.getTime();   // use this, not Date.now()
+messageBus.on('TopicName', (data, offsetMs) => {
+    // 2nd arg is offset_ms (a number); read the clock from messageBus.clockTime:
+    const messageTime = messageBus.clockTime.getTime();   // not Date.now()
 });
 ```
 Special playback events: `state:reset`, `state:restore` (latest state per topic on
