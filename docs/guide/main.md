@@ -163,6 +163,18 @@ then fine-tune. Audio stays locked to the data clock throughout, so you only eve
 - **`+` / `−`** — fine nudges: `+` if the TV is ahead (data forward ~0.5 s), `−` if it's
   behind (pause ~0.1 s so the picture catches up).
 
+### How to sync
+
+- **Practice / Qualifying** — sync to an exact minute (the track clock or session clock) by
+  pressing **Enter**. The app needs to be running **ahead** of the TV, so it can snap back to
+  that minute as the TV reaches it.
+- **Race** — get a **rough** sync before the race starts (snap to a whole minute), then an
+  **exact** sync at the **start of the formation lap** (the app must be ahead of the TV to
+  snap-sync). At **lights-out** you can get a near-perfect sync by snap-syncing the instant the
+  five red lights go out.
+- **Fine-tuning** — even at best, perfect sync is very hard. Use the **`+` / `−`** keys for
+  sub-second accuracy, so the engine sounds match what's showing on the video.
+
 ---
 
 ## The status bar
