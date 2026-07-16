@@ -4,7 +4,7 @@ A Formula 1 live-timing and replay application with synchronised audio commentar
 
 **Release 1.0.0** — June 7, 2026, day of the 2016 Monaco Grand Prix. Celebrating Mclaren's 1000th Grand Prix and 60th anniversary of their first Grand Prix.
 
-**Current release**: 2.0.0, 2026-07-18 — on the eve of the Belgian Grand Prix.
+**Current release**: 2.0.0 "Spa-Francorchamps", 2026-07-16 — on the eve of the Belgian Grand Prix weekend. See [Release history](#release-history).
 
 The server listens on port **1950**, an homage to the first F1 World Championship.
 
@@ -30,6 +30,7 @@ place to start.
 - [Caching](#caching)
 - [Replays vs live](#replays-vs-live)
 - [Architecture](#architecture)
+- [Release history](#release-history)
 - [Future developments](#future-developments)
 
 ---
@@ -563,6 +564,78 @@ Static asset URLs in templates are versioned automatically by file mtime via a J
 
 Telemetry data is streamed at roughly 3-4Hz. Position data is also streamed at roughly same frequency and these two samples are mapped together to assign a track position to each telemetry sample.
 
+## Release history
+
+Each release is named after the Grand Prix it was built for — like a team bringing a new
+upgrade package to a race weekend. Weekend dates are the 2026 F1 calendar.
+
+### v1.0.0 — "Monte Carlo" · 2026-06-07
+*Monaco Grand Prix (round 6, Monte Carlo — race day).*
+
+> Our first official race of the season, after a long winter of pre-season testing.
+
+The first public release: live capture + replay of F1 timing in the browser, the per-session
+UI (Practice / Qualifying / Race), synchronised commentary audio, the track map, standings
+with lap classification and tyre history, the telemetry tile, race control and championship.
+
+### v1.1.0 — "Barcelona upgrade" · 2026-06-14
+*Spanish Grand Prix (round 7, Barcelona — race day).*
+
+> After the winding streets of Monte Carlo, several upgrades are needed for Barcelona.
+
+A stability and correctness package: telemetry lap-numbering and fixed-width mini-sector fixes,
+qualifying per-part (Q1/Q2/Q3) correctness, render throttling to cure UI freezes, and
+knockout-zone / personal-best fixes.
+
+### v1.2.0 — "Spielberg upgrade" · 2026-06-25
+*Austrian Grand Prix weekend (round 8, Spielberg — race 28 June).*
+
+> In Austria, with such a small lap, any mistakes can be costly. Time to bring out a new upgrade.
+
+- In-app **settings** dialog (JSON store) replacing `.env`.
+- **Status footer + data-health monitor** (TIMING / TELEMETRY / POSITION over on-track cars).
+- Weather **Current Conditions** rename + live-captured **15/30/60-minute forecast** widget.
+- Home-footer redesign with the in-app docs page; `known_topics.json` topic catalog.
+
+### v1.2.1 — "Spielberg fixes" · 2026-06-27
+*Austrian Grand Prix weekend (round 8, Spielberg — Saturday, before qualifying).*
+
+> Interesting testing results in Austria on Friday. We had to do a few changes before Qualifying.
+
+An audio overhaul mid-weekend: unified live + replay audio via **MSE** (the client transmuxes
+ADTS-AAC → fMP4), exact-frame seeking, windowed loading, a steadier PDT anchor, and the manual
+**Delay** box.
+
+### v1.3.0 — "Silverstone upgrade" · 2026-06-29
+*Built after Austria, for the British Grand Prix (round 9, Silverstone — race 5 July).*
+
+> After the success in Austria it's time to bring out our newest upgrade, in time for Silverstone.
+
+- **Automatic audio sync** — commentary anchored to the broadcast PDT of ffmpeg's first
+  captured segment (the Delay box becomes a fallback).
+- **Robust live-edge cap** — data clock capped to the captured-file audio edge, with a
+  soft-couple stall-release.
+- **Video-sync race anchoring** — ENTER snaps to the scheduled start / lights-out. *(This
+  OCR-based video sync was replaced in v2.0 by [SYNC TO](#sync-to-a-tv-broadcast).)*
+
+### v2.0.0 — "Spa-Francorchamps" · 2026-07-16
+*Eve of the Belgian Grand Prix weekend (round 10, Spa-Francorchamps — race 19 July).*
+
+> We're in Spa! New livery, more powerful engine, better gearbox, improved aero. A lot of upgrades.
+
+The big one:
+
+- **Live Dashboard view** — two-driver gauges + lap-time forecast (P/Q) and a race battle
+  panel + zoomed self-centring mini-map.
+- **Auto-select** — server-picked watch pair per session type.
+- **Qualifying** lap-time forecast + predicted-position rework.
+- **Pecking-order predictor**; **pit-stop time-loss** (prediction + in-race measurement).
+- **Position reconstruction** through GPS/telemetry outages, with data-quality warnings.
+- **SYNC TO** replaces the OCR video sync; smooth marker interpolation; no-spoiler scrubber.
+- Split in-app **user guide** + **Help** modal.
+
+---
+
 ## Future developments
 
 Data analysis and predictions are the hardest part of this project. 
@@ -571,35 +644,7 @@ Not only is the available data very sparse, when compared to each teams own tele
 
 But, as much as possible, I'll work to enrich the analysis of the data and provide what I hope is a better viewing experience for the Formula 1 fans.
 
-### Delivered in v2.0
-
-- **Live Dashboard view** — a two-driver focus on the telemetry tile: live gauges + lap-time
-  forecast (practice/qualifying) and a battle panel + zoomed self-centring mini track-map
-  (race). See [Dashboard view](#dashboard-view).
-- **Auto-select** — server-computed recommendation of the two drivers most worth watching,
-  re-picked per session type as the session evolves (`DashboardAutoSelectProcessor`).
-- **Pecking-order predictor** — predicted team ranking and pace from practice and qualifying
-  running (`app/analysis/pecking_order.py`).
-- **Pit-stop measurement + time-loss** — per-stop stationary time, total time lost, SC/VSC
-  context, position change and rejoin traffic, plus a pre-race pit-lane time-loss estimate
-  (`PitStopLossProcessor`, `app/analysis/pit_loss_*`).
-- **Split user guide + player help** — the in-app guide (`/help`) is now one page per context,
-  and a **Player help** modal (status-footer link) documents the controls without pausing
-  playback.
-
-### Delivered in v1.3
-
-- **Automatic audio sync** — commentary is anchored to the broadcast `PROGRAM-DATE-TIME` of ffmpeg's exact first captured segment, so it aligns to the data clock automatically; the manual **Delay** box is now just a fallback (see [Audio stream](#audio-stream)).
-- **Unified live/replay audio** — MSE playback with the server serving multi-segment captures as one virtual concatenation, so a capture restart no longer breaks live audio and live behaves exactly like replay.
-- **Robust live-edge cap** — the data clock is capped to the captured-file audio edge (audio stays available at the live tail) with a soft-couple stall-release so an audio hiccup no longer freezes the session.
-- **Video-sync race anchoring** — ENTER snaps to the scheduled start or lights-out on a fixed pivot and resumes playback if paused. *(Superseded in v2.0: the OCR/screen-share video sync was removed in favour of the marker-based [SYNC TO](#sync-to-a-tv-broadcast).)*
-
-### Delivered in v1.2
-
-- **In-app settings** — JSON-backed settings dialog replacing `.env` (see Settings).
-- **Team radio replay** — clip capture + time-aligned playback with commentary ducking (see Team radio).
-- **Status footer + data-health monitor** — bottom status bar with stream/data-quality indicators (see Status footer + data-health monitor).
-- **Weather forecast** — live-captured 15/30/60-minute forecast widget (see Weather — current conditions + forecast).
+For what has shipped so far, see [Release history](#release-history) above.
 
 ### Planned features
 
