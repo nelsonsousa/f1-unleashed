@@ -28,6 +28,17 @@ from app.services.live_capture import live_capture
 
 logger = logging.getLogger(__name__)
 
+
+def _log_task_exception(task: "asyncio.Task") -> None:
+    """Done-callback for fire-and-forget tasks: surface an exception instead of
+    letting it vanish with the task. (M6)"""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("background task failed", exc_info=exc)
+
+
 TICK_INTERVAL = 0.016  # ~60fps tick rate
 
 # Live-edge audio/data sync (card 78). The live playback edge is capped at
@@ -105,6 +116,7 @@ class SessionEngine:
         self._data_live = True  # live: raw data edge advanced recently (stream light)
         self._preprocess_done = asyncio.Event()
         self._preprocess_error: Optional[str] = None   # set if the build failed (H5)
+        self._bg_tasks: set = set()   # keep refs to fire-and-forget tasks (M6)
         # Set once the offset-0 baseline (driverList, trackGeometry,
         # trackCircuit, sessionInfo) is committed to the DB. add_client waits
         # on this before the connect restore so the build can't be beaten to
@@ -327,14 +339,22 @@ class SessionEngine:
             # Tell any connected clients the build failed instead of silently
             # serving a truncated-but-"complete" replay (H5).
             if self._preprocess_error:
-                asyncio.create_task(self._broadcast({
+                self._spawn_bg(self._broadcast({
                     "topic": "error",
                     "data": {"message": f"Session build failed: {self._preprocess_error}"},
                 }))
 
+    def _spawn_bg(self, coro) -> None:
+        """Fire-and-forget a coroutine while keeping a reference (so it isn't GC'd
+        mid-flight) and logging any exception instead of swallowing it. (M6)"""
+        t = asyncio.create_task(coro)
+        self._bg_tasks.add(t)
+        t.add_done_callback(self._bg_tasks.discard)
+        t.add_done_callback(_log_task_exception)
+
     def _on_preprocess_progress(self, pct: float) -> None:
         """Callback from pre-processor."""
-        asyncio.create_task(self._broadcast({
+        self._spawn_bg(self._broadcast({
             "topic": "state:scan-progress",
             "data": {"pct": pct},
         }))
