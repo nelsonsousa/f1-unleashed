@@ -14,7 +14,7 @@ views — the player, audio, weather, TV sync, status bar — is covered on the
 The standings tile is the heart of the practice view. Per driver it shows:
 
 - **Position** and **driver**;
-- **Lap type** — each lap is classified (PUSH / COOL / LONG / OUT / IN / PIT / STOP), derived
+- **Lap type** — each lap is classified (PUSH / SLOW / OUT / PIT / STOP), derived
   from telemetry and lap-time deltas;
 - **Best lap** and **gap to leader**;
 - **Mini-sectors** and **S1 / S2 / S3** times, colour-coded (purple = session best, green =
