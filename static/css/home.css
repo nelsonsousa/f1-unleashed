@@ -758,6 +758,13 @@ header {
     border-bottom: 1px dotted var(--text-secondary);
 }
 .page-footer a:hover { color: var(--accent); border-color: var(--accent); }
+/* Trademark / non-affiliation notice — sits below the app-name line. */
+.footer-legal {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.68rem;
+    opacity: 0.8;
+}
 .page-footer a.update-available {
     color: #22c55e;
     border-bottom-color: #22c55e;

@@ -255,3 +255,9 @@ session from the home page removes it from disk.
 F1 Unleashed is a free, personal project built to make watching Formula 1 better. If it
 improves your race weekends, you can
 [buy me a coffee](https://buymeacoffee.com/f1unleashed).
+
+---
+
+*F1 Unleashed is an unofficial project and is not affiliated with, or endorsed by, Formula 1 or
+the FIA. F1, FORMULA 1 and related marks are trademarks of Formula One Licensing B.V.; team,
+driver, and tyre-supplier marks belong to their respective owners.*
