@@ -38,8 +38,10 @@ class CachedEvent:
 class CacheManager:
     """Manages reading and parsing the livetiming cache directory."""
 
-    def __init__(self, cache_dir: str = "./data/livetiming_cache"):
-        self.cache_dir = Path(cache_dir)
+    def __init__(self, cache_dir: Optional[str] = None):
+        # Default to the real livetiming-cache location, not a CWD-relative path (M3).
+        from app.config import CACHE_DIR
+        self.cache_dir = Path(cache_dir) if cache_dir else CACHE_DIR
 
     def get_cached_sessions(self) -> list[CachedEvent]:
         """
