@@ -119,6 +119,10 @@ class LiveCaptureService:
     def __init__(self, cache_dir: Optional[str] = None):
         # Default to the OS-appropriate cache location (card 25).
         self.cache_dir = Path(cache_dir) if cache_dir else CACHE_DIR
+        # SINGLE-CAPTURE INVARIANT: although captures are keyed by session_id, all the
+        # audio/radio/watchdog state below is single-slot on `self`, so only ONE capture
+        # may run at a time. start_live enforces this (a second concurrent start is
+        # refused). Only ever one live F1 session runs at once, so this is sufficient. (M5)
         self._captures: dict[str, dict] = {}  # session_id -> capture info
         self._tasks: dict[str, asyncio.Task] = {}
         self._audio_process: Optional[subprocess.Popen] = None
@@ -162,6 +166,16 @@ class LiveCaptureService:
         Returns:
             Session ID for tracking the capture.
         """
+        # Enforce the single-capture invariant (M5): the audio/radio/watchdog state is
+        # single-slot, so a second concurrent capture would clobber the first's audio.
+        # If one is already active, refuse and return the existing session.
+        for sid, task in self._tasks.items():
+            if not task.done():
+                logger.warning(
+                    "start_live refused: capture %s is already active; only one live "
+                    "capture runs at a time", sid)
+                return sid
+
         session_id = self._generate_session_id()
 
         # Build cache directory path
