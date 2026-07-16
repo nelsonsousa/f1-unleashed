@@ -14,10 +14,31 @@ Payload timestamp filtering:
 """
 
 import asyncio
+import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+_PROC_VERSION: Optional[str] = None
+
+
+def processor_code_version() -> str:
+    """A short hash of the processing code (all processors + this preprocessor).
+    It changes whenever any processor's source changes, so a transient DB built by
+    OLDER code is not reused on reconnect — replay always runs the latest code (M1).
+    Cached after first computation."""
+    global _PROC_VERSION
+    if _PROC_VERSION is None:
+        h = hashlib.sha1()
+        files = sorted((Path(__file__).parent / "processors").glob("*.py")) + [Path(__file__)]
+        for f in files:
+            try:
+                h.update(f.read_bytes())
+            except OSError:
+                pass
+        _PROC_VERSION = h.hexdigest()[:16]
+    return _PROC_VERSION
 
 import json as _json
 
@@ -479,6 +500,7 @@ class SessionPreProcessor:
             self._flush_buffer()
             self._db.set_meta("status", "complete")
             self._db.set_meta("message_count", str(self._message_count))
+            self._db.set_meta("processor_version", processor_code_version())
 
             # FP-based pecking-order prediction: independent of the (dormant) pace
             # chain above — reads the finalized session DB + the prior session's
