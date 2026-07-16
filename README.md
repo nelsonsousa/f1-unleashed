@@ -144,7 +144,7 @@ The application covers Practice / Qualifying / Race in usable form today. Active
 F1 Unleashed is a free, personal project built to make watching Formula 1 better. If it
 improves your race weekends, you can support it with a coffee:
 
-**[Buy me a coffee](https://www.buymeacoffee.com/nsousa)** <!-- TODO: confirm handle -->
+**[Buy me a coffee](https://buymeacoffee.com/f1unleashed)**
 
 ---
 

@@ -76,4 +76,4 @@ Each clip has Play / Stop; playing one ducks the commentary for its duration.
 ## Support the project
 
 Enjoying F1 Unleashed? You can
-[buy me a coffee](https://www.buymeacoffee.com/nsousa). <!-- TODO: confirm handle -->
+[buy me a coffee](https://buymeacoffee.com/f1unleashed).
