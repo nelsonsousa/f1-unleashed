@@ -104,6 +104,7 @@ class SessionEngine:
         self._terminal = False  # playback parked at the terminal end (→ finished)
         self._data_live = True  # live: raw data edge advanced recently (stream light)
         self._preprocess_done = asyncio.Event()
+        self._preprocess_error: Optional[str] = None   # set if the build failed (H5)
         # Set once the offset-0 baseline (driverList, trackGeometry,
         # trackCircuit, sessionInfo) is committed to the DB. add_client waits
         # on this before the connect restore so the build can't be beaten to
@@ -297,9 +298,14 @@ class SessionEngine:
             )
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as e:
             logger.exception(f"Pre-processing failed for {self._session_name}")
+            self._preprocess_error = str(e) or "pre-processing failed"
         finally:
+            # A failure swallowed inside run() sets preprocessor.failed but doesn't raise —
+            # surface it too, so a crashed build isn't presented as a finished session (H5).
+            if self._preprocessor.failed and not self._preprocess_error:
+                self._preprocess_error = "pre-processing failed"
             self._preprocessor.close()
             # Build finished: the scrubber now spans the whole session. Pin
             # _duration to the full scanned length (re-applying the post-
@@ -311,6 +317,13 @@ class SessionEngine:
             # (e.g. gate timeout, no matching SessionInfo), unblock any waiting
             # connect so it isn't held until its timeout.
             self._baseline_ready.set()
+            # Tell any connected clients the build failed instead of silently
+            # serving a truncated-but-"complete" replay (H5).
+            if self._preprocess_error:
+                asyncio.create_task(self._broadcast({
+                    "topic": "error",
+                    "data": {"message": f"Session build failed: {self._preprocess_error}"},
+                }))
 
     def _on_preprocess_progress(self, pct: float) -> None:
         """Callback from pre-processor."""
@@ -440,10 +453,19 @@ class SessionEngine:
                 "dataEdge": (self._data_edge_ms() or 0) / 1000.0,
                 "audioEdge": self._audio_end_offset(),
                 "scanProgress": 100.0 if self._preprocess_done.is_set() else 0.0,
+                "preprocessError": self._preprocess_error,
                 "cacheBytes": self._cache_bytes(),
                 "events": events,
             },
         })
+
+        # If the build failed, tell this (possibly late-joining) client too — the
+        # error broadcast fired at build time, before it connected (H5).
+        if self._preprocess_error:
+            await self._send_to_client(ws, {
+                "topic": "error",
+                "data": {"message": f"Session build failed: {self._preprocess_error}"},
+            })
 
         # For live mode: jump to the live edge ONLY on the first client
         # of an engine's lifetime. Later joins (page reload, second tab,
@@ -978,6 +1000,9 @@ class SessionEngine:
                     self._ended = True
                     return True
         except Exception:
+            # Don't silently swallow a DB error here — a persistent failure would keep
+            # returning "not ended" and loop a live session forever (H5, related).
+            logger.warning("session-ended check failed (DB read)", exc_info=True)
             return False
         return False
 
