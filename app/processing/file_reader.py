@@ -115,10 +115,19 @@ async def read_jsonl(
 
     with open(live_file, "r", encoding="utf-8") as f:
         while True:
+            pos = f.tell()
             line = f.readline()
 
+            # A tail-followed line without a trailing newline is a partial write — the
+            # appender hasn't flushed the '\n' yet. Rewind and treat it as EOF so the
+            # whole line is re-read once complete; never split/drop a torn JSON line (H7).
+            # (A complete-file scan, tail_follow=False, keeps a final newline-less line.)
+            if line and tail_follow and not line.endswith("\n"):
+                f.seek(pos)
+                line = ""
+
             if not line:
-                # EOF reached
+                # EOF reached (or a rewound partial line)
                 if session_ended or not tail_follow:
                     break
                 # Signal that initial file content has been consumed
