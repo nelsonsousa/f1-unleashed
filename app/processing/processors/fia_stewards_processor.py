@@ -82,6 +82,11 @@ class FiaStewardsProcessor(Processor):
             return
         self._bus.on("RaceControlMessages", self._handle_rcm)
         self._bus.on("SessionInfo", self._handle_session_info)
+        # Blue flags expire on the session clock (10 s), not on the next RCM — so a
+        # blue flag that is the last RCM of a stint/session still clears. The clock
+        # topic ticks periodically, giving a self-firing expiry that persists a
+        # cleared row (seek-safe). (H6)
+        self._bus.on("clock", self._handle_clock)
 
     # ── Handlers ───────────────────────────────────────────────────────
 
@@ -91,6 +96,18 @@ class FiaStewardsProcessor(Processor):
         # the reference point.
         if self._start_time is None and clock_time is not None:
             self._start_time = clock_time
+
+    def _handle_clock(self, data: Any, clock_time: datetime) -> None:
+        # On each clock tick, if any blue flag has passed its untilMs, re-emit the
+        # cleared per-driver list. _emit() strips expired blue flags before serialising,
+        # and only emits drivers whose list actually changed — so this fires exactly once
+        # per expiry, not every tick. (H6)
+        now_ms = self._session_ms(clock_time)
+        if now_ms is None:
+            return
+        if any(i.get("kind") == "blueFlag" and i.get("untilMs") is not None
+               and i["untilMs"] < now_ms for i in self._stack):
+            self._emit(clock_time)
 
     def _handle_rcm(self, data: Any, clock_time: datetime) -> None:
         if not isinstance(data, dict):
