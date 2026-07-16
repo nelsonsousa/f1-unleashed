@@ -2,7 +2,7 @@
 
 The Practice view is tuned for **free practice**: lots of timed-lap context, pace
 classification, tyre history and telemetry comparison. Everything shared with the other
-views — the player, audio, weather, video sync, status bar — is covered on the
+views — the player, audio, weather, TV sync, status bar — is covered on the
 [Main window](/help/main) page. This page covers what's specific to practice.
 
 ![Practice view](/static/images/screenshots/practice.png)
