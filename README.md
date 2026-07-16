@@ -6,7 +6,7 @@ A Formula 1 live-timing and replay application with synchronised audio commentar
 
 **Release 1.0.0** — June 7, 2026, day of the 2016 Monaco Grand Prix. Celebrating Mclaren's 1000th Grand Prix and 60th anniversary of their first Grand Prix.
 
-**Current release**: 2.0.0, 2026-07-18 — on the eve of the Belgian Grand Prix.
+**Current release**: 2.0.0 "Spa-Francorchamps", 2026-07-16 — on the eve of the Belgian Grand Prix weekend.
 
 For what it does and how it works, see [DOCUMENTATION.md](DOCUMENTATION.md). For a tour of the
 interface, the in-app **user guide** (the **Help (?)** icon on the home page) is split into the
