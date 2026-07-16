@@ -1425,9 +1425,12 @@ class SessionManager:
                                 if stripped_key == session_name:
                                     return session_dir
 
-        # Fallback: try legacy flat path
-        legacy_path = self._cache_dir / session_name
-        if legacy_path.exists():
+        # Fallback: try legacy flat path — contained under the cache dir so a caller-supplied
+        # "../…" name can't escape it (path-traversal guard; the route uses a {…:path} converter
+        # that permits "/" and ".."). Resolving collapses any "..".
+        base = self._cache_dir.resolve()
+        legacy_path = (self._cache_dir / session_name).resolve()
+        if legacy_path.is_relative_to(base) and legacy_path.exists():
             return legacy_path
 
         return None

@@ -578,9 +578,12 @@ class LiveTimingFetcher:
             if sk and session["name"].replace(f"{sk}_", "", 1) == cache_key:
                 return Path(session["path"])
 
-        # Fallback: try legacy flat path
-        legacy_path = self.cache_dir / cache_key
-        if legacy_path.exists():
+        # Fallback: try legacy flat path — but keep it contained under the cache dir so a
+        # caller-supplied "../…" key can't escape it (path-traversal guard; the route uses a
+        # {…:path} converter that permits "/" and ".."). Resolving collapses any "..".
+        base = self.cache_dir.resolve()
+        legacy_path = (self.cache_dir / cache_key).resolve()
+        if legacy_path.is_relative_to(base) and legacy_path.exists():
             return legacy_path
 
         return None
