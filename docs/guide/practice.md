@@ -28,24 +28,14 @@ The standings tile is the heart of the practice view. Per driver it shows:
 
 ---
 
-## Telemetry
+## Telemetry tile
 
-![Telemetry comparison](/static/images/screenshots/practice.png)
+The telemetry tile has two views, switched with the **Dashboard / Telemetry** toggle in its
+title bar. It **opens in the Dashboard view**.
 
-The telemetry tile plots **speed / RPM / gear / throttle / brake** traces, with a per-driver
-lap list so you can compare laps and drivers.
+### Dashboard view (default)
 
-- Show the **live** trace, the driver's **last** lap, their **best** lap, or a **selection**
-  of laps overlaid for comparison.
-- **Driver pills** and **lap pills** carry each driver's colour and TLA; selecting a lap
-  selects its driver automatically.
-- **Corner labels** along the x-axis line up with the circuit map, so you can read where on
-  the lap a gain or loss happens.
-
-### Dashboard view
-
-The telemetry tile has a **Dashboard** toggle that swaps the traces for a focused
-**two-driver** view: live gauges plus a mini telemetry viewer per driver.
+A focused **two-driver** view: live gauges plus a mini telemetry viewer per driver.
 
 - **Auto-select** (on by default) picks the two most interesting drivers for you. In
   practice that's the drivers **closest to finishing a push lap** — so you catch fast laps as
@@ -55,6 +45,20 @@ The telemetry tile has a **Dashboard** toggle that swaps the traces for a focuse
 
 <!-- SCREENSHOT (new): the telemetry tile in Dashboard mode during practice, two drivers on
      push laps with the mini speed-trace viewers. -->
+
+### Telemetry view
+
+Toggle to **Telemetry** for the trace chart: **speed / RPM / gear / throttle / brake** traces
+with a per-driver lap list, so you can compare laps and drivers.
+
+- Show the **live** trace, the driver's **last** lap, their **best** lap, or a **selection**
+  of laps overlaid for comparison.
+- **Driver pills** and **lap pills** carry each driver's colour and TLA; selecting a lap
+  selects its driver automatically.
+- **Corner labels** along the x-axis line up with the circuit map, so you can read where on
+  the lap a gain or loss happens.
+
+<!-- SCREENSHOT (new): the telemetry tile in Telemetry (trace) view comparing two drivers. -->
 
 ---
 

@@ -154,7 +154,7 @@ This project would not exist without the work others have done in this space:
 
 - **[FastF1](https://github.com/theOehrly/Fast-F1)** — Python toolkit for F1 data. Used for session schedule, event metadata, and as the canonical reference for many timing semantics.
 - **[Undercut-f1](https://github.com/JustAman62/undercut-f1)** — open-source F1 live-timing analysis app. A constant reference for processor design and live-feed interpretation.
-- **[MultiViewer API](https://api.multiviewer.app/)** — circuit metadata (= corners, marshal sectors, DRS zones, layout SVGs). The track maps are generated from this data.
+- **[MultiViewer API](https://api.multiviewer.app/)** — circuit metadata (= corners, marshal sectors, layout SVGs). The track maps are generated from this data.
 - **[OpenF1](https://openf1.org/)** — schedule + meeting data with circuit info URLs.
 - **[Rainbow.ai](https://rainbow.ai/)** — precipitation nowcast radar tiles.
 - **[Tesseract](https://tesseract-ocr.github.io/)** — OCR engine used for visual sync.

@@ -77,7 +77,7 @@ Optimised for free practice: lots of timed-lap context, pace classification, tyr
 - **Header** — local + session clock, track status, playback controls, audio controls.
 - **Standings** — position, driver, lap type, best lap, gap to leader, mini-sectors, S1/S2/S3 times, last lap time, tyre history, number of laps.
 - **Track map** — track SVG with the position of each driver, the Current Conditions weather panel, the rain-radar overlay, and a short-range weather forecast widget (In 15' / 30' / 60', with rain probability for wet slots).
-- **Telemetry** — multi-driver SPD / RPM / GEAR / THR-BRK traces with a per-driver lap list. Can show the live trace, last lap, best lap, and a selection of laps for comparison; in qualifying a toggle groups the lap list by part (Q1/Q2/Q3). Corner labels along the x-axis match the circuit map.
+- **Telemetry** — opens in the two-driver **Dashboard** view (see [Dashboard view](#dashboard-view)); a **Telemetry** toggle switches to multi-driver SPD / RPM / GEAR / THR-BRK traces with a per-driver lap list. The trace view can show the live trace, last lap, best lap, and a selection of laps for comparison; in qualifying a toggle groups the lap list by part (Q1/Q2/Q3). Corner labels along the x-axis match the circuit map.
 - **Race control** — RC message stream (with team-radio clips interleaved by time) plus a **Team Radio** tab listing every clip. Each clip has Play / Stop buttons; playing a clip ducks the commentary for its duration and then restores it.
 
 ### Qualifying view
@@ -96,13 +96,13 @@ Practice-like layout plus Q-specific features: knockout-zone indicator, lap-time
 Optimised for the race: gaps to leader and to the car ahead, tyre history, penalties, and championship standings.
 
 - **Standings** — like the Practice view but showing gaps to leader and to the car ahead. Also shows blue flags, penalties (under investigation and imposed), and black-and-white flags.
-- **Race control** — tabs: **RCM** (live RC message stream with team-radio clips interleaved by time); **Team Radio** (every captured clip, each with Play / Stop; playing a clip ducks the commentary); **Pecking order** (pre-race predicted team rank and pace); **Championship** (provisional driver + constructor standings updated from the current order).
+- **Race control** — tabs, in order: **Race control** (live RC message stream with team-radio clips interleaved by time); **Team Radio** (every captured clip, each with Play / Stop; playing a clip ducks the commentary); **Pecking order** (pre-race predicted team rank and pace); **Championship** (provisional driver + constructor standings updated from the current order); **Pit stops** (every in-race stop with stationary time, total time lost, SC/VSC context, position change and rejoin traffic).
 
 ### Common controls
 
 - **Scrubber** — drag to seek to any point in the session. Click an event marker to jump to ~60 s before that event. Marked events: 2' notice before the race; session start; session finished; safety car / virtual safety car; green flags; red flags.
 - **LIVE button** (live sessions only) — replaces the speed button; red when at the live edge, black when behind. Click to snap to the latest available state.
-- **Speed** — 1× during live; 1×–50× during replay.
+- **Speed** — 1× during live; 1×–10× during replay (cycles 1× / 2× / 5× / 10×).
 - **Audio controls** — mute, volume, a **Delay** box (`ss.SSS`; manual fallback offset — positive plays the commentary later, negative earlier), and a traffic light (green = audio in sync; yellow = seeking / loading; red = no audio for the current data-clock position).
 - **Status footer** — see [Status footer + data-health monitor](#status-footer-data-health-monitor).
 - **Video sync** — align the data clock to a TV broadcast you're watching alongside; see [Video sync](#video-sync).
@@ -110,8 +110,9 @@ Optimised for the race: gaps to leader and to the car ahead, tyre history, penal
 
 ### Dashboard view
 
-The telemetry tile has a **Dashboard** toggle that swaps the multi-driver traces for a focused
-**two-driver** view, tuned per session type:
+The telemetry tile **opens in the Dashboard view by default**; a **Telemetry** toggle switches
+to the multi-driver trace chart. The Dashboard is a focused **two-driver** view, tuned per
+session type:
 
 - **Practice / Qualifying** — live gauges per driver plus a mini telemetry (speed-trace) viewer.
   In qualifying the stopwatch shows a **lap-time forecast** (label `FORECAST`) while a lap is
@@ -141,7 +142,7 @@ The data stream is a sequence of typed messages on a server-side message bus, re
 | Header | Local time, session clock, track status, playback controls, audio controls (= mute, volume, sync indicator) |
 | Standings | Position; time gaps; penalty + flag indicators (R); timing sectors; lap classifications; tyre history, etc. |
 | Track map | Circuit SVG with per-driver positions, yellow-flag sector overlays, Current Conditions weather, rain radar overlay, and a short-range weather forecast widget |
-| Telemetry | Speed / RPM / gear / throttle / brake / DRS traces with lap selection, multi-driver compare, lap history |
+| Telemetry | Opens in the two-driver **Dashboard** view; a **Telemetry** toggle shows the multi-driver speed / RPM / gear / throttle / brake traces with lap selection and lap history |
 | Race control | RC message stream (with team-radio clips interleaved by time); a Team Radio tab; provisional championship standings |
 | Status footer | A slim bar at the bottom of the player: live/replay indicator, stream throughput (msg/s), total messages, on-disk cache size, audio bitrate, live download speeds, and the data-health monitor (timing / telemetry / position) |
 
@@ -295,13 +296,13 @@ The data directory holds:
 **Live:**
 - Triggered automatically when a live session is active.
 - SignalR connection writes to `live.jsonl` in append mode.
-- The client streams via Server-Sent Events.
+- The client streams over a WebSocket.
 - Speed control is locked to 1×.
 - "Live" indicator pinned to the latest data; user can rewind freely and then skip forwards to Live.
 
 **Replay:**
 - Loads processed data for the chosen cached session.
-- SSE replays messages at adjustable speed (1× – 50×).
+- The server replays messages at adjustable speed (1× – 10×).
 - Seeking lands on requested timestamp.
 - Audio follows the data clock automatically via the byte-0 PDT anchor; native (MSE) seeking lands audio together with the data.
 
@@ -361,32 +362,37 @@ Each processor subscribes to raw F1 topics and emits processed messages. Per-dri
 
 | Processor | Subscribes to | Emits |
 |-----------|----------------|-------|
-| `SessionInfoProcessor` | SessionInfo | `sessionInfo` (type, name, status, gmtOffset, meetingName) |
-| `SessionDataProcessor` | SessionData | `event` (Started/Finished), `sessionStatus` (Started/Aborted/Finished/Finalised), `sessionInfo` (qualifyingPart) |
+| `SessionInfoProcessor` | SessionInfo, SessionData | `sessionInfo` (type, name, status, gmtOffset), `meetingName`, `trackCircuit`, `sessionBadge`, `qualifyingPart` |
 | `ClockProcessor` | ExtrapolatedClock, SessionInfo | `clock` (utc, sessionTime, clockStatus) |
-| `DriverListProcessor` | DriverList | `driverList`, `standings` |
+| `DriverListProcessor` | DriverList | `driverList` |
+| `StandingsProcessor` | TimingData, DriverList, … | `standings`, `qualifyingSegment` |
 | `DriverStatusProcessor` | TimingData, DriverList | `driverStatus:{num}` (PIT/OUT/TRACK/RET/STOP) |
-| `TimingProcessor` | TimingData, TimingAppData | `driverGap:{num}`, `driverInt:{num}`, `driverTiming:{num}`, `driverTyres:{num}` |
-| `RaceControlProcessor` | RaceControlMessages | `raceControlMessages`, `yellowFlag`, `driverFlag` |
-| `TrackStatusProcessor` | TrackStatus, RaceControlMessages, sessionStatus (race) | `trackStatus` (race GREEN driven by `SessionStatus=Started`) |
+| `LapTimingProcessor` | TimingData, TimingAppData | `driverLaps:{num}`, `raceLaps`, `fastestLap`, `driverBestLapColour:{num}` |
+| `DriverGapProcessor` | TimingData | `driverGap:{num}`, `driverInt:{num}` |
+| `SectorTimingProcessor` | TimingData | `driverSectors:{num}`, `driverMiniSectors:{num}`, `driverSectorLap:{num}` |
+| `SectorColourProcessor` / `BestSectorProcessor` | driver sector topics | `driverSectorColour:{num}`, `driverBestSectors:{num}`, `driverBestSectorColour:{num}` |
+| `TyreProcessor` | TimingAppData, driverStatus | `currentTyre:{num}` (compound, isNew, age), `tyreHistory:{num}` |
+| `RaceControlProcessor` | RaceControlMessages | `raceControlMessage`, `yellowFlag`, `driverFlag` |
+| `FiaStewardsProcessor` | RaceControlMessages | `driverPenalties:{num}` |
+| `TrackStatusProcessor` | TrackStatus, RaceControlMessages, sessionStatus (race) | `trackStatus` (race GREEN driven by `SessionStatus=Started`), `event` |
 | `WeatherProcessor` | WeatherData | `weatherData` |
 | `PositionProcessor` | Position.z, SessionInfo | `trackGeometry`, `position` (all cars: x, y, distPct) |
-| `TelemetryProcessor` | CarData.z, position, driverStatus | `lapTelemetry:{num}` (DB), `~telemetry:{num}` (live only) |
-| `LapClassificationProcessor` | driverLastLap, driverStatus, etc. | `lapClassification:{num}` (PUSH/COOL/OUT/IN/LONG/RACE/WET/PIT/STOP) |
-| `PaceProcessor` | driverLastLap, lapClassification, tyres | `pace.json` post-session (per-driver and per-team quali + race pace) |
-| `TyreProcessor` | TimingAppData, driverStatus | `currentTyre:{num}` (compound, isNew, age) |
-| `LapPredictionProcessor` | lapTelemetry, driverLastLap, lapClassification | `lapPrediction:{num}` (predicted lap time + predicted position, updated as a lap runs) |
+| `TelemetryProcessor` | CarData.z, position, driverStatus | `telemetryLap:{num}:{lap}` (DB), `liveTelemetry:{num}` (live only) |
+| `LapDeltaProcessor` | driverLaps, lapClassification | `driverDelta:{num}` |
+| `LapClassificationProcessor` | driverLaps, driverStatus, telemetry, … | `driverLapClassification:{num}` (PUSH/COOL/OUT/IN/LONG/RACE/WET/PIT/STOP) |
+| `LapPredictionProcessor` | telemetryLap, driverLaps, lapClassification | `lapPrediction:{num}` (predicted lap time + predicted position, updated as a lap runs) |
+| `RacePaceProcessor` / `PQPaceProcessor` | driverLaps, lapClassification, tyres | `driverPaceColour:{num}` |
 | `PitStopLossProcessor` | driverStatus, driverGap/Int, tyres, trackStatus | `pitStopTimeLoss` (per in-race stop: stationary time, total loss, SC/VSC context, position change, rejoin traffic) |
-| `DashboardInfoProcessor` | standings, driverInt, driverStatus, currentTyre, lapPrediction, lapClassification | `dashInfo` (per-driver two-driver-panel state: position, interval, indicators, tyre, lap-time label) |
-| `DashboardAutoSelectProcessor` | position, standings, qualifyingPart, lapClassification, lapPrediction, driverInt, driverStatus, sessionInfo | `dashAutoSelect` ([num1, num2] — the recommended watch pair, per session type) |
-| `ChampionshipProcessor` | ChampionshipPrediction | `championshipPrediction` |
+| `DashboardInfoProcessor` | standings, driverInt, driverStatus, currentTyre, lapPrediction, driverLapClassification | `dashInfo:{num}` (two-driver-panel state: position, interval, indicators, tyre, lap-time label) |
+| `DashboardAutoSelectProcessor` | position, standings, qualifyingPart, driverLapClassification, lapPrediction, driverInt, driverStatus, sessionInfo | `dashAutoSelect` ([num1, num2] — the recommended watch pair, per session type) |
+| `ChampionshipProcessor` | ChampionshipPrediction, driverList | `championshipDrivers`, `championshipConstructors` |
 | `TeamRadioProcessor` | TeamRadio | `teamRadio` (per-clip play event at its broadcast Utc) |
 | `DataHealthProcessor` | TimingData, Position.z, CarData.z, Heartbeat, driverList, trackStatus, driverStatus | `dataHealth` (per-stream timing / telemetry / position health over on-track drivers) |
+| `HeartbeatProcessor` | Heartbeat | `heartbeat` |
 
-> The table lists the headline processors; the full chain (sector/timing/gap/pace
-> decomposition, FIA stewards, best-sector, heartbeat, etc.) lives under
-> `app/processing/processors/`, and post-session analysis (pecking order, pit-loss estimate &
-> measurement, tyre phases, strategy) under `app/analysis/`.
+> The table lists the active processors; each is registered in
+> `app/processing/preprocessor.py`. Post-session analysis (pecking order, pit-loss estimate &
+> measurement, tyre phases, strategy) lives under `app/analysis/`.
 
 **Playback engine**
 
@@ -395,7 +401,7 @@ Each processor subscribes to raw F1 topics and emits processed messages. Per-dri
 | `SessionEngine` | `app/processing/session.py` | DB-driven playback: streams messages at clock rate; instant seek via `get_state_at()` |
 | `SessionManager` | `app/processing/session.py` | Global singleton managing `SessionEngine` instances |
 | `PlaybackClock` | `app/processing/clock.py` | Server-side clock with speed control + display delay |
-| WS Router | `app/routers/livetiming_stream.py` | `WS /ws/{name}` endpoint |
+| WS Router | `app/routers/livetiming_stream.py` | `WS /api/v1/livetiming/ws/{name}` endpoint |
 
 **Seeking**
 
@@ -458,8 +464,8 @@ CREATE TABLE processing_meta (
 **Topic naming convention**
 
 - Global topics: `trackStatus`, `weatherData`, `clock`, `standings`, etc.
-- Per-driver topics: `driverTiming:44`, `driverGap:1`, `driverStatus:63`, `lapClassification:16`, etc.
-- Live-only (= not saved to DB): `~telemetry:44` is emitted during playback but not persisted.
+- Per-driver topics: `driverLaps:44`, `driverGap:1`, `driverStatus:63`, `driverLapClassification:16`, etc.
+- Live-only (= not saved to DB): `liveTelemetry:44` is emitted during playback but not persisted.
 
 **Topic catalog (`known_topics.json`)**
 
@@ -538,5 +544,12 @@ But, as much as possible, I'll work to enrich the analysis of the data and provi
 - **Pit windows** (SC / VSC opportunity detection).
 - **Pit-strategy** predictions and simulations.
 - **Dry/wet** tyre crossover identification.
+
+---
+
+## Support the project
+
+F1 Unleashed is a free, personal project built to make watching Formula 1 better. If it
+improves your race weekends, you can support it: [buy me a coffee](https://buymeacoffee.com/f1unleashed).
 
 

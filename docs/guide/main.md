@@ -46,7 +46,7 @@ controls differ.
 | | **Live** | **Replay** |
 |---|---|---|
 | Starts | Automatically when a session goes live | When you click **Open** on a cached session |
-| Speed | Locked to **1×** | **1×–50×** |
+| Speed | Locked to **1×** | **1×–10×** (1× / 2× / 5× / 10×) |
 | Edge | A **LIVE** button snaps you to the latest data | — |
 | Seeking | Rewind freely, then jump back to Live | Seek anywhere, instantly |
 | Audio | Follows the data clock automatically | Follows the data clock automatically |
@@ -80,7 +80,7 @@ in the middle, and a slim **status bar** along the bottom.
 - **Event markers** — ticks on the scrubber. Click one to jump to **~60 s before** that
   event. Marked events: the 2-minute notice, session start, session finish, safety car /
   VSC, green flags and red flags.
-- **Speed** — 1×–50× in replay; 1× live.
+- **Speed** — 1×–10× in replay (cycles 1× / 2× / 5× / 10×); 1× live.
 - **LIVE button** (live only) — red at the live edge, black when you've rewound. Click to
   snap back to the latest data.
 
