@@ -588,7 +588,9 @@ qualifying per-part (Q1/Q2/Q3) correctness, render throttling to cure UI freezes
 knockout-zone / personal-best fixes.
 
 ### v1.2.0 — "Spielberg upgrade" · 2026-06-25
-*Austrian Grand Prix weekend (round 8, Spielberg — race 28 June).*
+*Austrian Grand Prix weekend (round 8, Spielberg) — shipped before FP1. The Austrian weekend
+was a release frenzy: an upgrade before running, fixes on Saturday, and the next upgrade after
+the race.*
 
 > In Austria, with such a small lap, any mistakes can be costly. Time to bring out a new upgrade.
 
@@ -598,7 +600,7 @@ knockout-zone / personal-best fixes.
 - Home-footer redesign with the in-app docs page; `known_topics.json` topic catalog.
 
 ### v1.2.1 — "Spielberg fixes" · 2026-06-27
-*Austrian Grand Prix weekend (round 8, Spielberg — Saturday, before qualifying).*
+*Austrian Grand Prix weekend — the Saturday, before qualifying.*
 
 > Interesting testing results in Austria on Friday. We had to do a few changes before Qualifying.
 
@@ -607,7 +609,8 @@ ADTS-AAC → fMP4), exact-frame seeking, windowed loading, a steadier PDT anchor
 **Delay** box.
 
 ### v1.3.0 — "Silverstone upgrade" · 2026-06-29
-*Built after Austria, for the British Grand Prix (round 9, Silverstone — race 5 July).*
+*Shipped the day after the Austrian GP race — the "Silverstone upgrade" for the British Grand
+Prix (round 9, race 5 July).*
 
 > After the success in Austria it's time to bring out our newest upgrade, in time for Silverstone.
 
