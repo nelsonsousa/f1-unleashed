@@ -38,6 +38,7 @@ Distribution of the processed data is therefore not allowed. Streaming of the cl
 - [Caching](#caching)
 - [Replays vs live](#replays-vs-live)
 - [Architecture](#architecture)
+- [Power-user & developer notes](#power-user-developer-notes)
 - [Release history](#release-history)
 - [Future developments](#future-developments)
 
@@ -568,6 +569,32 @@ Static asset URLs in templates are versioned automatically by file mtime via a J
 | 5 | Brake (0-100) |
 
 Telemetry data is streamed at roughly 3-4Hz. Position data is also streamed at roughly same frequency and these two samples are mapped together to assign a track position to each telemetry sample.
+
+## Power-user & developer notes
+
+Features that exist but aren't called out in the main tour:
+
+- **Update-available indicator** — the home page polls the latest GitHub release
+  (`GET /api/v1/version` → `check_latest_release()`) and shows an "update available" hint
+  when the running version is behind.
+- **URL parameters** — `?session=<name>` opens a session directly; `?mode=live` follows the
+  live edge and `?mode=start` opens from the start (the home page's "from start" links use it).
+- **Interactive focus** — clicking a car marker on the track map, or a standings row, focuses
+  that driver in the two-driver Dashboard.
+- **Best-sector toggle** — clicking a sector header in standings swaps that `S{n}` column for
+  its best-sector `BS{n}` value (and back).
+- **Client-side persistence** — the commentary **volume** is remembered across sessions
+  (`localStorage`); every session deliberately **opens muted** (browser autoplay policy); the
+  season schedule is cached with a 24 h TTL.
+- **Audio-sync debug trace** — `localStorage.setItem('audioSyncDebug','1')` then reload emits
+  `[audio-sync]` console logs across the audio path.
+- **Developer `window.*` hooks** — inter-module handles: `F1Dashboard.{focus,select}`,
+  `F1TrackMap.{mountMini,setMiniFocus,unmountMini}`, and audio helpers
+  (`skipAudioRelative`, `resetAudioToSync`, …).
+- **Debug / utility routes** — `GET /api/v1/livetiming/meetings/{year}/debug` (raw feed),
+  `GET /health`, `GET /browser` (301 → `/`).
+
+---
 
 ## Release history
 

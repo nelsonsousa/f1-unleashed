@@ -77,7 +77,13 @@ controls differ.
 | Audio | Follows the data clock automatically | Follows the data clock automatically |
 
 The app polls F1's schedule and **starts live capture on its own** — no action needed. When
-a session is live you'll see it flagged on the home page.
+a session is live you'll see it flagged on the home page. When a newer version is available,
+the home page shows an **update hint**.
+
+> **Handy interactions:** click a **car on the track map** or a **standings row** to focus that
+> driver in the Dashboard; click a **sector header** in standings to swap `S{n}` for its
+> best-sector `BS{n}`. Commentary volume is remembered between sessions (each session opens
+> muted).
 
 ---
 
