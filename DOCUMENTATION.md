@@ -48,7 +48,7 @@ Distribution of the processed data is therefore not allowed. Streaming of the cl
 
 F1Unleashed connects to the F1 SignalR feed (live) or replays cached session data (historic), runs pre-processing on the raw timing stream, and visualises everything in a browser. It captures broadcast audio in parallel, aligns it to the data stream, and ships a session-aware UI tuned per session type (Practice / Qualifying / Race).
 
-Lap classification (= PUSH / COOL / LONG / OUT / IN / PIT / RACE / WET / STOP) is derived from a combination of telemetry data and lap-time deltas, with absolute-delta fallback when the telemetry feed has outages.
+Lap classification (Practice / Qualifying: PUSH / SLOW / OUT / PIT / STOP / CHECKERED; race laps aren't labelled) is derived from telemetry and lap-time deltas — a lap is SLOW when its elapsed-to-here is >10% over the reference lap to the same point.
 
 ---
 
@@ -458,7 +458,7 @@ Each processor subscribes to raw F1 topics and emits processed messages. Per-dri
 | `PositionProcessor` | Position.z, SessionInfo | `trackGeometry`, `position` (all cars: x, y, distPct) |
 | `TelemetryProcessor` | CarData.z, position, driverStatus | `telemetryLap:{num}:{lap}` (DB), `liveTelemetry:{num}` (live only) |
 | `LapDeltaProcessor` | driverLaps, lapClassification | `driverDelta:{num}` |
-| `LapClassificationProcessor` | driverLaps, driverStatus, telemetry, … | `driverLapClassification:{num}` (PUSH/COOL/OUT/IN/LONG/RACE/WET/PIT/STOP) |
+| `LapClassificationProcessor` | driverLaps, driverStatus, telemetry, … | `driverLapClassification:{num}` (PUSH / SLOW / OUT / PIT / STOP / CHECKERED; `""` for race laps) |
 | `LapPredictionProcessor` | telemetryLap, driverLaps, lapClassification | `lapPrediction:{num}` (predicted lap time + predicted position, updated as a lap runs) |
 | `RacePaceProcessor` / `PQPaceProcessor` | driverLaps, lapClassification, tyres | `driverPaceColour:{num}` |
 | `PitStopLossProcessor` | driverStatus, driverGap/Int, tyres, trackStatus | `pitStopTimeLoss` (per in-race stop: stationary time, total loss, SC/VSC context, position change, rejoin traffic) |
