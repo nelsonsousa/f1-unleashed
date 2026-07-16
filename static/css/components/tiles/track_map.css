@@ -18,6 +18,21 @@
   stroke-linejoin: miter;
 }
 
+/* Mini-map (dashboard clone) — its own line palette: centre line = background,
+   outline = text-primary. */
+.mini-map .track { stroke: var(--bg-primary); }
+.mini-map .track-outline { stroke: var(--text-primary); }
+
+/* Mini-map outage notice — the same message as the main map, centred in the small box.
+   Two classes (higher specificity) so it wins over the base .pos-warning defined later. */
+.pos-warning.mini-pos-warning {
+    top: 50%;
+    bottom: auto;
+    transform: translate(-50%, -50%);
+    max-width: 94%;
+    text-align: center;
+}
+
 /* Marker styles - hidden by default */
 .corner-marker,
 .marshal-sector-marker,
