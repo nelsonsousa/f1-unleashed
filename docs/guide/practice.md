@@ -67,6 +67,13 @@ with a per-driver lap list, so you can compare laps and drivers.
 The circuit map shows every car's live position, with yellow-flag sectors highlighted and
 the weather/rain-radar overlay (see [Weather](/help/main#weather)).
 
+Car positions come from **live timing's GPS position data**, which has known issues — it can be
+unreliable, **especially around the pit lane**, and suffers occasional **outages**. When GPS
+data is missing or unreliable, the app does its best to **reconstruct the position from the
+telemetry** and match the calculated speed trace to a known circuit signature. This algorithm is
+**still in its early stages and lacks reliability**, so positions are always shown but will
+suffer from **frequent corrections**.
+
 ---
 
 ## Race control & team radio

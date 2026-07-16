@@ -633,7 +633,10 @@ The big one:
 - **Auto-select** — server-picked watch pair per session type.
 - **Qualifying** lap-time forecast + predicted-position rework.
 - **Pecking-order predictor**; **pit-stop time-loss** (prediction + in-race measurement).
-- **Position reconstruction** through GPS/telemetry outages, with data-quality warnings.
+- **Position reconstruction (early)** — when GPS position data is missing or unreliable
+  (notably around the pit lane), estimate position from telemetry by matching the speed trace to
+  a circuit signature. Still unreliable and prone to frequent corrections; surfaced with
+  data-quality warnings.
 - **SYNC TO** replaces the OCR video sync; smooth marker interpolation; no-spoiler scrubber.
 - Split in-app **user guide** + **Help** modal.
 
