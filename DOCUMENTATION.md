@@ -284,6 +284,18 @@ playhead**, with a small label showing the mode and target. Markers are context-
 - **`−`** — the TV is behind: pause ~0.1 s so the picture catches up.
 - **Space** — play / pause both streams; **M** — mute.
 
+**How to sync**
+
+- **Practice / Qualifying** — you can sync to an exact minute (the track clock or the session
+  clock) by pressing **ENTER**. The app must be running **ahead** of the TV, so it can snap
+  *back* to the minute the moment the TV reaches it.
+- **Race** — get a **rough** sync before the race starts (snap to a whole minute as above), then
+  an **exact** sync at the **start of the formation lap** — again, the app needs to be ahead of
+  the TV to snap-sync. For a **near-perfect** result, snap-sync at **lights-out**: press ENTER
+  the instant the five red lights go out.
+- **Fine-tuning** — even with best efforts, perfect sync is very hard. Use the **`+` / `−`** keys
+  for sub-second accuracy, until the engine sounds match what's showing on the video.
+
 ---
 
 ## Login process
