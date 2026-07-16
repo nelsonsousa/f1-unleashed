@@ -61,6 +61,10 @@ class F1AuthService:
 
         data = {"subscription_token": token}
         AUTH_DATA_FILE.write_text(json.dumps(data, indent=2))
+        try:
+            AUTH_DATA_FILE.chmod(0o600)   # owner-only — it's a subscription JWT (L5)
+        except OSError:
+            pass
         logger.info("Auth token saved successfully")
 
     def _decode_token(self, token: str) -> Optional[dict]:

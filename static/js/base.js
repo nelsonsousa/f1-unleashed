@@ -165,7 +165,13 @@ const messageBus = {
         ws.onopen = () => { this._reconnectAttempts = 0; };
 
         ws.onmessage = (event) => {
-            const msg = JSON.parse(event.data);
+            let msg;
+            try {
+                msg = JSON.parse(event.data);   // don't let one malformed frame kill the socket (L11)
+            } catch (e) {
+                console.warn('Dropping malformed WS message', e);
+                return;
+            }
             const topic = msg.topic;
             const data = msg.data;
 
