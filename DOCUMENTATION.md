@@ -13,13 +13,15 @@ instructions see [README.md](README.md). For an end-user walkthrough, the in-app
 guide** (served at `/help`, split into the main window + one page per session type) is the
 place to start.
 
-**Disclaimer**: This is a personal project, to improve my own experience while watching Formula 1. It's not intended to infringe on any organisation's copyright or trademarks. 
+**Disclaimer**: F1Unleashed is an unofficial, non-commercial project. It is not associated with, endorsed by, or affiliated with Formula 1, Formula One Licensing B.V., Formula One Management, or the FIA. It is a personal project, to improve my own experience while watching Formula 1, and is not intended to infringe on any organisation's copyright or trademarks.
+
+F1, FORMULA 1, FORMULA ONE, GRAND PRIX and related marks are trademarks of Formula One Licensing B.V. Team, driver, sponsor, and tyre-supplier (e.g. Pirelli) names and marks belong to their respective owners; they are used here only descriptively.
 
 This project is intended for personal and educational use only, and solely by persons legally allowed to stream and download live timing data and Formula 1 TV coverage.
 
 While Formula 1's timing data is publicly available (with some limitations), it's still protected by copyright and its distribution is almost certainly a violation of copyright law in most jurisdictions.
 
-Distribution of the processed data is therefore not allowed. Streaming of the client UI to others is nor permitted. Sharing of formula1.com credentials is a violation of Formula 1's usage policy. 
+Distribution of the processed data is therefore not allowed. Streaming of the client UI to others is not permitted. Sharing of formula1.com credentials is a violation of Formula 1's usage policy. 
 
 
 ## Contents

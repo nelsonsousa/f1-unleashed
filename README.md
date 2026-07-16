@@ -4,6 +4,8 @@
 
 A Formula 1 live-timing and replay application with synchronised audio commentary and per-session deep analysis.
 
+> **Unofficial project — not affiliated with Formula 1 or the FIA.** F1Unleashed is a personal, non-commercial viewer and is not associated with, endorsed by, or affiliated with Formula 1, Formula One Licensing B.V., Formula One Management, or the FIA. See [Trademarks & disclaimer](#trademarks--disclaimer).
+
 **Release 1.0.0** — 7 June 2026, the day of the 2026 Monaco Grand Prix: McLaren's 1000th Grand Prix start. McLaren's first-ever race was also a Monaco Grand Prix, in 1966 — so the day marked both 1000 races and 60 years of McLaren in Formula 1.
 
 **Current release**: 2.0.0 "Spa-Francorchamps", 2026-07-16 — on the eve of the Belgian Grand Prix weekend.
@@ -158,6 +160,16 @@ This project would not exist without the work others have done in this space:
 - **[OpenF1](https://openf1.org/)** — schedule + meeting data with circuit info URLs.
 - **[Rainbow.ai](https://rainbow.ai/)** — precipitation nowcast radar tiles.
 - **[Formula 1](https://www.formula1.com/)** — the underlying timing feed, broadcast audio, and on-track data. F1Unleashed is a viewer + analysis layer, not a redistribution of any of the above.
+
+---
+
+## Trademarks & disclaimer
+
+F1Unleashed is an unofficial, non-commercial project for personal use. It is **not** associated with, endorsed by, or affiliated with Formula 1, Formula One Licensing B.V., Formula One Management, the FIA, or any Formula 1 team, driver, or sponsor.
+
+F1, FORMULA 1, FORMULA ONE, the F1 logo, FIA F1 WORLD CHAMPIONSHIP, GRAND PRIX and related marks are trademarks of Formula One Licensing B.V. Team, driver, sponsor, circuit, and tyre-supplier (e.g. Pirelli) names and marks are the property of their respective owners. They are used here only descriptively, to identify the sport and the data being displayed.
+
+F1Unleashed does not redistribute Formula 1 timing data, broadcast audio, or video. It is a viewer/analysis layer meant to be run by a single user on their own machine, for data that user is entitled to access. See the [full copyright & usage note](DOCUMENTATION.md#disclaimer).
 
 ---
 
