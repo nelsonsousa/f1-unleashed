@@ -789,6 +789,12 @@ class LiveTimingFetcher:
                 if response.status == 404:
                     logger.debug(f"Topic {topic} not found (404)")
                     return []
+                if response.status == 403:
+                    # The livetiming CDN (CloudFront WAF) 403s VPN/datacenter IPs — give
+                    # the actionable cause instead of a bare "failed to fetch" (L10).
+                    logger.warning(
+                        f"{topic}: 403 from the livetiming CDN — it blocks VPN/datacenter "
+                        "IPs (CloudFront WAF); retry from a residential connection.")
                 response.raise_for_status()
                 raw_data = await response.text()
         except aiohttp.ClientError as e:

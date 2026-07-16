@@ -936,10 +936,15 @@ class SessionEngine:
         self._raw_stream_task = None
 
     async def _set_speed(self, speed: float) -> None:
-        """Change playback speed."""
+        """Change playback speed — clamped to the documented replay range 1x-10x, so a
+        raw WS command can't drive the clock to 0.1x/60x (L1)."""
         if not self._clock:
             return
-        self._clock.speed = speed
+        try:
+            speed = float(speed)
+        except (TypeError, ValueError):
+            return
+        self._clock.speed = max(1.0, min(speed, 10.0))
         await self._broadcast_status()
 
     # ── Live Edge (data ∩ audio) ──
