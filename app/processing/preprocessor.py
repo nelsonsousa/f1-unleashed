@@ -217,6 +217,7 @@ class SessionPreProcessor:
         self._db = SessionDatabase(session_path)
         self._bus = SessionMessageBus()
         self._processors: list[Processor] = []
+        self.failed = False   # set True if run() hits an unhandled error (H5)
 
         self._output_buffer: list[tuple[int, str, str]] = []  # (offset, topic, json)
         self._last_emitted: dict[str, str] = {}  # topic -> last JSON string
@@ -511,6 +512,7 @@ class SessionPreProcessor:
         except Exception:
             logger.exception(f"Pre-processing error: {self._session_path.name}")
             self._db.set_meta("status", "error")
+            self.failed = True   # surfaced to the client by the caller (H5)
 
     def _filter_message(self, msg: RawMessage) -> Optional[RawMessage]:
         """Apply timestamp filtering to a message. Returns None to drop it."""
