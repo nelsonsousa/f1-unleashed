@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 # FastF1 auth file location
 AUTH_DATA_DIR = Path(os.path.expanduser("~/Library/Application Support/fastf1"))
 AUTH_DATA_FILE = AUTH_DATA_DIR / "f1auth.json"
-JWKS_URL = "https://api.formula1.com/static/jwks.json"
 
 
 @dataclass
@@ -73,45 +72,6 @@ class F1AuthService:
         except jwt.exceptions.DecodeError as e:
             logger.warning(f"Failed to decode token: {e}")
             return None
-
-    def _verify_token(self, token: str) -> bool:
-        """Verify token signature using F1's JWKS."""
-        try:
-            # Get the key ID from the token header
-            header = jwt.get_unverified_header(token)
-            kid = header.get("kid")
-
-            if not kid:
-                logger.warning("Token has no key ID")
-                return False
-
-            # Fetch JWKS
-            response = requests.get(JWKS_URL, timeout=10)
-            response.raise_for_status()
-            jwks = response.json()
-
-            # Find the matching key
-            key_data = None
-            for key in jwks.get("keys", []):
-                if key.get("kid") == kid:
-                    key_data = key
-                    break
-
-            if not key_data:
-                logger.warning(f"No matching key found for kid: {kid}")
-                return False
-
-            # Convert JWK to public key
-            from jwt.algorithms import RSAAlgorithm
-            public_key = RSAAlgorithm.from_jwk(json.dumps(key_data))
-
-            # Verify the token
-            jwt.decode(token, public_key, algorithms=["RS256"])
-            return True
-
-        except Exception as e:
-            logger.warning(f"Token verification failed: {e}")
-            return False
 
     def get_status(self) -> AuthStatus:
         """Get current authentication status."""

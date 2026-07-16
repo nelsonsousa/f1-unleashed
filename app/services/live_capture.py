@@ -252,7 +252,6 @@ class LiveCaptureService:
             #   2. _SessionEnd message arrived in jsonl,
             #   3. fallback: 30 min since last non-heartbeat message.
             self._last_non_heartbeat_ts = time.monotonic()
-            self._session_end_seen = False
             self._finalised_seen = False       # no-restart guard (Finalised → Ends window)
             self._ends_seen = False            # SessionStatus=Ends → stop audio (once)
             self._radio_static_path = None
@@ -302,9 +301,6 @@ class LiveCaptureService:
                         # Track non-heartbeat activity for the 30-min fallback.
                         if topic and topic != "Heartbeat":
                             self._last_non_heartbeat_ts = time.monotonic()
-                        # Hard session-end signal from F1.
-                        if topic == "_SessionEnd":
-                            self._session_end_seen = True
                         # Finalised → no-restart guard only: we keep recording
                         # through the wind-down (podium/interviews) but must not
                         # let the stale-watchdog restart ffmpeg. Audio stops on
@@ -607,66 +603,6 @@ class LiveCaptureService:
                 ledger.rename(cache_path / f"pdt_ledger.{idx:03d}.json")
             except Exception as e:
                 logger.warning(f"Failed to rotate pdt_ledger: {e}")
-
-    @staticmethod
-    def _compute_hls_start(master_url: str, now: datetime) -> Optional[str]:
-        """Compute the true wall-clock start time of HLS audio.
-
-        Fetches the HLS playlist, finds #EXT-X-PROGRAM-DATE-TIME (a running
-        counter since stream creation), and maps the first available segment
-        to wall-clock time: start = now - program_date_time_seconds.
-        """
-        import requests as _req
-        try:
-            # Fetch master playlist to find the audio sub-playlist URL
-            base_url = master_url.rsplit('/', 1)[0] + '/'
-            resp = _req.get(master_url, timeout=5)
-            if resp.status_code != 200:
-                return None
-
-            # Find highest bitrate audio playlist
-            sub_url = None
-            for line in resp.text.splitlines():
-                line = line.strip()
-                if line.endswith('.m3u8') and not line.startswith('#'):
-                    sub_url = line
-
-            if not sub_url:
-                return None
-
-            # Fetch sub-playlist
-            if not sub_url.startswith('http'):
-                sub_url = base_url + sub_url
-            resp2 = _req.get(sub_url, timeout=5)
-            if resp2.status_code != 200:
-                return None
-
-            # Find #EXT-X-PROGRAM-DATE-TIME
-            for line in resp2.text.splitlines():
-                if line.startswith('#EXT-X-PROGRAM-DATE-TIME:'):
-                    ts_str = line.split(':', 1)[1].strip()
-                    pdt = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
-                    pdt_naive = pdt.replace(tzinfo=None)
-
-                    # Detect format: if PDT is close to now (within 1 hour),
-                    # it's real UTC. Otherwise it's a running counter from epoch.
-                    diff = abs((now - pdt_naive).total_seconds())
-                    if diff < 3600:
-                        # Real UTC — the first segment in the playlist IS at this time
-                        audio_start = pdt_naive
-                        logger.info(f"HLS audio start (real UTC): {audio_start.isoformat()}Z")
-                    else:
-                        # Running counter — subtract from now
-                        pdt_seconds = (pdt_naive - datetime(1970, 1, 1)).total_seconds()
-                        audio_start = now - timedelta(seconds=pdt_seconds)
-                        logger.info(f"HLS audio start (counter): {audio_start.isoformat()}Z "
-                                    f"(PDT={pdt_seconds:.0f}s)")
-                    return audio_start.isoformat() + 'Z'
-
-            return None
-        except Exception as e:
-            logger.warning(f"Failed to compute HLS start time: {e}")
-            return None
 
     @staticmethod
     def _scheduled_start_utc(session_info: dict):

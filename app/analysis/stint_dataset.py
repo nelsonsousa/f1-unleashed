@@ -26,8 +26,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from app.processing.database import transient_db_path
-from app.processing.preprocessor import SessionPreProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -296,43 +294,3 @@ def extract_session(
             ))
     return rows
 
-
-async def build_and_extract(session_path: Path, force: bool = True) -> list[LapRow]:
-    """Build the transient DB, open it read-only, extract rows. force=False reuses an
-    already-complete DB (fast re-runs over the cached season without rebuilding)."""
-    year_s, event, session_folder = session_path.parts[-3:]
-    year = int(year_s)
-    session = _clean_session_name(session_folder)
-    session_type = _session_type_for(session_folder)
-
-    pre = SessionPreProcessor(session_path, "")
-    try:
-        await pre.run(force=force)
-        db = transient_db_path(session_path)
-        conn = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
-        try:
-            return extract_session(conn, year, event, session, session_type)
-        finally:
-            conn.close()
-    finally:
-        pre.close()
-
-
-async def season_dataset(year: int, force: bool = True) -> list[LapRow]:
-    """Enumerate race + sprint sessions for `year` and extract every lap. force=False
-    reuses cached transient DBs from a prior run (no rebuild)."""
-    from app.services.cache_manager import cache_manager
-
-    rows: list[LapRow] = []
-    for event in cache_manager.get_cached_sessions():
-        if event.year != year:
-            continue
-        for s in event.sessions:
-            folder = Path(s.cache_path).name
-            if not _is_race_or_sprint(folder):
-                continue
-            print(f"[season_dataset] {year} {event.location} {folder} …", flush=True)
-            session_rows = await build_and_extract(Path(s.cache_path), force=force)
-            print(f"[season_dataset]   → {len(session_rows)} laps", flush=True)
-            rows.extend(session_rows)
-    return rows

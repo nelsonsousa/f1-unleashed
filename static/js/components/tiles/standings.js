@@ -77,19 +77,6 @@
         return `/static/images/tyres/${c}-${isNew ? 'new' : 'used'}.svg`;
     }
 
-    function parseLapMs(s) {
-        if (!s) return null;
-        const m = s.match(/^(\d+):(\d+)\.(\d+)$/);
-        if (!m) return null;
-        return parseInt(m[1]) * 60000 + parseInt(m[2]) * 1000
-             + parseInt(m[3].padEnd(3, '0').slice(0, 3));
-    }
-
-    function formatGap(ms) {
-        const s = ms / 1000;
-        return (s >= 0 ? '+' : '') + s.toFixed(3);
-    }
-
     function ensureDriver(num) {
         if (!state.drivers[num]) {
             state.drivers[num] = {
@@ -828,16 +815,6 @@
         // red is reserved for the elimination zone above). atcmh1cL.
         const band = e.gapBand ? ` c-${e.gapBand}` : '';
         return `<span class="gap${band}">${txt}</span>`;
-    }
-
-    function penaltiesCell(num) {
-        const e = state.driverData[num] || {};
-        const items = [];
-        if (e.underInvestigation) items.push('<span class="pen pen-investigation">⚠</span>');
-        if (e.penalty) items.push(`<span class="pen pen-${(e.penalty.type || '').toLowerCase()}">${e.penalty.label || e.penalty}</span>`);
-        if (e.trackLimitsWarning) items.push('<span class="pen pen-tl">TL</span>');
-        if (e.blackFlag) items.push('<span class="pen pen-black">BLK</span>');
-        return `<span class="pens">${items.join('')}</span>`;
     }
 
     function lapCountCell(num) {
