@@ -19,7 +19,7 @@ import os
 import signal
 import subprocess
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -484,7 +484,7 @@ class LiveCaptureService:
         self._stop_audio(cache_path)
 
         output_path = cache_path / "commentary.aac"
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # Rotate existing audio (from a prior ffmpeg run in this session)
         # so we don't truncate it when ffmpeg opens its output for write.
@@ -642,7 +642,7 @@ class LiveCaptureService:
             self._start_audio(self._RDIO_AUDIO_URL, cache_path)
             return
         lead_at = start_utc - timedelta(minutes=10)
-        delay = (lead_at - datetime.utcnow()).total_seconds()
+        delay = (lead_at - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds()
         if delay <= 0:
             logger.info(f"Audio start {lead_at.isoformat()}Z already passed — starting now")
             self._start_audio(self._RDIO_AUDIO_URL, cache_path)
@@ -893,7 +893,7 @@ class LiveCaptureService:
             except Exception:
                 pass
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         if file_start_utc is None:
             return max(0, file_size - rewind_bytes), now.isoformat() + "Z"
 

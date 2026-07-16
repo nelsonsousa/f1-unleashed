@@ -252,6 +252,7 @@ async def live_session_monitor():
                                 _active_live_capture["event_name"] = None
                                 _active_live_capture["session_type"] = None
                                 _chequered_first_seen.pop(sid, None)
+                                _sent_notifications.clear()   # match the 204 stop path (L4)
 
                         elif live_resp.status == 204:
                             # Definitive "no session live" — safe to stop.
