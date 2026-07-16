@@ -11,7 +11,7 @@
 (function () {
     'use strict';
 
-    const COFFEE_URL = 'https://www.buymeacoffee.com/nsousa';   // TODO: confirm handle
+    const COFFEE_URL = 'https://buymeacoffee.com/f1unleashed';
 
     // Content is a static HTML string — the player controls never change per
     // session, so there is nothing to compute.
