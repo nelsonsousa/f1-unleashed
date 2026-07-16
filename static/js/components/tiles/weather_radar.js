@@ -304,8 +304,7 @@
 
     // ── Weather forecast widget (card 118) ───────────────────────────
     // Captured live (Open-Meteo minutely_15) and indexed by the playback clock.
-    // Shows In 15'/30'/60'; if the condition is unchanged across the window,
-    // collapses to current + 60'. Rain probability shown for wet slots.
+    // Shows Now + In 15'/30'/60'. Rain probability shown for wet slots.
     let _lastForecastFetchMs = 0;
     async function fetchForecast() {
         // Replay: the file already holds every snapshot, so one fetch is enough.
@@ -353,8 +352,7 @@
         return covering || latest || snaps[0];
     }
 
-    // A weather-icon row: Now (current condition) + 15'/30'/60' forecast. If the
-    // condition is unchanged across the window it collapses to Now + 60'. No title.
+    // A weather-icon row: Now (current condition) + 15'/30'/60' forecast. No title.
     function updateForecast() {
         const el = document.getElementById('weatherForecast');
         if (!el) return;

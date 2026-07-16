@@ -26,7 +26,7 @@
             <h4>Audio</h4>
             <div class="phelp-row"><span class="k">Mute / volume</span><span class="v">Control the broadcast commentary. Team-radio clips duck the commentary while they play.</span></div>
             <div class="phelp-row"><span class="k">Delay box</span><span class="v"><code>ss.SSS</code> manual offset — positive plays commentary later, negative earlier. Rarely needed: audio is auto-anchored to the data clock.</span></div>
-            <div class="phelp-row"><span class="k">Traffic light</span><span class="v"><span class="phelp-dot g"></span>in sync &nbsp; <span class="phelp-dot y"></span>seeking / loading &nbsp; <span class="phelp-dot r"></span>no audio for this moment.</span></div>
+            <div class="phelp-row"><span class="k">Traffic light</span><span class="v"><span class="phelp-dot g"></span>in sync &nbsp; <span class="phelp-dot y"></span>seeking / loading &nbsp; <span class="phelp-dot r"></span>audio expected but not ready. (A genuine content gap shows no light.)</span></div>
         </div>
 
         <div class="phelp-section">
