@@ -110,8 +110,8 @@ async def live_session_monitor():
 
     Also:
     - Refreshes schedule every hour to detect changes.
-    - Checks token expiry once every 24h. Only alerts if token expires
-      within 24h AND next session is more than 18h away.
+    - Checks token expiry once every 24h. Only alerts if the token expires
+      within 24h AND the next session starts within ~6h before expiry.
     """
     import aiohttp
 

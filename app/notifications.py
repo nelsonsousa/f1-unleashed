@@ -1,7 +1,7 @@
 """Outbound dev/ops notifications via a configured webhook.
 
-Reads NOTIFICATION_WEBHOOK_URL from the environment (see .env / .env.example)
-and posts to ntfy / Discord / Slack / generic JSON depending on the URL.
+Reads the webhook URL from settings (`ntfy.webhookUrl`) and posts to
+ntfy / Discord / Slack / generic JSON depending on the URL.
 No-op (returns False) when no webhook is configured.
 """
 
