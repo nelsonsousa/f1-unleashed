@@ -189,8 +189,8 @@ The data stream is a sequence of typed messages on a server-side message bus, re
 | Standings | Position; time gaps; penalty + flag indicators (R); timing sectors; lap classifications; tyre history, etc. |
 | Track map | Circuit SVG with per-driver positions, yellow-flag sector overlays, Current Conditions weather, rain radar overlay, and a short-range weather forecast widget |
 | Telemetry | Opens in the two-driver **Dashboard** view; a **Telemetry** toggle shows the multi-driver speed / RPM / gear / throttle+brake (one combined channel) traces with lap selection and lap history |
-| Race control | RC message stream (with team-radio clips interleaved by time); a Team Radio tab; provisional championship standings |
-| Status footer | A slim bar at the bottom of the player: live/replay indicator, stream throughput (msg/s), total messages, on-disk cache size, audio bitrate, live download speeds, and the data-health monitor (timing / telemetry / position) |
+| Race control | Tabs: Race control (RC message stream + interleaved team-radio clips); Team Radio; Pecking order; Championship; Pit stops (race) |
+| Status footer | A slim bar at the bottom of the player: live/replay indicator, stream throughput (msg/s), total messages, on-disk cache size, audio bitrate, data/audio buffered ahead of the playhead, live download speeds, and the data-health monitor (timing / telemetry / position) |
 
 The frontend listens via a message bus pattern:
 
@@ -217,7 +217,7 @@ Audio commentary from `rdio.formula1.com` is captured as HLS (`ffmpeg -c copy`),
 
 The audio controls in the header are: a traffic light (sync state), mute, volume, and a **Delay** box (`ss.SSS`, ±) — a manual fallback offset, rarely needed now that the byte-0 anchor is automatic.
 
-During live capture a watchdog restarts the commentary ffmpeg process if its HLS download stalls (= the output file stops growing). This is distinct from the silence-based watchdog that detects the end of a session.
+During live capture a watchdog restarts the commentary ffmpeg process if its HLS download stalls (= the output file stops growing). Audio capture stops on `SessionStatus=Ends` (with a max-duration backstop) — there is no separate silence-based end detector.
 
 ---
 
@@ -236,7 +236,7 @@ Transcription is not implemented (deferred).
 
 ## Status footer + data-health monitor
 
-A slim status bar (= about half the header height) sits at the bottom of the session/player window. It shows the live/replay indicator, stream throughput (msg/s) with a traffic light, total messages, on-disk cache size, the commentary audio bitrate, and — for live sessions only — the data and audio download speeds.
+A slim status bar (= about half the header height) sits at the bottom of the session/player window. It shows the live/replay indicator, stream throughput (msg/s) with a traffic light, total messages, on-disk cache size, the commentary audio bitrate, the data and audio buffered ahead of the playhead (Data buf / Audio buf), and — for live sessions only — the data and audio download speeds.
 
 It also hosts the **data-health monitor**: three coloured boxes — TIMING, TELEMETRY, POSITION — driven by the server-side `DataHealthProcessor` (`dataHealth` topic). Only drivers currently **on track** count (status TRACK / OUT; RET / STOP / PIT / FINISHED / DSQ are excluded, since a parked or retired car legitimately stops sending data).
 
