@@ -3,13 +3,38 @@
 F1 Unleashed lets you **replay** (or watch **live**) a Formula 1 session in your browser,
 with synchronised commentary audio, team radio, weather, and per-session analysis. This
 page covers everything that is the **same in every session**: the home page, and the
-playback controls, audio, weather, video sync, status bar and settings that surround every
+playback controls, audio, weather, TV sync, status bar and settings that surround every
 session view. For what each session type adds, see the **Practice**, **Qualifying** and
 **Race** pages of this guide.
 
 > New to the player controls mid-session? The status bar has a **Player help** link (bottom
 > right) that opens the same control reference as a pop-up you can read while playback keeps
 > running.
+
+---
+
+## Getting started — install & first run
+
+You need **Python 3.13**, **ffmpeg** (with `ffprobe`) on your `PATH`, and a **formula1.com**
+subscription for live sessions and full data.
+
+```bash
+git clone <repo-url> f1unleashed && cd f1unleashed
+python3.13 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+./f1unleashed.sh start                 # then open http://localhost:1950
+```
+
+There's no config file to edit — everything has a default, so it runs straight away. Then, in
+order:
+
+1. **Log in.** Click **Login** on the home page (or run `python -m app.cli.login`). A browser
+   window handles the F1 login; the token lasts about 72 hours.
+2. **Set your options** in the settings dialog (gear, home-page footer). The two most worth
+   setting up front: the **rain-radar key** (for the weather radar) and, if you want alerts, a
+   **notifications webhook**. See [Settings](#settings) below for the rest.
+3. **Get a session.** Open a past event on the calendar, pick a session, click **Download**,
+   then **Open** to replay it. Live sessions are captured automatically.
 
 ---
 
@@ -83,6 +108,8 @@ in the middle, and a slim **status bar** along the bottom.
 - **Speed** — 1×–10× in replay (cycles 1× / 2× / 5× / 10×); 1× live.
 - **LIVE button** (live only) — red at the live edge, black when you've rewound. Click to
   snap back to the latest data.
+- **Keyboard** — **Space** play/pause, **← / →** skip 10 s back/forward, **M** mute. (The
+  SYNC TO / fine-nudge keys are under [Sync to a TV broadcast](#sync-to-a-tv-broadcast).)
 
 ### Audio — commentary & team radio
 
@@ -120,21 +147,21 @@ was predicted at the time.
 
 ---
 
-## Video sync — line the data up with a TV broadcast
+## Sync to a TV broadcast
 
-If you're watching the TV broadcast alongside the app, **Video sync** aligns the data clock
-to the picture. It is one-shot and on demand — it briefly screen-shares your muted TV, reads
-the on-screen clock or lap counter, seeks the data once to match, and releases the capture.
+If you're watching the TV broadcast alongside the app, you can line the data up with the
+picture. There's no screen-sharing — you seek to a shared reference point the TV also shows,
+then fine-tune. Audio stays locked to the data clock throughout, so you only ever move the
+*data*.
 
-- **P/Q** — reads the on-screen session clock and seeks to match.
-- **Race** — watches the lap counter for a few seconds and aligns to the lap change (use once
-  the race is green; click near a lap change).
-- **Enter** — jump to the start instant (next green in P/Q; scheduled start or lights-out in
-  the race) and resume if paused.
-- **`+` / `−`** — fine nudges once you've used Video sync: `+` if the TV is ahead, `−` if it's
-  behind.
-
-Audio stays locked to the data clock throughout, so you only ever align the *data* to the TV.
+- **SYNC TO** (header button) — seeks to the previous reference marker: a whole **clock
+  minute** in practice/qualifying, or the current **lap start** in the race (the **Lap 1**
+  marker jumps to lights-out). A small label shows the mode and target; the button greys out
+  when its marker is ahead of the playhead.
+- **Enter** — jump to the SYNC TO marker and resume if paused.
+- **`←` / `→`** — skip 10 s back / forward.
+- **`+` / `−`** — fine nudges: `+` if the TV is ahead (data forward ~0.5 s), `−` if it's
+  behind (pause ~0.1 s so the picture catches up).
 
 ---
 
@@ -162,18 +189,26 @@ The slim bar along the bottom reports the health of the stream:
 
 ![Settings dialog](/static/images/screenshots/settings.png)
 
-The settings gear on the **home-page footer** opens the settings dialog. Highlights:
+The settings gear on the **home-page footer** opens the settings dialog. Everything has a
+sensible default, so the app runs out of the box — change these when you want to:
 
-- **Cache location** — where captured sessions are stored (a native folder picker; offers to
-  move your existing cache).
-- **Per-session capture toggles** — download & play commentary, download team radio, and keep
-  downloaded files, set independently for practice / qualifying / race.
-- **Team-radio autoplay** — play radio clips automatically during replay (off by default).
-- **Rain-radar key** — the precipitation-overlay API key.
-- **Notifications** — a webhook (e.g. ntfy) for session-live / pre-session / token-expiry
-  alerts, plus favourite drivers and teams.
+- **Rain-radar key** — paste a (free) Rainbow.ai API key to switch on the precipitation
+  overlay. Leave it blank and everything works except the rain radar.
+- **Cache location** — where captured/downloaded sessions are stored. Point it at a roomy or
+  external drive if you'll keep a lot; changing it offers to move your existing cache and needs
+  a restart.
+- **Per-session capture toggles** (practice / qualifying / race) — for each session type,
+  whether to **download & play commentary**, **download team radio**, and **keep downloaded
+  files** afterwards. Turn things off to save disk or skip audio for a type.
+- **Team-radio autoplay** — play radio clips automatically as they air during replay (off by
+  default; otherwise play them on demand from the Team Radio tab).
+- **Notifications** — a webhook URL (ntfy / Discord / Slack) plus which alerts to send
+  (**session-live**, **pre-session** with a lead time, **token-expiry**). Add **favourite
+  drivers** (TLAs or numbers) and **teams** to highlight them.
+- **Token-expiry warning** — how many hours before the F1 login expires you're warned.
 
-Everything has a sensible default, so the app runs out of the box.
+Only the rain-radar key and (optionally) the notifications webhook usually need a value; the
+rest are on/off preferences.
 
 ---
 

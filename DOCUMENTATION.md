@@ -17,13 +17,14 @@ place to start.
 
 - [Legal disclaimer](#legal-disclaimer)
 - [What it does](#what-it-does)
+- [Installation & first-run configuration](#installation-first-run-configuration)
 - [The interface](#the-interface)
 - [Data stream + visuals](#data-stream-visuals)
 - [Audio stream](#audio-stream)
 - [Team radio](#team-radio)
 - [Status footer + data-health monitor](#status-footer-data-health-monitor)
 - [Weather — current conditions + forecast](#weather-current-conditions-forecast)
-- [Video sync](#video-sync)
+- [Sync to a TV broadcast](#sync-to-a-tv-broadcast)
 - [Login process](#login-process)
 - [Settings](#settings)
 - [Caching](#caching)
@@ -49,6 +50,50 @@ Distribution of the processed data is therefore not allowed. Streaming of the cl
 F1Unleashed connects to the F1 SignalR feed (live) or replays cached session data (historic), runs pre-processing on the raw timing stream, and visualises everything in a browser. It captures broadcast audio in parallel, aligns it to the data stream, and ships a session-aware UI tuned per session type (Practice / Qualifying / Race).
 
 Lap classification (= PUSH / COOL / LONG / OUT / IN / PIT / RACE / WET / STOP) is derived from a combination of telemetry data and lap-time deltas, with absolute-delta fallback when the telemetry feed has outages.
+
+---
+
+## Installation & first-run configuration
+
+### Requirements
+
+- **Python 3.13** (a venv is recommended).
+- **`ffmpeg` + `ffprobe`** on the `PATH` (commentary HLS capture + duration probing).
+- A **formula1.com subscription** for live sessions and premium audio/telemetry (downloading
+  historic timing data may work without one).
+- A modern browser — **Firefox** is the reference; others should work.
+- macOS is the tested platform; Linux/Windows should run but the live-sync path is less
+  exercised.
+
+### Install
+
+```bash
+git clone <repo-url> f1unleashed && cd f1unleashed
+python3.13 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+./f1unleashed.sh start                 # server on http://localhost:1950
+```
+
+There is **no `.env`** — every setting has a default, so the app runs immediately. Open
+`http://localhost:1950`.
+
+### First-run configuration
+
+1. **Log in** — click **Login** on the home page (or run `python -m app.cli.login`). A browser
+   window handles the F1 login; the token lasts ~72 h. Required for live sessions and full data.
+2. **Open the settings dialog** — the gear on the **home-page footer** (right side). At minimum,
+   consider setting:
+   - **Rain-radar key** (`rainbowAiApiKey`) — needed for the precipitation overlay; the free
+     Rainbow.ai tier is enough. Without it, everything works except the rain radar.
+   - **Cache location** (`cacheDir`) — point it at a roomy drive if you'll keep many sessions.
+   - **Notifications** (`ntfy.webhookUrl`) — set a webhook (ntfy/Discord/Slack) to get
+     session-live / pre-session / token-expiry alerts; add favourite drivers/teams under
+     `alerts`.
+   - **Per-session capture toggles** — leave commentary/team-radio/keep-files on unless you want
+     to save disk or skip audio for a session type.
+   See [Settings](#settings) for the full reference and defaults.
+3. **Get some data** — on the home page, open a past event, pick a session, and **Download** it
+   (runs in the background); then **Open** to replay. Live sessions capture automatically.
 
 ---
 
@@ -105,7 +150,7 @@ Optimised for the race: gaps to leader and to the car ahead, tyre history, penal
 - **Speed** — 1× during live; 1×–10× during replay (cycles 1× / 2× / 5× / 10×).
 - **Audio controls** — mute, volume, a **Delay** box (`ss.SSS`; manual fallback offset — positive plays the commentary later, negative earlier), and a traffic light (green = audio in sync; yellow = seeking / loading; red = no audio for the current data-clock position).
 - **Status footer** — see [Status footer + data-health monitor](#status-footer-data-health-monitor).
-- **Video sync** — align the data clock to a TV broadcast you're watching alongside; see [Video sync](#video-sync).
+- **SYNC TO** — seek the data clock to a shared reference marker to line up with a TV broadcast; see [Sync to a TV broadcast](#sync-to-a-tv-broadcast).
 - **Player help** — a link on the right of the status footer opens a modal with the playback-control reference; it is a client-only overlay, so it does not pause playback.
 
 ### Dashboard view
@@ -212,22 +257,31 @@ The forecast is **captured live**: `ForecastCapture` (`app/services/weather_fore
 
 ---
 
-## Video sync
+## Sync to a TV broadcast
 
-Align the data clock to a live TV broadcast you are watching alongside. It is **one-shot, on demand** — clicking **Video sync** briefly screen-shares the (muted) TV, runs OCR (Tesseract.js) over the shared frame, seeks the data once to match, then releases the capture (zero idle cost). It is layout-agnostic: it crops large black borders and sub-frames the region of interest rather than assuming a fixed position. Audio stays auto-synced to the data clock via the PDT anchor, so you only ever align the *data* clock to the TV moment.
+Line the data clock up with a live TV broadcast you are watching alongside. There is **no
+screen-sharing or OCR** — you sync to a shared reference point that the TV also shows, then
+fine-tune by ear/eye. Audio stays auto-anchored to the data clock via the PDT anchor, so you
+only ever move the *data* clock.
 
-- **P/Q (button)** — OCRs the on-screen session clock once and seeks the data to match (<1 s).
-- **Race (button)** — captures the lap counter ~1×/s for ~10 s, finds the frame where it ticks up, and aligns that to the data's lap-cross. Click near a lap change. (It needs laps running, so this is the tool to use once the race is green.)
+**SYNC TO** (header) — a single button that seeks to the **previous marker at/before the
+playhead**, with a small label showing the mode and target. Markers are context-dependent:
+
+- **Pre/post-session** — the previous whole **wall-clock minute** (`hh:MM`); mode `CLOCK`.
+- **Practice / Qualifying running** — the previous whole **session-clock minute** (`MM:ss`);
+  mode `CLOCK`.
+- **Race** — the start of the **current lap** (`Lap N`); mode `LAP`. The **Lap 1** marker
+  targets **lights-out** and is the one exception that can seek *forward* of the playhead (so
+  it also works during the pre-race window / when the TV is ahead). The button is greyed when
+  its marker is beyond the playhead.
 
 **Keyboard**
 
-- **ENTER** (always available) — jump to a start instant, and resume playback if paused.
-    - *P/Q*: the next GREEN flag (session start / restart).
-    - *Race*: the **scheduled start** (= formation-lap start, when the analog Rolex hand hits the hour) if the clock is within the first minute after the scheduled time; otherwise **lights-out** (press as the five lights go out). The snap is start-phase only (≤ lap 1); after that ENTER just resumes.
+- **ENTER** — jump to the current SYNC TO marker and resume playback if paused.
+- **`←` / `→`** — skip 10 s back / forward (works playing or paused).
 - **`+` / `=`** — the TV is ahead: nudge the data forward ~0.5 s.
 - **`−`** — the TV is behind: pause ~0.1 s so the picture catches up.
-
-The `+` / `−` nudges become available once you have used the Video sync button at least once in the session.
+- **Space** — play / pause both streams; **M** — mute.
 
 ---
 
@@ -243,18 +297,29 @@ Access to non-public F1 data (live session feeds, premium audio, telemetry) requ
 
 ## Settings
 
-All runtime configuration lives in a single JSON store, `settings.json`, under the OS data home (`app/settings.py`). `.env` and `python-dotenv` are gone — every value has a default, so the app runs out of the box, and the store is edited via an in-app **settings dialog** reached from the gear on the **home-page footer** (right side) only — not the session window.
+All runtime configuration lives in a single JSON store, `settings.json`, under the OS data home (`app/settings.py`). `.env` and `python-dotenv` are gone — **every value has a default, so the app runs out of the box** — and the store is edited via an in-app **settings dialog** reached from the gear on the **home-page footer** (right side) only, not the session window.
 
-Settings cover:
+**Full reference** (key → default → purpose):
 
-- **debug** — keep transient/ephemeral artefacts instead of deleting them.
-- **cacheDir** — the livetiming-cache location (see below).
-- **rainbowAiApiKey** — the precipitation-radar overlay key.
-- **Per-session-type capture toggles** (practice / qualifying / race): download + play commentary audio; download team radio; keep downloaded files after the session.
-- **teamRadioAutoplay** — auto-play radio clips during replay (default off; on-demand otherwise).
-- **ntfy** — webhook URL plus which notifications to send (session-live / pre-session / token-expiry) and the pre-session lead time in minutes.
-- **alerts** — favourite drivers (TLAs / car numbers) and teams (short names, case-insensitive).
-- **auth** — token-expiry warning hours + check interval.
+| Setting | Default | Purpose / when to change |
+|---------|---------|--------------------------|
+| `debug` | `false` | Keep transient/ephemeral artefacts (scratch DBs, temp files) instead of deleting them on disconnect. Turn on only when troubleshooting. |
+| `cacheDir` | `""` (OS data home) | The livetiming-cache root. Point it at a large/external drive if you cache many sessions (see note below). |
+| `rainbowAiApiKey` | `""` | Rainbow.ai key for the precipitation-radar overlay. **Set this to see the rain radar**; without it the radar layer is simply absent (everything else works). Free tier (30k calls/month) is plenty. |
+| `audio.{practice,qualifying,race}` | `true` | Per session type: download + play the commentary audio. Turn a type off to skip commentary capture/playback for it. |
+| `teamRadio.{…}` | `true` | Per session type: download team-radio clips. |
+| `keepFiles.{…}` | `true` | Per session type: keep downloaded files after the session (turn off to auto-clean and save disk). |
+| `teamRadioAutoplay` | `false` | Auto-play radio clips as they air during replay. Off = play on demand from the Team Radio tab. |
+| `ntfy.webhookUrl` | `""` | Push-notification endpoint (ntfy / Discord / Slack / generic). **Set this to receive alerts**; empty = no notifications. |
+| `ntfy.sessionLive` | `true` | Notify when a session goes live. |
+| `ntfy.preSession` | `true` | Notify before a session starts. |
+| `ntfy.preSessionLeadMinutes` | `60` | How many minutes ahead the pre-session alert fires. |
+| `ntfy.tokenExpiry` | `true` | Warn when the F1 login token is close to expiring. |
+| `ntfy.repeat` | `false` | Repeat notifications rather than fire once. |
+| `alerts.favouriteDrivers` | `[]` | TLAs or car numbers to highlight (case-insensitive). |
+| `alerts.favouriteTeams` | `[]` | Team names to highlight (substring match, case-insensitive). |
+| `auth.expiryWarningHours` | `24` | Warn when the token expires within this many hours. |
+| `auth.expiryCheckIntervalSeconds` | `3600` | How often to check token expiry. |
 
 The `cacheDir` setting points **directly** at the livetiming-cache root: the chosen folder holds the season directories (`2026/`, `2025/`, …) with no extra `livetiming_cache` level. Everything else — `settings.json`, `known_topics.json`, `rainbow_usage.json`, `tmp`, `analysis`, and the weather-radar cache — stays at the fixed OS data home. Changing the cache location offers to **move** the existing cache and requires a restart; a native folder-picker is provided.
 
@@ -527,7 +592,7 @@ But, as much as possible, I'll work to enrich the analysis of the data and provi
 - **Automatic audio sync** — commentary is anchored to the broadcast `PROGRAM-DATE-TIME` of ffmpeg's exact first captured segment, so it aligns to the data clock automatically; the manual **Delay** box is now just a fallback (see [Audio stream](#audio-stream)).
 - **Unified live/replay audio** — MSE playback with the server serving multi-segment captures as one virtual concatenation, so a capture restart no longer breaks live audio and live behaves exactly like replay.
 - **Robust live-edge cap** — the data clock is capped to the captured-file audio edge (audio stays available at the live tail) with a soft-couple stall-release so an audio hiccup no longer freezes the session.
-- **Video-sync race anchoring** — ENTER snaps to the scheduled start or lights-out on a fixed pivot and resumes playback if paused (see [Video sync](#video-sync)).
+- **Video-sync race anchoring** — ENTER snaps to the scheduled start or lights-out on a fixed pivot and resumes playback if paused. *(Superseded in v2.0: the OCR/screen-share video sync was removed in favour of the marker-based [SYNC TO](#sync-to-a-tv-broadcast).)*
 
 ### Delivered in v1.2
 

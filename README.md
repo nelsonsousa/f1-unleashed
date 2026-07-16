@@ -20,7 +20,7 @@ main window and one page per session type.
 
 ## Built with Claude Code — analysis was human-driven
 
-The implementation (= Python services, processors, JavaScript components, OCR/sync plumbing) was written with [Claude Code](https://claude.com/claude-code). The F1-domain reasoning — what to measure, what and how to classify, what to look out for, how to display the data, 3rd party services to overlay, etc. came from the human in charge. The model is the implementer; the human is the analyst.
+The implementation (= Python services, processors, JavaScript components, sync plumbing) was written with [Claude Code](https://claude.com/claude-code). The F1-domain reasoning — what to measure, what and how to classify, what to look out for, how to display the data, 3rd party services to overlay, etc. came from the human in charge. The model is the implementer; the human is the analyst.
 
 ---
 
@@ -111,7 +111,7 @@ The application covers Practice / Qualifying / Race in usable form today. Active
 - **Automatic audio sync** — commentary auto-anchors to the broadcast PDT of ffmpeg's first captured segment, so it aligns to the data clock with no manual step (the Delay box is now just a fallback).
 - **Unified live/replay audio** — MSE playback; the server serves multi-segment (restarted) captures as one virtual stream, so live behaves exactly like replay.
 - **Robust live-edge audio** — audio stays available at the live tail, and a capture stall no longer freezes the session.
-- **Video-sync race anchoring** — ENTER snaps to the scheduled start or lights-out and resumes if paused.
+- **Race start anchoring** — ENTER jumps to lights-out (the SYNC TO "Lap 1" marker) and resumes if paused. *(v2.0 replaced the OCR/screen-share video sync with the marker-based SYNC TO.)*
 
 ### Recently shipped (v1.2)
 
@@ -157,7 +157,6 @@ This project would not exist without the work others have done in this space:
 - **[MultiViewer API](https://api.multiviewer.app/)** — circuit metadata (= corners, marshal sectors, layout SVGs). The track maps are generated from this data.
 - **[OpenF1](https://openf1.org/)** — schedule + meeting data with circuit info URLs.
 - **[Rainbow.ai](https://rainbow.ai/)** — precipitation nowcast radar tiles.
-- **[Tesseract](https://tesseract-ocr.github.io/)** — OCR engine used for visual sync.
 - **[Formula 1](https://www.formula1.com/)** — the underlying timing feed, broadcast audio, and on-track data. F1Unleashed is a viewer + analysis layer, not a redistribution of any of the above.
 
 ---
