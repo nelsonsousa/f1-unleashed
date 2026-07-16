@@ -93,6 +93,14 @@ def _move_cache_contents(old: Path, new: Path) -> list[str]:
     asyncio.to_thread (H4)."""
     moved: list[str] = []
     new.mkdir(parents=True, exist_ok=True)
+    # Cross-device moves are a real copy, so verify the destination has room before
+    # touching anything. Same-device moves are renames (no extra space needed). (M4)
+    if old.stat().st_dev != new.stat().st_dev:
+        need = sum(f.stat().st_size for f in old.rglob("*") if f.is_file())
+        free = shutil.disk_usage(new).free
+        if need > free:
+            raise OSError(
+                f"not enough free space at destination: need {need:,} bytes, {free:,} free")
     for child in list(old.iterdir()):
         dst = new / child.name
         if dst.exists():
@@ -118,7 +126,15 @@ async def set_cache_location(body: dict) -> dict:
     old = config.CACHE_DIR   # only the livetiming cache moves (analysis/tmp/etc. stay)
     moved: list[str] = []
 
-    if do_move and old.exists() and old.resolve() != new.resolve():
+    # Reject a target that OVERLAPS the current cache (one path contains the other).
+    # A move would copytree/rmtree within its own tree and could destroy the source (M4).
+    new_r, old_r = new.resolve(), old.resolve()
+    if new_r != old_r and (new_r.is_relative_to(old_r) or old_r.is_relative_to(new_r)):
+        raise HTTPException(
+            status_code=400,
+            detail="cache location cannot overlap the current one (one path contains the other)")
+
+    if do_move and old.exists() and old_r != new_r:
         try:
             # copytree/rmtree/move can be large — off the event loop (H4).
             moved = await asyncio.to_thread(_move_cache_contents, old, new)
