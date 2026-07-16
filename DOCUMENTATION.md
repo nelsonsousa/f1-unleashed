@@ -521,18 +521,10 @@ CREATE TABLE messages (
 );
 CREATE INDEX idx_msg_topic_offset ON messages (topic, offset_ms);
 
--- Per-lap telemetry sample arrays. Each row is one lap for one driver;
--- `data` is a JSON array of samples [distPct, speed, rpm, gear, throttle,
--- brake, t_ms_rel] where t_ms_rel is offset from lap start.
-CREATE TABLE telemetry (
-    driver           TEXT NOT NULL,
-    lap              INTEGER NOT NULL,
-    offset_ms        INTEGER NOT NULL,       -- lap-end offset on the session clock
-    start_wall_clock TEXT,                   -- lap-start HH:MM:SS.mmm
-    end_wall_clock   TEXT,                   -- lap-end HH:MM:SS.mmm
-    data             TEXT NOT NULL,          -- JSON [[dp,s,r,g,t,b,t_ms_rel], ...]
-    PRIMARY KEY (driver, lap)
-);
+-- There is NO separate telemetry table. Completed-lap telemetry lives in the
+-- `messages` table as `telemetryLap:{driver}:{lap}` rows, whose `data` is a JSON
+-- array of samples [distPct, speed, rpm, gear, throttle, brake, t_ms_rel]
+-- (t_ms_rel = offset from lap start).
 
 CREATE TABLE processing_meta (
     key   TEXT PRIMARY KEY,
