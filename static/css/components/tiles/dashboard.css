@@ -24,15 +24,17 @@
 }
 .dash-selcell { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 /* Auto-select toggle (card wfMzaSwh) — in the title bar; on = server auto-picks the pair */
+/* Match the telemetry-tab measure buttons (.telemetry-channel / .telemetry-mode): neutral,
+   transparent with a --text-primary border; active fills with --text-secondary (not bright). */
 .dash-autobtn {
-    box-sizing: border-box; margin-left: 10px; padding: 3px 10px; border-radius: 4px; cursor: pointer;
-    font-family: 'Monaco','Consolas',monospace; font-weight: 700; font-size: 12px; letter-spacing: .05em;
-    background: transparent; color: var(--text-secondary); border: 1px solid var(--text-secondary);
-    transition: background .12s, color .12s, border-color .12s;
+    box-sizing: border-box; margin-left: 10px; padding: 2px 8px; border-radius: 3px; cursor: pointer;
+    font-family: 'Monaco','Consolas',monospace; font-weight: 600; font-size: 12px;
+    background: transparent; color: var(--text-primary); border: 1px solid var(--text-primary);
+    transition: background .15s, color .15s;
 }
-.dash-autobtn:hover { color: var(--text-primary); border-color: var(--text-primary); }
+.dash-autobtn:hover:not(.on) { background: rgba(255, 255, 255, 0.08); }
 .dash-autobtn.on {
-    background: var(--c-green, #00d27a); color: #0b0d10; border-color: var(--c-green, #00d27a);
+    background: var(--text-secondary); color: var(--bg-primary); border-color: var(--text-secondary);
 }
 .dash-selbtn {
     box-sizing: border-box; width: 100%; height: 39px; padding: 0 3px; border-radius: 5px; cursor: pointer;
@@ -64,7 +66,9 @@
 .dm-map-cv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 
 /* ── race dashboard center panel (card J3V1CFdS) ── */
-.dm-map-race svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+/* Direct child only — the mini track SVG. NOT the nested warning-icon <svg>, which would
+   otherwise be stretched to fill the box and overlap the message. */
+.dm-map-race > svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .dm-race {   /* row 1: TLA | | TLA; row 2: P{n} | Int | P{n} (aligned); row 3: statuses */
     grid-column: 1 / -1; min-width: 0; min-height: 0; display: grid;
     grid-template-columns: 1fr auto 1fr; grid-template-rows: auto auto auto;

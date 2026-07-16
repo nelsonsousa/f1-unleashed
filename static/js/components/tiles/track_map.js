@@ -178,15 +178,23 @@
     const MINI_MARKER_SCALE = 0.3;     // marker size (F1 radius)
     const MINI_SMOOTH = 0.18;          // viewBox-centre low-pass (0..1) — damps GPS jitter at high zoom
     const _mini = { svg: null, group: null, container: null, markers: {}, focus: null,
-                    baseVB: null, matrix: null, pending: null, sm: {} };
+                    baseVB: null, matrix: null, pending: null, sm: {}, warnEl: null };
+    // Latest position/telemetry-outage warning (mirrors the main map's #trackPosWarning).
+    let _posWarn = { active: false, red: false, msg: '' };
 
     function mountMini(container) {
         if (!container) return;
         if (!state.trackSvg) { _mini.pending = container; return; }   // SVG not loaded yet → retry on load
         _mini.pending = null;
         const svg = state.trackSvg.cloneNode(true);
+        svg.classList.add('mini-map');   // scope mini-only track styling (see track_map.css)
         const group = svg.querySelector('#car-markers');
         if (group) { group.innerHTML = ''; group.style.pointerEvents = 'none'; }
+        // The clone inherits the main map's F1-unit stroke-widths, which render far heavier
+        // through the zoomed mini viewBox. Set the centre line explicitly for the mini-map.
+        // (state.markerStrokeWidth === f1PerPx, set when the track loaded.)
+        svg.querySelectorAll('.track').forEach(el =>
+            el.setAttribute('stroke-width', (5 * state.markerStrokeWidth).toFixed(1)));
         container.innerHTML = ''; container.appendChild(svg);
         const vb = (state.trackSvg.getAttribute('viewBox') || '0 0 100 100').split(/\s+/).map(Number);
         const root = svg.querySelector('#track-root');
@@ -196,10 +204,34 @@
         // children of track-root, so this maps a car's (x,y) to the viewBox coordinate system.
         _mini.matrix = (root && root.transform.baseVal.numberOfItems)
             ? root.transform.baseVal.consolidate().matrix : null;
+        applyMiniWarning();   // reflect any active outage immediately (e.g. mounted mid-outage)
+    }
+    // When a position/telemetry outage is active, hide the mini-map and show the SAME warning
+    // message the main track map shows (server dataHealth → updatePosWarning).
+    function applyMiniWarning() {
+        if (!_mini.svg || !_mini.container) return;
+        if (!_mini.warnEl) {
+            const w = document.createElement('div');
+            w.className = 'pos-warning mini-pos-warning';
+            w.hidden = true;
+            w.innerHTML =
+                `<svg class="pos-warning-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path class="pos-warning-tri" d="M12 3 L22.5 21 L1.5 21 Z"/>
+                    <rect class="pos-warning-excl" x="11" y="9" width="2" height="6" rx="1"/>
+                    <circle class="pos-warning-excl" cx="12" cy="18" r="1.2"/>
+                </svg><span class="pos-warning-msg"></span>`;
+            _mini.container.appendChild(w);
+            _mini.warnEl = w;
+        }
+        _mini.warnEl.hidden = !_posWarn.active;
+        _mini.warnEl.classList.toggle('red', _posWarn.red);
+        _mini.warnEl.querySelector('.pos-warning-msg').textContent = _posWarn.msg;
+        _mini.svg.style.display = _posWarn.active ? 'none' : '';
     }
     function unmountMini() {
         if (_mini.container) _mini.container.innerHTML = '';
-        _mini.svg = _mini.group = _mini.container = _mini.matrix = null; _mini.markers = {}; _mini.sm = {};
+        _mini.svg = _mini.group = _mini.container = _mini.matrix = _mini.warnEl = null;
+        _mini.markers = {}; _mini.sm = {};
     }
     function setMiniFocus(num) {
         _mini.focus = num || null;
@@ -478,13 +510,17 @@
             el.classList.add('red');
             msg.textContent = 'Telemetry and position data unavailable. Data is unreliable';
             el.hidden = false;
+            _posWarn = { active: true, red: true, msg: msg.textContent };
         } else if (posRed || telRed) {
             el.classList.remove('red');
             msg.textContent = 'Position data unavailable. Track position estimated from telemetry';
             el.hidden = false;
+            _posWarn = { active: true, red: false, msg: msg.textContent };
         } else {
             el.hidden = true;
+            _posWarn = { active: false, red: false, msg: '' };
         }
+        applyMiniWarning();   // hide the mini-map + show the same message during an outage
     }
 
     messageBus.on('trackCircuit', (name) => {

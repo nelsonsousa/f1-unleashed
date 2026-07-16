@@ -108,10 +108,3 @@ kbd {
     text-align: center;
 }
 
-.phelp-support {
-    padding: 14px 0 2px;
-    font-size: 13px;
-    color: var(--text-secondary);
-}
-.phelp-support a { color: var(--yellow); text-decoration: none; }
-.phelp-support a:hover { text-decoration: underline; }
