@@ -175,7 +175,7 @@
     // status colouring as the main map (mirrored each frame). Only the markers are drawn smaller so
     // they don't blow up with the zoom. No rotation, no weather overlay.
     const MINI_ZOOM = 10;              // viewBox zoom (crop = trackViewBox / MINI_ZOOM)
-    const MINI_MARKER_SCALE = 0.3;     // marker size (F1 radius)
+    const MINI_MARKER_SCALE = 0.15;    // marker size (F1 radius) — small so the GPS trail shows the racing line
     const MINI_SMOOTH = 0.18;          // viewBox-centre low-pass (0..1) — damps GPS jitter at high zoom
     const _mini = { svg: null, group: null, container: null, markers: {}, focus: null,
                     baseVB: null, matrix: null, pending: null, sm: {}, warnEl: null };
