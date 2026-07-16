@@ -95,6 +95,11 @@ async def get_weather(
     }
 
     # Store in cache
+    # Evict expired entries before inserting so the cache doesn't grow unbounded (L4).
+    _now = datetime.now()
+    for _k in [k for k, v in _cache.items()
+               if _now - v["fetched_at"] >= timedelta(hours=CACHE_TTL_HOURS)]:
+        del _cache[_k]
     _cache[cache_key] = {"data": result, "fetched_at": datetime.now()}
 
     return result

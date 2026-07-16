@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -668,7 +668,7 @@ class LiveTimingFetcher:
                 session_start = session.start_date
                 logger.warning(f"Using scheduled session start time: {session_start}")
             else:
-                session_start = datetime.utcnow()
+                session_start = datetime.now(timezone.utc).replace(tzinfo=None)
                 logger.warning("Could not determine session start time, using current time")
 
         # Determine which topics to fetch — start with our known list,
@@ -835,7 +835,7 @@ class LiveTimingFetcher:
                 if session_start:
                     timestamp = session_start + offset
                 else:
-                    timestamp = datetime.utcnow()  # Fallback
+                    timestamp = datetime.now(timezone.utc).replace(tzinfo=None)  # Fallback
 
                 # Parse JSON data
                 data = json.loads(json_str)
