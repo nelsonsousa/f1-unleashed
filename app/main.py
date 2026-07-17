@@ -487,6 +487,7 @@ GUIDE_PARTS = [
     ("practice", "Practice"),
     ("qualifying", "Qualifying"),
     ("race", "Race"),
+    ("support", "Support"),
 ]
 
 

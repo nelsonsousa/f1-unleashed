@@ -4,7 +4,8 @@ The Race view is tuned for the race itself: gaps, tyre strategy, pit stops, pena
 championship picture. Shared controls are on the [Main window](/help/main) page; this page
 covers the race-specific features. (Sprint races use this same view.)
 
-![Race view](/static/images/screenshots/race.png)
+<p align="center"><img src="/static/images/screenshots/race.png" width="1200"></p>
+
 
 ---
 
@@ -18,8 +19,8 @@ Like the practice/qualifying standings, but race-focused:
 - **Flags & penalties** — blue flags, penalties both **under investigation** and **imposed**,
   and black-and-white (unsporting-conduct) flags.
 
-<!-- SCREENSHOT (new): standings mid-race with a close interval battle, a driver on a
-     different strategy (tyre history), and a penalty indicator. -->
+<p align="center"><img src="/static/images/screenshots/race_standings.png" width="800"></p>
+
 
 ---
 
@@ -40,8 +41,7 @@ chart.)
   pass or a lap settles, the pair is held briefly before switching.
 - Click a **TLA** to override; the **Auto-select** button toggles it back on.
 
-<!-- SCREENSHOT (new): Dashboard mode in the race — two cars under a second apart, the
-     mini-map zoomed on the chaser mid-corner. -->
+<p align="center"><img src="/static/images/screenshots/race_dashboard.png" width="800"></p>
 
 ---
 
@@ -55,8 +55,7 @@ A **Pit stops** tab in the Race control tile lists every in-race stop as it happ
 - the **position change** across the stop and a **traffic** flag if the car rejoined close
   behind another that has yet to pit.
 
-<!-- SCREENSHOT (new): the Pit stops tab with a few stops, showing stationary time, time
-     lost, and a position change. -->
+<p align="center"><img src="/static/images/screenshots/pitstops.png" width="400"></p>
 
 ---
 
@@ -67,9 +66,11 @@ The Race control tile has several tabs:
 - **Race control** — the live race-control message stream, with team-radio clips interleaved by time.
 - **Team Radio** — every captured clip, each with Play / Stop; playing one ducks the
   commentary.
-- **Pecking order** — the pre-race predicted team ranking and pace.
 - **Championship** — provisional drivers' and constructors' standings, updated live from the
   current race order.
+
+<p align="center"><img src="/static/images/screenshots/championship.png" width="400"></p>
+
 
 ---
 
@@ -86,9 +87,8 @@ trace to a known circuit signature. This algorithm is **still in its early stage
 reliability** — the car is always placed on the map, but the positions will suffer from
 **frequent corrections**.
 
----
+<p align="center"><img src="/static/images/screenshots/track_map_outage.png" width="500"></p>
 
-## Support the project
 
-Enjoying F1 Unleashed? You can
-[buy me a coffee](https://buymeacoffee.com/f1unleashed).
+
+<p align="center"><img src="/static/images/screenshots/checkered_flag.png" width="45"></p>

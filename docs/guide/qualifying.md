@@ -5,7 +5,8 @@ knockout pressure: the **elimination zone**, a **live lap-time forecast**, and a
 pecking order**. Shared controls are on the [Main window](/help/main) page; this page covers
 the qualifying-specific features. (Sprint Qualifying uses this same view.)
 
-![Qualifying view](/static/images/screenshots/qualifying.png)
+<p align="center"><img src="/static/images/screenshots/qualifying.png" width="1200"></p>
+
 
 ---
 
@@ -20,8 +21,7 @@ the qualifying-specific features. (Sprint Qualifying uses this same view.)
   the lap completes, the standings switch to the **actual** delta and the positions actually
   gained.
 
-<!-- SCREENSHOT (new): standings mid-Q1 with the drop zone highlighted, a bubble gap, and a
-     driver mid-lap showing a live delta + projected positions. -->
+<p align="center"><img src="/static/images/screenshots/qualifying_standings.png" width="800"></p>
 
 ---
 
@@ -53,8 +53,7 @@ When a driver completes a lap, the pair is held for a few seconds so you can rea
 and result before it switches to the next drivers. Click a **TLA** to override; the
 **Auto-select** button toggles it back on.
 
-<!-- SCREENSHOT (new): Dashboard mode in Q1 showing two at-risk drivers on push laps, one
-     with a FORECAST stopwatch. -->
+<p align="center"><img src="/static/images/screenshots/qualifying_dashboard.png" width="800"></p>
 
 ---
 
@@ -63,7 +62,7 @@ and result before it switches to the next drivers. Click a **TLA** to override; 
 A **Pecking order** tab in the Race control tile shows the **predicted ranking of the teams**
 and their gaps — an at-a-glance read of the competitive order as the session refines it.
 
-<!-- SCREENSHOT (new): the Pecking order tab with the predicted team ranking and gaps. -->
+<p align="center"><img src="/static/images/screenshots/pecking_order.png" width="800"></p>
 
 ---
 
@@ -73,9 +72,7 @@ Toggled from the Dashboard, the trace view works as in practice, with one additi
 shows **part tabs (Q1 / Q2 / Q3)** — one part's laps at a time — so you can compare a driver's laps within and
 across segments. Corner labels line up with the circuit map.
 
----
+<p align="center"><img src="/static/images/screenshots/telemetry.png" width="800"></p>
 
-## Support the project
 
-Enjoying F1 Unleashed? You can
-[buy me a coffee](https://buymeacoffee.com/f1unleashed).
+<p align="center"><img src="/static/images/screenshots/checkered_flag.png" width="45"></p>
