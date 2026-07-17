@@ -26,14 +26,7 @@
         circuitFracX: 0.5,       // circuit position within the 2x2 z14 composite
         circuitFracY: 0.5,       // (0..1 from NW corner); from /radar/extent
         extentFetched: false,
-        // Weather-condition icon state
-        condLat: null,
-        condLng: null,
-        conditionDate: null,
-        conditionHourly: null,
-        currentIsDay: 1,
-        currentCode: null,
-        // Weather-forecast widget (card 118)
+        // Weather-forecast widget (card 118) — also drives the current-condition "Now" (card Bx8ki87i)
         forecastFetched: false,
         forecastSnapshots: null,
     };
@@ -138,17 +131,8 @@
         // orientation. See maybeApplyAlignment.
         state.trackRotation = parseFloat(trackRoot?.dataset?.rotation || '') || 0;
         state.trackSvgLoaded = true;
-        // Inject any weather contours that arrived before the track SVG mounted.
-        if (state.pendingRadarSvg != null && trackRoot) {
-            let g = trackRoot.querySelector('#weather-contours');
-            if (!g) {
-                g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-                g.setAttribute('id', 'weather-contours');
-                trackRoot.insertBefore(g, trackRoot.firstChild);
-            }
-            g.innerHTML = state.pendingRadarSvg;
-            state.pendingRadarSvg = null;
-        }
+        // Contours that arrived before the track SVG mounted are buffered by the track-map tile
+        // (F1TrackMap.setRainContours) and injected when its rain layer builds. (card zdXIoU5O)
     }
 
     async function fetchRadarExtent() {
@@ -162,13 +146,7 @@
             state.tileWidthM = data.tile_width_m;
             if (data.circuit_frac_x != null) state.circuitFracX = data.circuit_frac_x;
             if (data.circuit_frac_y != null) state.circuitFracY = data.circuit_frac_y;
-            state.condLat = data.lat;
-            state.condLng = data.lng;
             maybeApplyAlignment();
-            if (messageBus.clockTime) {
-                fetchCondition(messageBus.clockTime.toISOString().slice(0, 10));
-                updateConditionIcon();
-            }
         } catch (e) {
             // Silently fail; SVG stays at default size.
         }
@@ -261,56 +239,9 @@
         return ['rain', 'Rain'];
     }
 
-    // Fetch hourly conditions for the circuit on `date` (YYYY-MM-DD, UTC).
-    // No-op once already fetched for that date.
-    async function fetchCondition(date) {
-        if (state.condLat == null || !date || state.conditionDate === date) return;
-        state.conditionDate = date;
-        try {
-            const url = `/api/v1/weather?latitude=${state.condLat}` +
-                        `&longitude=${state.condLng}&date=${date}`;
-            const resp = await fetch(url);
-            if (!resp.ok) { state.conditionDate = null; return; }
-            const data = await resp.json();
-            state.conditionHourly = data.hourly;
-            updateConditionIcon();
-        } catch (e) {
-            state.conditionDate = null;
-        }
-    }
-
-    function updateConditionIcon() {
-        const h = state.conditionHourly;
-        const clock = messageBus.clockTime;
-        if (!h || !clock) return;
-        const hourKey = clock.toISOString().slice(0, 13);
-        const idx = h.time.findIndex(t => t.slice(0, 13) === hourKey);
-        if (idx < 0) return;
-        state.currentIsDay = h.is_day[idx];
-        state.currentCode = h.weather_code[idx];
-        // The current condition is now the "Now" slot of the weather-icon row.
-        updateForecast();
-    }
-
-    function renderConditionIcon(code, isDay) {
-        if (code == null) return;
-        // Prefer the overlay title slot (#weatherCondition); fall back
-        // to the map container for backward compatibility.
-        let el = document.getElementById('weatherCondition');
-        if (!el) {
-            const container = document.getElementById('weatherRadarMap');
-            if (!container) return;
-            el = container.querySelector('.weather-condition');
-            if (!el) {
-                el = document.createElement('div');
-                el.className = 'weather-condition';
-                container.appendChild(el);
-            }
-        }
-        const [key, label] = conditionFor(code, isDay);
-        el.innerHTML = CONDITION_ICONS[key];
-        el.title = label;
-    }
+    // The current condition ("Now") and the 15'/30'/60' forecast now come from ONE source: the
+    // captured forecast snapshots (weather_forecast.jsonl), replayed from cache and indexed by the
+    // playback clock. The old separate live Open-Meteo hourly fetch is gone. (card Bx8ki87i)
 
     // ── Weather forecast widget (card 118) ───────────────────────────
     // Captured live (Open-Meteo minutely_15) and indexed by the playback clock.
@@ -366,7 +297,6 @@
     function updateForecast() {
         const el = document.getElementById('weatherForecast');
         if (!el) return;
-        const isDay = state.currentIsDay !== 0 ? 1 : 0;
 
         // Gate the WHOLE widget (now + forecast) on a captured snapshot that COVERS the clock.
         // Forecast capture can begin after the session data stream does, so early in the session
@@ -383,24 +313,25 @@
                 for (let i = 0; i < times.length; i++) { if (times[i] <= clockMs) c = i; else break; }
             }
         }
-        if (c < 0 || state.currentCode == null) { el.classList.add('hidden'); return; }
+        if (c < 0) { el.classList.add('hidden'); return; }
 
-        // "Now" = the current condition (from the hourly /weather data).
-        const [nk, nl] = conditionFor(state.currentCode, isDay);
-        const now = { key: nk, label: nl, wet: false, prob: null };
-
-        // 15'/30'/60' from the covering snapshot, indexed forward from the current 15-min slot.
-        const slotAt = (steps) => {
-            const i = c + steps;
+        // Everything comes from the covering snapshot. is_day drives the day/night icon variant;
+        // snapshots captured before is_day was added default to day. (card Bx8ki87i)
+        const isDayAt = (i) => (snap.is_day && snap.is_day[i] != null) ? snap.is_day[i] : 1;
+        const slotAt = (i) => {
             if (i < 0 || i >= snap.weather_code.length) return null;
-            const [key, label] = conditionFor(snap.weather_code[i], isDay);
+            const [key, label] = conditionFor(snap.weather_code[i], isDayAt(i));
             const wet = key === 'rain' || key === 'thunder' || key === 'snow';
             const prob = snap.precipitation_probability ? snap.precipitation_probability[i] : null;
             return { key, label, wet, prob };
         };
-        // Show whatever forecast slots resolve — NOT all-or-nothing. Each available slot shows
-        // independently so a +60' slot past the snapshot's 2 h horizon doesn't hide the rest. (a4QfXvwZ)
-        const f15 = slotAt(1), f30 = slotAt(2), f60 = slotAt(4);
+        // "Now" = the covering snapshot's current slot, shown as an icon only (no probability chip).
+        const now = slotAt(c);
+        if (!now) { el.classList.add('hidden'); return; }
+        now.wet = false; now.prob = null;
+        // 15'/30'/60' indexed forward. Show whatever resolves — NOT all-or-nothing — so a +60' slot
+        // past the snapshot's 2 h horizon doesn't hide the rest. (a4QfXvwZ)
+        const f15 = slotAt(c + 1), f30 = slotAt(c + 2), f60 = slotAt(c + 4);
 
         let slots = [['Now', now]];
         if (f15) slots.push(["15'", f15]);
@@ -417,13 +348,11 @@
         el.classList.remove('hidden');
     }
 
-    // The icon is driven off the playback clock (`clock:update` fires
-    // every tick), so it appears as soon as the clock and condition data
-    // are both ready and tracks hour boundaries on replay/seek.
+    // The widget is driven off the playback clock (`clock:update` fires every tick), so it appears
+    // as soon as the clock and the captured forecast are both ready, and tracks slot boundaries on
+    // replay/seek.
     messageBus.on('clock:update', (data) => {
         if (!data || !data.time) return;
-        fetchCondition(data.time.toISOString().slice(0, 10));
-        updateConditionIcon();
         fetchForecast();
         updateForecast();
         // Drive the radar tile off the PLAYBACK clock (not wall-clock) so it
@@ -534,10 +463,10 @@
     }
 
     function clearRadarLayer(layer) {
-        const g = document.querySelector('#trackMap #track-root #weather-contours');
-        if (g) g.innerHTML = '';
+        if (window.F1TrackMap && window.F1TrackMap.setRainContours) {
+            window.F1TrackMap.setRainContours('');
+        }
         delete state.radarTileId[layer];
-        state.pendingRadarSvg = null;
         updateRainAlert(null);
     }
 
@@ -601,30 +530,39 @@
     });
 
     function showRadarLayer(layer, data) {
-        // Server already put the contours in the track's coordinate system.
-        // Inject them as the FIRST child of #track-root (behind the track lines)
-        // so the single track transform drives both. If the track SVG hasn't
-        // mounted yet, stash the markup and inject it on mount (see below).
+        // Server already put the contours in the track's coordinate system. The track-map tile
+        // owns the rain layer (a dedicated overlay SVG behind the track lines, card zdXIoU5O) and
+        // buffers the body until the track SVG has mounted; we just hand it the markup.
         updateRainAlert(data.alert);
-        const trackRoot = document.querySelector('#trackMap #track-root');
-        if (!trackRoot) { state.pendingRadarSvg = data.svg || ''; return; }
-        let g = trackRoot.querySelector('#weather-contours');
-        if (!g) {
-            g = document.createElementNS(SVGNS, 'g');
-            g.setAttribute('id', 'weather-contours');
-            trackRoot.insertBefore(g, trackRoot.firstChild);
+        if (window.F1TrackMap && window.F1TrackMap.setRainContours) {
+            window.F1TrackMap.setRainContours(data.svg || '');
         }
-        g.innerHTML = data.svg || '';
-        state.pendingRadarSvg = null;
     }
+
+    // Drive the rain-drop fall off the PLAYBACK clock, not wall-clock — so it slows with slow-mo
+    // replay and stays correct in a sped-up capture. The server no longer ships a SMIL animation;
+    // each frame we scroll every rain <pattern> by one tile per RAIN_FALL_MS of CONTENT time,
+    // preserving its wind rotation (data-rot). (card ru7Zv0G9)
+    const RAIN_FALL_MS = 600;   // one tile-drop cycle per 0.6 s of playback time
+    function animateRain() {
+        const patterns = document.querySelectorAll('#trackMap .track-rain-layer pattern');
+        if (patterns.length && messageBus.clockTime) {
+            const t = messageBus.clockTime.getTime();
+            const phase = (t % RAIN_FALL_MS) / RAIN_FALL_MS;
+            for (const p of patterns) {
+                const rot = p.getAttribute('data-rot') || '0';
+                const tile = parseFloat(p.getAttribute('width')) || 0;
+                const off = (phase * tile).toFixed(1);
+                p.setAttribute('patternTransform', `rotate(${rot}) translate(0, ${off})`);
+            }
+        }
+        requestAnimationFrame(animateRain);
+    }
+    requestAnimationFrame(animateRain);
 
     messageBus.on('state:reset', () => {
         state.weather = {};
-        state.conditionDate = null;
-        state.conditionHourly = null;
         state.lastRadarClockMs = null;
-        const cond = document.querySelector('#weatherRadarMap .weather-condition');
-        if (cond) cond.remove();
         RADAR_LAYERS.forEach(clearRadarLayer);
     });
 
