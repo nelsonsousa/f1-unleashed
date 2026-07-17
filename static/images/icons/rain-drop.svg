@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36">
+  <defs>
+    <radialGradient id="rdg" cx="38%" cy="28%" r="80%">
+      <stop offset="0%" stop-color="#cfe6ff"/>
+      <stop offset="42%" stop-color="#57a6ff"/>
+      <stop offset="100%" stop-color="#2f7fe0"/>
+    </radialGradient>
+  </defs>
+  <path d="M18 3 C18 3 7 16.5 7 23 A11 11 0 0 0 29 23 C29 16.5 18 3 18 3 Z"
+        fill="url(#rdg)" stroke="#215fb0" stroke-width="1"/>
+  <!-- texture: specular highlight + a couple of faint ripples -->
+  <ellipse cx="13.5" cy="18.5" rx="2.6" ry="4.6" fill="#ffffff" opacity="0.4"
+           transform="rotate(-22 13.5 18.5)"/>
+  <path d="M11.5 25 A7 7 0 0 0 24 24.5" fill="none" stroke="#ffffff" stroke-width="1"
+        stroke-linecap="round" opacity="0.18"/>
+  <path d="M13 28 A5 5 0 0 0 22 27.7" fill="none" stroke="#ffffff" stroke-width="0.9"
+        stroke-linecap="round" opacity="0.13"/>
+</svg>
