@@ -13,6 +13,12 @@
     const state = {
         trackSvg: null,
         carMarkersGroup: null,
+        markerOverlay: null,   // transparent overlay SVG holding the markers (card z9L5gqpj)
+        origViewBox: null,     // the SVG's authored (non-square) viewBox — kept for the mini-map
+        rainOverlay: null,     // transparent overlay SVG holding the rain contours (card zdXIoU5O)
+        rainGroup: null,       // <g> (track-root matrix) the server contour body is injected into
+        pendingRain: null,     // contour body buffered until the overlays are built
+        overlayRO: null,       // ResizeObserver keeping the overlay boxes on the track SVG's rect
         carMarkers: {},
         driverInfo: {},      // num -> {tla, color}
         driverStatus: {},    // num -> "RET"|"STOP"|... (card 55: hide RET/STOP markers)
@@ -57,20 +63,24 @@
                 state.rotation = parseFloat(trackRoot.dataset.rotation) || 0;
             }
 
-            state.carMarkersGroup = svgElement.querySelector('#car-markers');
-            if (state.carMarkersGroup) {
-                // Click a car → focus that driver (+ neighbours in a race) on the dashboard.
-                state.carMarkersGroup.addEventListener('click', (e) => {
-                    const m = e.target.closest('.car-marker');
-                    if (m && window.F1Dashboard) window.F1Dashboard.focus(m.dataset.driver);
-                });
-            }
-
             const trackMap = document.getElementById('trackMap');
             if (trackMap) {
                 trackMap.innerHTML = '';
+                svgElement.classList.add('track-base-layer');   // z-index anchor for the overlays
                 trackMap.appendChild(svgElement);
                 state.trackSvg = svgElement;
+
+                // Reframe the map to a SQUARE viewBox — extend the shorter dimension symmetrically
+                // (equal margin on both sides) so the near-square tile isn't letterboxed and the rain
+                // overlay fills it; the track sits centred. The authored viewBox is already ~1.2x the
+                // track's long side, matching the server's rain coverage square. (card zdXIoU5O)
+                state.origViewBox = svgElement.getAttribute('viewBox');
+                if (state.origViewBox) {
+                    const [vx, vy, vw, vh] = state.origViewBox.split(/\s+/).map(Number);
+                    const side = Math.max(vw, vh);
+                    svgElement.setAttribute('viewBox',
+                        `${vx - (side - vw) / 2} ${vy - (side - vh) / 2} ${side} ${side}`);
+                }
 
                 const viewBox = svgElement.getAttribute('viewBox');
                 if (viewBox) {
@@ -89,6 +99,8 @@
                         el.setAttribute('stroke-width', (2 * f1PerPx).toFixed(1));
                     });
                 }
+
+                buildTrackOverlays(trackMap, svgElement);   // rain + markers on their own layers
 
                 const calibrating = document.getElementById('trackCalibrating');
                 if (calibrating) calibrating.style.display = 'none';
@@ -117,6 +129,71 @@
             marker.remove();
             delete state.carMarkers[num];
         }
+    }
+
+    // The track SVG used to hold BOTH the rain contours (#weather-contours) and the car markers
+    // (#car-markers) inline, so a marker move — or a rain update — repainted the whole SVG,
+    // contours included. Split them onto their own transparent overlay SVGs, each sharing the
+    // track's viewBox + track-root (F1→user) matrix so their content lands at identical pixels.
+    // Stacking (z-index in CSS): rain (behind the track lines) < track < markers.
+    // (cards z9L5gqpj markers, zdXIoU5O rain)
+    const _SVGNS = 'http://www.w3.org/2000/svg';
+
+    function makeAlignedLayer(trackSvg, className, groupId) {
+        const svg = document.createElementNS(_SVGNS, 'svg');
+        svg.setAttribute('viewBox', trackSvg.getAttribute('viewBox') || '0 0 100 100');
+        svg.setAttribute('class', className);
+        const root = trackSvg.querySelector('#track-root');
+        const m = (root && root.transform.baseVal.numberOfItems)
+            ? root.transform.baseVal.consolidate().matrix : null;
+        const group = document.createElementNS(_SVGNS, 'g');
+        group.setAttribute('id', groupId);
+        if (m) group.setAttribute('transform',
+            `matrix(${m.a} ${m.b} ${m.c} ${m.d} ${m.e} ${m.f})`);
+        svg.appendChild(group);
+        return { svg, group };
+    }
+
+    function buildTrackOverlays(container, trackSvg) {
+        const rain = makeAlignedLayer(trackSvg, 'track-rain-layer', 'weather-contours');
+        const mark = makeAlignedLayer(trackSvg, 'track-marker-layer', 'car-markers-overlay');
+        container.appendChild(rain.svg);          // rain first; CSS z-index keeps it behind the track
+        container.appendChild(mark.svg);
+        state.rainOverlay = rain.svg; state.rainGroup = rain.group;
+        state.markerOverlay = mark.svg; state.carMarkersGroup = mark.group;
+        state.carMarkers = {};                    // markers re-created into the fresh group next frame
+        // Click a car → focus that driver (+ neighbours in a race) on the dashboard.
+        mark.group.addEventListener('click', (e) => {
+            const mk = e.target.closest('.car-marker');
+            if (mk && window.F1Dashboard) window.F1Dashboard.focus(mk.dataset.driver);
+        });
+        if (state.pendingRain != null) { rain.group.innerHTML = state.pendingRain; state.pendingRain = null; }
+        syncOverlayBoxes();
+        if (state.overlayRO) state.overlayRO.disconnect();
+        state.overlayRO = new ResizeObserver(syncOverlayBoxes);
+        state.overlayRO.observe(container);
+    }
+
+    // Keep both overlay boxes exactly on the (aspect-fitted, centred) track SVG's rendered rect,
+    // so they share its pixel mapping. Re-run whenever the tile resizes.
+    function syncOverlayBoxes() {
+        const trk = state.trackSvg, cont = document.getElementById('trackMap');
+        if (!trk || !cont) return;
+        const cr = cont.getBoundingClientRect(), tr = trk.getBoundingClientRect();
+        for (const ov of [state.rainOverlay, state.markerOverlay]) {
+            if (!ov) continue;
+            ov.style.setProperty('--ov-left', (tr.left - cr.left).toFixed(1) + 'px');
+            ov.style.setProperty('--ov-top', (tr.top - cr.top).toFixed(1) + 'px');
+            ov.style.setProperty('--ov-w', tr.width.toFixed(1) + 'px');
+            ov.style.setProperty('--ov-h', tr.height.toFixed(1) + 'px');
+        }
+    }
+
+    // Weather module hands us the server-built contour <g> body; it goes on the rain layer, whose
+    // group already carries the track-root transform. Buffer if the track SVG hasn't mounted yet.
+    function setRainContours(svg) {
+        if (!state.rainGroup) { state.pendingRain = svg || ''; return; }
+        state.rainGroup.innerHTML = svg || '';
     }
 
     function updateCarMarker(num, x, y) {
@@ -174,42 +251,93 @@
     // stays centered on them while showing every nearby car marker + the same yellow-flag/track-
     // status colouring as the main map (mirrored each frame). Only the markers are drawn smaller so
     // they don't blow up with the zoom. No rotation, no weather overlay.
-    const MINI_ZOOM = 10;              // viewBox zoom (crop = trackViewBox / MINI_ZOOM)
+    const MINI_ZOOM = 10;              // pan zoom (px-per-user = MINI_ZOOM × meet-fit scale)
     const MINI_MARKER_SCALE = 0.15;    // marker size (F1 radius) — small so the GPS trail shows the racing line
-    const MINI_SMOOTH = 0.18;          // viewBox-centre low-pass (0..1) — damps GPS jitter at high zoom
-    const _mini = { svg: null, group: null, container: null, markers: {}, focus: null,
-                    baseVB: null, matrix: null, pending: null, sm: {}, warnEl: null };
+    const MINI_SMOOTH = 0.18;          // pan-centre low-pass (0..1) — damps GPS jitter at high zoom
+    // The mini-map follows the chaser by TRANSLATING one GPU-composited wrapper (.mini-pan)
+    // that carries two layers, rather than reframing the SVG viewBox each frame (which forced a
+    // full re-raster of the track strokes at high zoom, 60×/s). (card pCsVZRlp)
+    //   trackSvg   — track paths + flag colouring; rasterised once, only ever panned.
+    //   markerSvg  — transparent overlay sharing the same viewBox + F1→user matrix; only this
+    //                layer repaints when cars move (a few dots), so per-frame cost is tiny.
+    const _mini = { container: null, pan: null, trackSvg: null, markerSvg: null, markerGroup: null,
+                    markers: {}, focus: null, vb: null, matrix: null, s: 0, cw: 0, ch: 0,
+                    pending: null, sm: {}, warnEl: null, ro: null };
     // Latest position/telemetry-outage warning (mirrors the main map's #trackPosWarning).
     let _posWarn = { active: false, red: false, msg: '' };
+
+    const SVGNS = 'http://www.w3.org/2000/svg';
 
     function mountMini(container) {
         if (!container) return;
         if (!state.trackSvg) { _mini.pending = container; return; }   // SVG not loaded yet → retry on load
         _mini.pending = null;
-        const svg = state.trackSvg.cloneNode(true);
-        svg.classList.add('mini-map');   // scope mini-only track styling (see track_map.css)
-        const group = svg.querySelector('#car-markers');
-        if (group) { group.innerHTML = ''; group.style.pointerEvents = 'none'; }
-        // The clone inherits the main map's F1-unit stroke-widths, which render far heavier
-        // through the zoomed mini viewBox. Set the centre line explicitly for the mini-map.
-        // (state.markerStrokeWidth === f1PerPx, set when the track loaded.)
-        svg.querySelectorAll('.track').forEach(el =>
+        // The mini follows a car at high zoom, so it keeps the authored (non-square) frame — the
+        // main map's square reframe (for rain) would just change its crop aspect. (card zdXIoU5O)
+        const vbStr = state.origViewBox || state.trackSvg.getAttribute('viewBox') || '0 0 100 100';
+        const vb = vbStr.split(/\s+/).map(Number);
+
+        // Track layer — clone of the main map, paths + flag colouring only (markers stripped).
+        const trackSvg = state.trackSvg.cloneNode(true);
+        trackSvg.classList.add('mini-map', 'mini-track-layer');   // .mini-map scopes track styling
+        trackSvg.setAttribute('viewBox', vbStr);                  // undo the main map's square reframe
+        const oldMarkers = trackSvg.querySelector('#car-markers');
+        if (oldMarkers) oldMarkers.remove();   // markers live on the overlay layer now
+        // The clone inherits the main map's F1-unit stroke-widths, which render far heavier at the
+        // mini zoom. Set the centre line explicitly. (state.markerStrokeWidth === f1PerPx.)
+        trackSvg.querySelectorAll('.track').forEach(el =>
             el.setAttribute('stroke-width', (5 * state.markerStrokeWidth).toFixed(1)));
-        container.innerHTML = ''; container.appendChild(svg);
-        const vb = (state.trackSvg.getAttribute('viewBox') || '0 0 100 100').split(/\s+/).map(Number);
-        const root = svg.querySelector('#track-root');
-        _mini.svg = svg; _mini.group = group; _mini.container = container; _mini.markers = {};
-        _mini.baseVB = { w: vb[2], h: vb[3] };
-        // Constant F1-coords → SVG-user-space matrix (track-root transform); markers are direct
-        // children of track-root, so this maps a car's (x,y) to the viewBox coordinate system.
-        _mini.matrix = (root && root.transform.baseVal.numberOfItems)
+
+        // Constant F1-coords → SVG-user-space matrix (track-root transform); the original markers
+        // were children of track-root, so this maps a car's (x,y) into the viewBox coordinate system.
+        const root = trackSvg.querySelector('#track-root');
+        const matrix = (root && root.transform.baseVal.numberOfItems)
             ? root.transform.baseVal.consolidate().matrix : null;
+
+        // Marker overlay — transparent, same viewBox + same F1→user matrix as the track layer, so
+        // markers land at identical pixels. Redrawing markers here never touches the track layer.
+        const markerSvg = document.createElementNS(SVGNS, 'svg');
+        markerSvg.setAttribute('viewBox', vb.join(' '));
+        markerSvg.setAttribute('class', 'mini-marker-layer');
+        const markerGroup = document.createElementNS(SVGNS, 'g');
+        if (matrix) markerGroup.setAttribute('transform',
+            `matrix(${matrix.a} ${matrix.b} ${matrix.c} ${matrix.d} ${matrix.e} ${matrix.f})`);
+        markerSvg.appendChild(markerGroup);
+
+        // Both layers ride on one wrapper — the single GPU-composited element we translate.
+        const pan = document.createElement('div');
+        pan.className = 'mini-pan';
+        pan.appendChild(trackSvg);
+        pan.appendChild(markerSvg);
+        container.innerHTML = ''; container.appendChild(pan);
+
+        _mini.container = container; _mini.pan = pan; _mini.trackSvg = trackSvg;
+        _mini.markerSvg = markerSvg; _mini.markerGroup = markerGroup; _mini.markers = {};
+        _mini.vb = vb; _mini.matrix = matrix;
+
+        layoutMini();                                  // size the pan to the zoomed track extent
+        if (_mini.ro) _mini.ro.disconnect();
+        _mini.ro = new ResizeObserver(layoutMini);     // re-derive px scale when the cell resizes
+        _mini.ro.observe(container);
         applyMiniWarning();   // reflect any active outage immediately (e.g. mounted mid-outage)
+    }
+
+    // Derive the px-per-user scale from the current cell size and size the pan wrapper to the
+    // full zoomed track (so its raster is crisp; renderMini only ever translates it after).
+    function layoutMini() {
+        if (!_mini.pan || !_mini.vb) return;
+        const cw = _mini.container.clientWidth, ch = _mini.container.clientHeight;
+        if (!cw || !ch) return;
+        const vw = _mini.vb[2], vh = _mini.vb[3];
+        const s = MINI_ZOOM * Math.min(cw / vw, ch / vh);   // mirrors the old viewBox 'meet' crop
+        _mini.cw = cw; _mini.ch = ch; _mini.s = s;
+        _mini.pan.style.setProperty('--mini-w', (vw * s).toFixed(1) + 'px');
+        _mini.pan.style.setProperty('--mini-h', (vh * s).toFixed(1) + 'px');
     }
     // When a position/telemetry outage is active, hide the mini-map and show the SAME warning
     // message the main track map shows (server dataHealth → updatePosWarning).
     function applyMiniWarning() {
-        if (!_mini.svg || !_mini.container) return;
+        if (!_mini.pan || !_mini.container) return;
         if (!_mini.warnEl) {
             const w = document.createElement('div');
             w.className = 'pos-warning mini-pos-warning';
@@ -226,12 +354,14 @@
         _mini.warnEl.hidden = !_posWarn.active;
         _mini.warnEl.classList.toggle('red', _posWarn.red);
         _mini.warnEl.querySelector('.pos-warning-msg').textContent = _posWarn.msg;
-        _mini.svg.style.display = _posWarn.active ? 'none' : '';
+        _mini.pan.style.display = _posWarn.active ? 'none' : '';
     }
     function unmountMini() {
+        if (_mini.ro) { _mini.ro.disconnect(); _mini.ro = null; }
         if (_mini.container) _mini.container.innerHTML = '';
-        _mini.svg = _mini.group = _mini.container = _mini.matrix = _mini.warnEl = null;
-        _mini.markers = {}; _mini.sm = {};
+        _mini.container = _mini.pan = _mini.trackSvg = _mini.markerSvg = _mini.markerGroup =
+            _mini.matrix = _mini.warnEl = null;
+        _mini.vb = null; _mini.markers = {}; _mini.sm = {};
     }
     function setMiniFocus(num) {
         _mini.focus = num || null;
@@ -263,9 +393,9 @@
     function updateMiniMarker(num, x, y) {
         const info = state.driverInfo[num] || {};
         let m = _mini.markers[num];
-        if (!m && _mini.group) {
+        if (!m && _mini.markerGroup) {
             m = createMiniMarker(info.color || DEFAULT_CAR_COLOR, info.tla || num);
-            _mini.markers[num] = m; _mini.group.appendChild(m);
+            _mini.markers[num] = m; _mini.markerGroup.appendChild(m);
         }
         if (m) m.setAttribute('transform', `translate(${x.toFixed(1)}, ${y.toFixed(1)})`);
     }
@@ -283,7 +413,7 @@
     }
 
     function renderMini(t) {
-        if (!_mini.svg || !_mini.group) return;
+        if (!_mini.pan || !_mini.markerGroup) return;
         for (const num in posBuf) {
             const buf = posBuf[num]; if (!buf.length) continue;
             const st = state.driverStatus[num];
@@ -292,26 +422,27 @@
             updateMiniMarker(num, s.x, s.y);
         }
         for (const num in _mini.markers) if (!posBuf[num]) { removeMiniMarker(num); delete _mini.sm[num]; }
-        // Follow the chaser: anchor the viewBox on the focus car's SAME smoothed point, so it sits
-        // pinned dead-centre (marker + frame read the identical value → zero swim) while every marker
-        // shares the low-pass, keeping the whole field steady at high zoom.
-        const s = _mini.focus && _mini.sm[_mini.focus];
-        if (s && _mini.matrix) {
+        // Follow the chaser: pan both layers so the focus car's SAME smoothed point lands dead-centre
+        // (marker + frame read the identical value → zero swim). This is a CSS translate on the
+        // wrapper — composited, no re-raster — unlike the old per-frame viewBox reframe.
+        const fp = _mini.focus && _mini.sm[_mini.focus];
+        if (fp && _mini.matrix && _mini.s) {
             const M = _mini.matrix;
-            const sx = M.a * s.x + M.c * s.y + M.e;
-            const sy = M.b * s.x + M.d * s.y + M.f;
-            const w = _mini.baseVB.w / MINI_ZOOM, h = _mini.baseVB.h / MINI_ZOOM;
-            _mini.svg.setAttribute('viewBox',
-                `${(sx - w / 2).toFixed(2)} ${(sy - h / 2).toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)}`);
+            const ux = M.a * fp.x + M.c * fp.y + M.e;   // focus car in viewBox user-space
+            const uy = M.b * fp.x + M.d * fp.y + M.f;
+            const tx = _mini.cw / 2 - (ux - _mini.vb[0]) * _mini.s;   // px shift to centre it
+            const ty = _mini.ch / 2 - (uy - _mini.vb[1]) * _mini.s;
+            _mini.pan.style.setProperty('--mtx', tx.toFixed(2) + 'px');
+            _mini.pan.style.setProperty('--mty', ty.toFixed(2) + 'px');
         }
         syncMiniFlags();
     }
 
     // Mirror the main map's track-status flash + yellow-flag sectors onto the clone.
     function syncMiniFlags() {
-        if (!_mini.svg || !state.trackSvg) return;
+        if (!_mini.trackSvg || !state.trackSvg) return;
         ['#track-outline', '#track-sectors'].forEach(sel => {
-            const a = state.trackSvg.querySelector(sel), b = _mini.svg.querySelector(sel);
+            const a = state.trackSvg.querySelector(sel), b = _mini.trackSvg.querySelector(sel);
             if (!a || !b) return;
             b.classList.toggle('flag-blink', a.classList.contains('flag-blink'));
             const col = a.style.getPropertyValue('--flag-color');
@@ -320,7 +451,7 @@
         const yellow = new Set();
         state.trackSvg.querySelectorAll('[data-sector].sector-yellow')
             .forEach(e => yellow.add(e.getAttribute('data-sector')));
-        _mini.svg.querySelectorAll('[data-sector]').forEach(p => {
+        _mini.trackSvg.querySelectorAll('[data-sector]').forEach(p => {
             p.classList.toggle('sector-yellow', yellow.has(p.getAttribute('data-sector')));
         });
     }
@@ -568,6 +699,6 @@
     });
 
     // Race dashboard drives a zoomed mini-map instance through this interface (card J3V1CFdS).
-    window.F1TrackMap = { mountMini, setMiniFocus, unmountMini };
+    window.F1TrackMap = { mountMini, setMiniFocus, unmountMini, setRainContours };
 
 })();

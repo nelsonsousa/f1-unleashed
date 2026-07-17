@@ -141,6 +141,24 @@
   height: auto;
 }
 
+/* Rain + marker overlays: transparent SVGs stacked on the track SVG, each with its box synced
+   (via JS vars) to the track SVG's rendered rect so their viewBoxes map to identical pixels.
+   Rain repaints only on a radar update, markers only on a move — never the track layer.
+   Stacking: rain BEHIND the track lines (z 1) < track (z 2) < markers (z 3).
+   (cards zdXIoU5O rain, z9L5gqpj markers) */
+.track-map svg.track-base-layer { position: relative; z-index: 2; }
+.track-map svg.track-rain-layer,
+.track-map svg.track-marker-layer {
+  position: absolute;
+  left: var(--ov-left, 0); top: var(--ov-top, 0);
+  width: var(--ov-w, 100%); height: var(--ov-h, 100%);
+  max-width: none; max-height: none;
+  pointer-events: none;   /* transparent areas pass clicks through; markers re-enable below */
+}
+.track-map svg.track-rain-layer   { z-index: 1; }
+.track-map svg.track-marker-layer { z-index: 3; }
+.track-map svg.track-marker-layer .car-marker { pointer-events: auto; cursor: pointer; }
+
 .track-map .calibrating {
   position: absolute;
   top: 50%;

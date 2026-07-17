@@ -26,7 +26,10 @@ from app.services.weather_radar import TRACK_LOCATIONS
 logger = logging.getLogger(__name__)
 
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
-REFRESH_INTERVAL_S = 600          # 10 min, like the weather tiles
+# Open-Meteo's high-res models behind minutely_15 (ICON-D2 / AROME / HRRR) only refresh every
+# 1-3 h, so most 10-min captures are identical — but the snapshot is a tiny JSON and we may move
+# to a faster provider later, so refresh every 10 min alongside the radar. (SME)
+REFRESH_INTERVAL_S = 600          # 10 min, alongside the radar
 FORECAST_FILE = "weather_forecast.jsonl"
 
 
@@ -39,7 +42,9 @@ async def fetch_forecast(meeting_name: str) -> Optional[dict]:
     lat, lng = coord
     params = {
         "latitude": lat, "longitude": lng,
-        "minutely_15": "weather_code,precipitation_probability",
+        # is_day drives the day/night icon variant; captured alongside so the forecast stream
+        # carries everything the current-condition ("Now") display needs (card Bx8ki87i).
+        "minutely_15": "weather_code,precipitation_probability,is_day",
         "forecast_minutely_15": 8,        # 8 × 15 min = 2 h ahead
         "timezone": "UTC",
     }
@@ -60,6 +65,7 @@ async def fetch_forecast(meeting_name: str) -> Optional[dict]:
         "time": m.get("time", []),
         "weather_code": m.get("weather_code", []),
         "precipitation_probability": m.get("precipitation_probability", []),
+        "is_day": m.get("is_day", []),
     }
 
 

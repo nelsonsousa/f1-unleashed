@@ -147,15 +147,16 @@ def radar_latest(
 _pivot_cache: dict = {}
 
 
-def _resolve_track_pivot(session_dir):
-    """The circuit's raw-coordinate rotation pivot (cx, cy), resolved via
-    subscribe.json → circuit name → track SVG. Cached per session; None if
-    unresolved (the client then just shows no contour overlay)."""
+def _resolve_track_geom(session_dir):
+    """The circuit's raw-coordinate rotation pivot (cx, cy) plus the rain clip
+    square, resolved via subscribe.json → circuit name → track SVG. Cached per
+    session; (None, None) if unresolved (the client then shows no contour overlay)."""
     key = str(session_dir)
     if key in _pivot_cache:
         return _pivot_cache[key]
     import json as _json
     piv = None
+    clip = None
     try:
         sub = _json.loads((session_dir / "subscribe.json").read_text())
         meeting = (sub.get("SessionInfo") or {}).get("Meeting") or {}
@@ -163,14 +164,19 @@ def _resolve_track_pivot(session_dir):
                 or meeting.get("Location") or meeting.get("Name"))
         if name:
             from app.processing.track_geometry import find_svg_path
-            from app.services.weather_contours import track_pivot
+            from app.services.weather_contours import (
+                track_pivot, track_raw_bbox, coverage_square)
             svg = find_svg_path(name)
             if svg:
                 piv = track_pivot(svg)
+                bbox = track_raw_bbox(svg)
+                if bbox:
+                    clip = coverage_square(bbox)
     except (OSError, ValueError, KeyError):
         piv = None
-    _pivot_cache[key] = piv
-    return piv
+        clip = None
+    _pivot_cache[key] = (piv, clip)
+    return _pivot_cache[key]
 
 
 @router.get("/weather/radar/contours")
@@ -208,8 +214,8 @@ def radar_contours(
         payload = _json.loads(path.read_text())
     except (OSError, ValueError):
         return Response(status_code=204)
-    pivot = _resolve_track_pivot(session_dir)
-    svg = contours_to_track_svg(payload, pivot) if pivot else ""
+    pivot, clip = _resolve_track_geom(session_dir)
+    svg = contours_to_track_svg(payload, pivot, clip) if pivot else ""
     return JSONResponse(
         {"svg": svg, "alert": payload.get("alert")},
         headers={"Cache-Control": "no-store", "X-Tile-Id": path.stem},

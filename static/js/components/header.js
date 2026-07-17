@@ -482,14 +482,38 @@
     // Speed button. Replay only. 30x/60x were dropped — too fast to be useful
     // (they create more problems than they solve).
     const SPEEDS = [1, 2, 5, 10];
-    function cycleSpeed() {
-        const current = messageBus.speed || 1;
-        const idx = SPEEDS.indexOf(current);
-        const next = SPEEDS[(idx + 1) % SPEEDS.length];
-        messageBus.send({ cmd: 'speed', value: next });
+    const SPEED_KEY = 'f1.playbackSpeed';
+
+    // Apply a playback speed and persist it. The UI button only cycles SPEEDS (1x-10x), but the
+    // server accepts 0.1x-10x: sub-1x is a dev-only slow-motion band for smooth screen-capture,
+    // reachable from the console via window.F1SetSpeed(0.1) and remembered in localStorage so it
+    // survives reloads/reconnects. Not exposed in the UI. (card TDaS5wwz)
+    function setPlaybackSpeed(v) {
+        v = Number(v);
+        if (!isFinite(v)) return;
+        v = Math.max(0.1, Math.min(v, 10));           // mirror the server clamp
+        messageBus.send({ cmd: 'speed', value: v });
+        messageBus.speed = v;
+        try { localStorage.setItem(SPEED_KEY, String(v)); } catch (e) {}
         const btn = document.getElementById('speedBtn');
-        if (btn) btn.textContent = `${next}x`;
+        if (btn) btn.textContent = `${v}x`;
     }
+    window.F1SetSpeed = setPlaybackSpeed;             // console entry point for slow motion
+
+    function cycleSpeed() {
+        const idx = SPEEDS.indexOf(messageBus.speed || 1);   // -1 (e.g. from slow-mo) → back to 1x
+        setPlaybackSpeed(SPEEDS[(idx + 1) % SPEEDS.length]);
+    }
+
+    // Re-apply a stored slow-motion speed once per connect (the server resets to 1x on connect).
+    let _speedRestored = false;
+    messageBus.on('playback:status', () => {
+        if (_speedRestored) return;
+        _speedRestored = true;
+        let stored = NaN;
+        try { stored = parseFloat(localStorage.getItem(SPEED_KEY)); } catch (e) {}
+        if (isFinite(stored) && stored !== (messageBus.speed || 1)) setPlaybackSpeed(stored);
+    });
 
     // =========================================================================
     // Scrubber
