@@ -138,17 +138,8 @@
         // orientation. See maybeApplyAlignment.
         state.trackRotation = parseFloat(trackRoot?.dataset?.rotation || '') || 0;
         state.trackSvgLoaded = true;
-        // Inject any weather contours that arrived before the track SVG mounted.
-        if (state.pendingRadarSvg != null && trackRoot) {
-            let g = trackRoot.querySelector('#weather-contours');
-            if (!g) {
-                g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-                g.setAttribute('id', 'weather-contours');
-                trackRoot.insertBefore(g, trackRoot.firstChild);
-            }
-            g.innerHTML = state.pendingRadarSvg;
-            state.pendingRadarSvg = null;
-        }
+        // Contours that arrived before the track SVG mounted are buffered by the track-map tile
+        // (F1TrackMap.setRainContours) and injected when its rain layer builds. (card zdXIoU5O)
     }
 
     async function fetchRadarExtent() {
@@ -534,10 +525,10 @@
     }
 
     function clearRadarLayer(layer) {
-        const g = document.querySelector('#trackMap #track-root #weather-contours');
-        if (g) g.innerHTML = '';
+        if (window.F1TrackMap && window.F1TrackMap.setRainContours) {
+            window.F1TrackMap.setRainContours('');
+        }
         delete state.radarTileId[layer];
-        state.pendingRadarSvg = null;
         updateRainAlert(null);
     }
 
@@ -601,21 +592,13 @@
     });
 
     function showRadarLayer(layer, data) {
-        // Server already put the contours in the track's coordinate system.
-        // Inject them as the FIRST child of #track-root (behind the track lines)
-        // so the single track transform drives both. If the track SVG hasn't
-        // mounted yet, stash the markup and inject it on mount (see below).
+        // Server already put the contours in the track's coordinate system. The track-map tile
+        // owns the rain layer (a dedicated overlay SVG behind the track lines, card zdXIoU5O) and
+        // buffers the body until the track SVG has mounted; we just hand it the markup.
         updateRainAlert(data.alert);
-        const trackRoot = document.querySelector('#trackMap #track-root');
-        if (!trackRoot) { state.pendingRadarSvg = data.svg || ''; return; }
-        let g = trackRoot.querySelector('#weather-contours');
-        if (!g) {
-            g = document.createElementNS(SVGNS, 'g');
-            g.setAttribute('id', 'weather-contours');
-            trackRoot.insertBefore(g, trackRoot.firstChild);
+        if (window.F1TrackMap && window.F1TrackMap.setRainContours) {
+            window.F1TrackMap.setRainContours(data.svg || '');
         }
-        g.innerHTML = data.svg || '';
-        state.pendingRadarSvg = null;
     }
 
     messageBus.on('state:reset', () => {

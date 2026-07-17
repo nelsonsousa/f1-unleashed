@@ -192,11 +192,85 @@ def track_pivot(svg_path) -> tuple[float, float] | None:
     return (float(m.group(1)), float(m.group(2))) if m else None
 
 
-def contours_to_track_svg(payload: dict, pivot: tuple[float, float]) -> str:
+def track_raw_bbox(svg_path) -> tuple[float, float, float, float] | None:
+    """Union bounding box ``(minx, miny, maxx, maxy)`` of the track paths in RAW
+    coordinates — the same frame the rain contours are emitted in. Track paths are
+    ``M``/``L`` polylines, so every number pair in ``d`` is a vertex."""
+    try:
+        txt = Path(svg_path).read_text()
+    except OSError:
+        return None
+    xs: list[float] = []
+    ys: list[float] = []
+    for tag in re.findall(r"<path\b[^>]*>", txt):
+        if not re.search(r'class="[^"]*\btrack\b[^"]*"', tag):
+            continue
+        d = re.search(r'\bd="([^"]*)"', tag)
+        if not d:
+            continue
+        nums = [float(v) for v in re.findall(r"-?\d+\.?\d*", d.group(1))]
+        xs.extend(nums[0::2])
+        ys.extend(nums[1::2])
+    if not xs:
+        return None
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def coverage_square(bbox: tuple[float, float, float, float],
+                    margin: float = 0.10) -> tuple[float, float, float, float]:
+    """A square clip region centred on the track's raw bbox, sized to the LARGEST
+    track dimension plus ``margin`` all round (default 10% → side = maxdim·1.2), so
+    the rain fills the track-map tile rather than clipping on empty space. Returns
+    ``(xmin, ymin, xmax, ymax)`` in raw coords. (card zdXIoU5O)"""
+    minx, miny, maxx, maxy = bbox
+    cx, cy = (minx + maxx) / 2.0, (miny + maxy) / 2.0
+    half = max(maxx - minx, maxy - miny) * (1.0 + 2.0 * margin) / 2.0
+    return (cx - half, cy - half, cx + half, cy + half)
+
+
+def _clip_ring(ring: list[tuple[float, float]],
+               xmin: float, ymin: float, xmax: float, ymax: float
+               ) -> list[tuple[float, float]]:
+    """Sutherland–Hodgman clip a closed polygon ring to an axis-aligned rect.
+    Returns the clipped vertex list (empty if the ring is fully outside)."""
+    def _edge(poly, inside, xsect):
+        out = []
+        for i in range(len(poly)):
+            cur, prv = poly[i], poly[i - 1]
+            cin, pin = inside(cur), inside(prv)
+            if cin:
+                if not pin:
+                    out.append(xsect(prv, cur))
+                out.append(cur)
+            elif pin:
+                out.append(xsect(prv, cur))
+        return out
+
+    poly = ring
+    poly = _edge(poly, lambda p: p[0] >= xmin,
+                 lambda a, b: (xmin, a[1] + (b[1] - a[1]) * (xmin - a[0]) / (b[0] - a[0])))
+    if poly:
+        poly = _edge(poly, lambda p: p[0] <= xmax,
+                     lambda a, b: (xmax, a[1] + (b[1] - a[1]) * (xmax - a[0]) / (b[0] - a[0])))
+    if poly:
+        poly = _edge(poly, lambda p: p[1] >= ymin,
+                     lambda a, b: (a[0] + (b[0] - a[0]) * (ymin - a[1]) / (b[1] - a[1]), ymin))
+    if poly:
+        poly = _edge(poly, lambda p: p[1] <= ymax,
+                     lambda a, b: (a[0] + (b[0] - a[0]) * (ymax - a[1]) / (b[1] - a[1]), ymax))
+    return poly
+
+
+def contours_to_track_svg(payload: dict, pivot: tuple[float, float],
+                          clip: tuple[float, float, float, float] | None = None) -> str:
     """Composite-px contours → an SVG ``<g>`` body (defs + paths) in the track's
     RAW coordinate system. The circuit-fraction point maps to the pivot;
     composite is north-up (+px=E, +py=S); raw is +x=E, +y=N (the #track-root
-    scale(1,-1) then flips it to display, same as the track)."""
+    scale(1,-1) then flips it to display, same as the track).
+
+    ``clip`` (xmin, ymin, xmax, ymax) in RAW coords, when given, clips every ring
+    to that region so we only ship rain over the visible track-map tile rather than
+    the whole radar composite. (card zdXIoU5O)"""
     geo = payload["geometry"]
     k = (geo["width_m"] / 512.0) * 10.0            # raw units (0.1 m) per composite px
     fx512, fy512 = geo["circuit_frac_x"] * 512, geo["circuit_frac_y"] * 512
@@ -243,7 +317,11 @@ def contours_to_track_svg(payload: dict, pivot: tuple[float, float]) -> str:
         d = ""
         for rings in band["polygons"]:
             for ring in rings:
-                d += "M" + "L".join(f"{rawx(x):.0f},{rawy(y):.0f}" for x, y in ring) + "Z"
+                raw = [(rawx(x), rawy(y)) for x, y in ring]
+                if clip:
+                    raw = _clip_ring(raw, *clip)
+                if len(raw) >= 3:
+                    d += "M" + "L".join(f"{px:.0f},{py:.0f}" for px, py in raw) + "Z"
         if d:
             body += f'<path d="{d}" fill="url(#rain-{band["name"]})" fill-rule="evenodd"/>'
     return f"<defs>{defs}</defs>{body}"
