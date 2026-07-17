@@ -13,6 +13,8 @@
     const state = {
         trackSvg: null,
         carMarkersGroup: null,
+        markerOverlay: null,   // transparent overlay SVG holding the markers (card z9L5gqpj)
+        overlayRO: null,       // ResizeObserver keeping the overlay box on the track SVG's rect
         carMarkers: {},
         driverInfo: {},      // num -> {tla, color}
         driverStatus: {},    // num -> "RET"|"STOP"|... (card 55: hide RET/STOP markers)
@@ -57,15 +59,6 @@
                 state.rotation = parseFloat(trackRoot.dataset.rotation) || 0;
             }
 
-            state.carMarkersGroup = svgElement.querySelector('#car-markers');
-            if (state.carMarkersGroup) {
-                // Click a car → focus that driver (+ neighbours in a race) on the dashboard.
-                state.carMarkersGroup.addEventListener('click', (e) => {
-                    const m = e.target.closest('.car-marker');
-                    if (m && window.F1Dashboard) window.F1Dashboard.focus(m.dataset.driver);
-                });
-            }
-
             const trackMap = document.getElementById('trackMap');
             if (trackMap) {
                 trackMap.innerHTML = '';
@@ -89,6 +82,8 @@
                         el.setAttribute('stroke-width', (2 * f1PerPx).toFixed(1));
                     });
                 }
+
+                buildMarkerOverlay(trackMap, svgElement);   // markers live on their own layer
 
                 const calibrating = document.getElementById('trackCalibrating');
                 if (calibrating) calibrating.style.display = 'none';
@@ -117,6 +112,51 @@
             marker.remove();
             delete state.carMarkers[num];
         }
+    }
+
+    // Markers used to live inside the track SVG (#car-markers), so moving one each frame repainted
+    // that SVG — including the dense rain-radar contours it overlaps. Put them on a SEPARATE
+    // transparent overlay SVG instead: it shares the track's viewBox + track-root (F1→user) matrix,
+    // so markers land at identical pixels, but moving them only repaints the overlay. (card z9L5gqpj)
+    function buildMarkerOverlay(container, trackSvg) {
+        const vb = trackSvg.getAttribute('viewBox') || '0 0 100 100';
+        const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        overlay.setAttribute('viewBox', vb);
+        overlay.setAttribute('class', 'track-marker-layer');
+        const root = trackSvg.querySelector('#track-root');
+        const m = (root && root.transform.baseVal.numberOfItems)
+            ? root.transform.baseVal.consolidate().matrix : null;
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.setAttribute('id', 'car-markers-overlay');
+        if (m) group.setAttribute('transform',
+            `matrix(${m.a} ${m.b} ${m.c} ${m.d} ${m.e} ${m.f})`);
+        overlay.appendChild(group);
+        container.appendChild(overlay);
+        state.markerOverlay = overlay;
+        state.carMarkers = {};        // markers are re-created into the fresh group on next frame
+        state.carMarkersGroup = group;
+        // Click a car → focus that driver (+ neighbours in a race) on the dashboard.
+        group.addEventListener('click', (e) => {
+            const mk = e.target.closest('.car-marker');
+            if (mk && window.F1Dashboard) window.F1Dashboard.focus(mk.dataset.driver);
+        });
+        syncMarkerOverlayBox();
+        if (state.overlayRO) state.overlayRO.disconnect();
+        state.overlayRO = new ResizeObserver(syncMarkerOverlayBox);
+        state.overlayRO.observe(container);
+    }
+
+    // Keep the overlay box exactly on the (aspect-fitted, centred) track SVG's rendered rect, so
+    // the two share a pixel mapping. Re-run whenever the tile resizes.
+    function syncMarkerOverlayBox() {
+        const ov = state.markerOverlay, trk = state.trackSvg;
+        const cont = document.getElementById('trackMap');
+        if (!ov || !trk || !cont) return;
+        const cr = cont.getBoundingClientRect(), tr = trk.getBoundingClientRect();
+        ov.style.setProperty('--ov-left', (tr.left - cr.left).toFixed(1) + 'px');
+        ov.style.setProperty('--ov-top', (tr.top - cr.top).toFixed(1) + 'px');
+        ov.style.setProperty('--ov-w', tr.width.toFixed(1) + 'px');
+        ov.style.setProperty('--ov-h', tr.height.toFixed(1) + 'px');
     }
 
     function updateCarMarker(num, x, y) {
