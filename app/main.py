@@ -280,13 +280,12 @@ async def live_session_monitor():
                             )
 
                     # ── Weather radar lifecycle ──
-                    # Start radar 15 min before the session begins; the
+                    # Start radar (and forecast) as soon as the live feed is up; the
                     # 204 branch above schedules the 5-min-after stop.
                     # The 4 h trailing window is a safety net in case
                     # we never see a 204 (network issues, server restart).
                     if cached_next_session:
                         s = cached_next_session
-                        radar_window_start = s["session_date"] - timedelta(minutes=15)
                         radar_window_end = s["session_date"] + timedelta(hours=4)
                         # Both start only once the live feed is up — so the F1 keys are known and
                         # the session cache dir exists. Tiles co-locate in that session dir.
@@ -304,8 +303,9 @@ async def live_session_monitor():
                                 meeting_name=s["event_name"],
                                 stop_at=radar_window_end,
                             )
-                        # Radar stays gated to the 15-min-before → end window (Rainbow.ai call budget).
-                        if (radar_window_start <= now_utc <= radar_window_end and cache_path
+                        # Radar: same as the forecast — start when the live feed is up and refresh
+                        # every 10 min until the session ends (the 15-min-before budget gate is gone).
+                        if (cache_path and now_utc <= radar_window_end
                                 and radar_capture.active_key != str(cache_path)):
                             radar_capture.start(
                                 session_dir=cache_path,
