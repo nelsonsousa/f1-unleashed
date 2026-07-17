@@ -14,6 +14,7 @@
         trackSvg: null,
         carMarkersGroup: null,
         markerOverlay: null,   // transparent overlay SVG holding the markers (card z9L5gqpj)
+        origViewBox: null,     // the SVG's authored (non-square) viewBox — kept for the mini-map
         rainOverlay: null,     // transparent overlay SVG holding the rain contours (card zdXIoU5O)
         rainGroup: null,       // <g> (track-root matrix) the server contour body is injected into
         pendingRain: null,     // contour body buffered until the overlays are built
@@ -68,6 +69,18 @@
                 svgElement.classList.add('track-base-layer');   // z-index anchor for the overlays
                 trackMap.appendChild(svgElement);
                 state.trackSvg = svgElement;
+
+                // Reframe the map to a SQUARE viewBox — extend the shorter dimension symmetrically
+                // (equal margin on both sides) so the near-square tile isn't letterboxed and the rain
+                // overlay fills it; the track sits centred. The authored viewBox is already ~1.2x the
+                // track's long side, matching the server's rain coverage square. (card zdXIoU5O)
+                state.origViewBox = svgElement.getAttribute('viewBox');
+                if (state.origViewBox) {
+                    const [vx, vy, vw, vh] = state.origViewBox.split(/\s+/).map(Number);
+                    const side = Math.max(vw, vh);
+                    svgElement.setAttribute('viewBox',
+                        `${vx - (side - vw) / 2} ${vy - (side - vh) / 2} ${side} ${side}`);
+                }
 
                 const viewBox = svgElement.getAttribute('viewBox');
                 if (viewBox) {
@@ -259,11 +272,15 @@
         if (!container) return;
         if (!state.trackSvg) { _mini.pending = container; return; }   // SVG not loaded yet → retry on load
         _mini.pending = null;
-        const vb = (state.trackSvg.getAttribute('viewBox') || '0 0 100 100').split(/\s+/).map(Number);
+        // The mini follows a car at high zoom, so it keeps the authored (non-square) frame — the
+        // main map's square reframe (for rain) would just change its crop aspect. (card zdXIoU5O)
+        const vbStr = state.origViewBox || state.trackSvg.getAttribute('viewBox') || '0 0 100 100';
+        const vb = vbStr.split(/\s+/).map(Number);
 
         // Track layer — clone of the main map, paths + flag colouring only (markers stripped).
         const trackSvg = state.trackSvg.cloneNode(true);
         trackSvg.classList.add('mini-map', 'mini-track-layer');   // .mini-map scopes track styling
+        trackSvg.setAttribute('viewBox', vbStr);                  // undo the main map's square reframe
         const oldMarkers = trackSvg.querySelector('#car-markers');
         if (oldMarkers) oldMarkers.remove();   // markers live on the overlay layer now
         // The clone inherits the main map's F1-unit stroke-widths, which render far heavier at the
