@@ -909,7 +909,7 @@ class SessionEngine:
                     cur_ms = int(self._clock.offset_seconds * 1000)
                     if cur_ms >= off_ms:
                         break
-                    delta = (off_ms - cur_ms) / 1000.0 / max(self._clock.speed, 1.0)
+                    delta = (off_ms - cur_ms) / 1000.0 / max(self._clock.speed, 0.1)
                     await asyncio.sleep(min(0.1, delta))
                 if not self._running or self._clock.state != ClockState.PLAYING:
                     return
@@ -936,15 +936,16 @@ class SessionEngine:
         self._raw_stream_task = None
 
     async def _set_speed(self, speed: float) -> None:
-        """Change playback speed — clamped to the documented replay range 1x-10x, so a
-        raw WS command can't drive the clock to 0.1x/60x (L1)."""
+        """Change playback speed. Range 0.1x-10x: 1x-10x is the normal UI cycle; sub-1x is a
+        dev-only slow-motion band (console/localStorage, not in the UI) for smooth screen-capture
+        (card TDaS5wwz). The cap stays at 10x so a raw WS command can't drive the clock to 60x."""
         if not self._clock:
             return
         try:
             speed = float(speed)
         except (TypeError, ValueError):
             return
-        self._clock.speed = max(1.0, min(speed, 10.0))
+        self._clock.speed = max(0.1, min(speed, 10.0))
         await self._broadcast_status()
 
     # ── Live Edge (data ∩ audio) ──
