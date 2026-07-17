@@ -26,7 +26,10 @@ from app.services.weather_radar import TRACK_LOCATIONS
 logger = logging.getLogger(__name__)
 
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
-REFRESH_INTERVAL_S = 600          # 10 min, like the weather tiles
+# Open-Meteo's high-res models behind minutely_15 (ICON-D2 / AROME / HRRR) refresh every 1-3 h;
+# the 15-min granularity is interpolation, not fresh data. So capture hourly to match the source
+# update cadence rather than re-fetching identical data every 10 min. (card Bx8ki87i)
+REFRESH_INTERVAL_S = 3600         # 1 h — matches Open-Meteo's forecast update frequency
 FORECAST_FILE = "weather_forecast.jsonl"
 
 
