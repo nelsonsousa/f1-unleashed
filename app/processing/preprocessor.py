@@ -14,10 +14,31 @@ Payload timestamp filtering:
 """
 
 import asyncio
+import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+_PROC_VERSION: Optional[str] = None
+
+
+def processor_code_version() -> str:
+    """A short hash of the processing code (all processors + this preprocessor).
+    It changes whenever any processor's source changes, so a transient DB built by
+    OLDER code is not reused on reconnect — replay always runs the latest code (M1).
+    Cached after first computation."""
+    global _PROC_VERSION
+    if _PROC_VERSION is None:
+        h = hashlib.sha1()
+        files = sorted((Path(__file__).parent / "processors").glob("*.py")) + [Path(__file__)]
+        for f in files:
+            try:
+                h.update(f.read_bytes())
+            except OSError:
+                pass
+        _PROC_VERSION = h.hexdigest()[:16]
+    return _PROC_VERSION
 
 import json as _json
 
@@ -42,8 +63,15 @@ from app.processing.processors.lap_timing_processor import LapTimingProcessor
 from app.processing.processors.lap_delta_processor import LapDeltaProcessor
 from app.processing.processors.driver_gap_processor import DriverGapProcessor
 from app.processing.processors.race_pace_processor import RacePaceProcessor
+from app.processing.processors.pq_pace_processor import PQPaceProcessor
+from app.processing.processors.sector_colour_processor import SectorColourProcessor
+from app.processing.processors.best_sector_processor import BestSectorProcessor
 from app.processing.processors.team_radio_processor import TeamRadioProcessor
 from app.processing.processors.data_health_processor import DataHealthProcessor
+from app.processing.processors.heartbeat_processor import HeartbeatProcessor
+from app.processing.processors.pit_stop_loss_processor import PitStopLossProcessor
+from app.processing.processors.dashboard_info_processor import DashboardInfoProcessor
+from app.processing.processors.dashboard_autoselect_processor import DashboardAutoSelectProcessor
 from app.processing.processors.sector_timing_processor import SectorTimingProcessor
 from app.processing.processors.tyre_processor import TyreProcessor
 from app.processing.processors.track_status_processor import TrackStatusProcessor
@@ -210,6 +238,7 @@ class SessionPreProcessor:
         self._db = SessionDatabase(session_path)
         self._bus = SessionMessageBus()
         self._processors: list[Processor] = []
+        self.failed = False   # set True if run() hits an unhandled error (H5)
 
         self._output_buffer: list[tuple[int, str, str]] = []  # (offset, topic, json)
         self._last_emitted: dict[str, str] = {}  # topic -> last JSON string
@@ -434,48 +463,30 @@ class SessionPreProcessor:
             # lap_classification_processor reclassifies retroactively as
             # each lap time arrives, so the live snapshot is already
             # correct.)
-            if self._pace_proc:
-                try:
-                    self._pace_proc.save_analysis()
-                except Exception:
-                    logger.exception("Pace processor save_analysis failed")
-                # Post-session analyses that consume pace.json: tyre
-                # phases (depends only on session.db) + pecking order
-                # (depends on this session's pace + prior chain). Run
-                # both after pace.json is written.
-                try:
-                    from app.analysis.tyre_phases import analyze_and_save as _tyre_save
-                    _tyre_save(self._session_path)
-                except Exception:
-                    logger.exception("Tyre phase analysis failed")
-                try:
-                    from app.analysis.pecking_order import compute_and_save as _po_save
-                    _po_save(self._session_path)
-                except Exception:
-                    logger.exception("Pecking-order analysis failed")
-                # Strategy prediction runs only at Qualifying finalize
-                # (= predicts the upcoming Race).
-                try:
-                    from app.analysis.strategy_prediction import (
-                        compute_and_save as _sp_save, _is_qualifying,
-                    )
-                    if _is_qualifying(self._session_path):
-                        _sp_save(self._session_path)
-                except Exception:
-                    logger.exception("Strategy prediction failed")
-                # Strategy validation runs at Race finalize (= compares
-                # actual race strategies to the Q session's prediction).
-                try:
-                    from app.analysis.strategy_validation import (
-                        compute_and_save as _sv_save, _is_race,
-                    )
-                    if _is_race(self._session_path):
-                        _sv_save(self._session_path)
-                except Exception:
-                    logger.exception("Strategy validation failed")
+            # (The dormant pace/tyre-phases/strategy analysis stack was removed — M2.
+            # The live pecking-order + pit-loss-estimate analyses run below/elsewhere.)
             self._flush_buffer()
             self._db.set_meta("status", "complete")
             self._db.set_meta("message_count", str(self._message_count))
+            self._db.set_meta("processor_version", processor_code_version())
+
+            # FP-based pecking-order prediction: independent of the (dormant) pace
+            # chain above — reads the finalized session DB + the prior session's
+            # pecking_order.json and publishes this session's running prediction.
+            try:
+                from app.analysis.pecking_order import compute_and_save as _po_save
+                _po_save(self._session_path)
+            except Exception:
+                logger.exception("Pecking-order analysis failed")
+
+            # Geometric pit-loss PREDICTION: refined across the event's FP/Q sessions
+            # (event-scoped), superseded by the in-race measurement. Independent of the
+            # dormant pace chain, like pecking-order above.
+            try:
+                from app.analysis.pit_loss_estimate import compute_and_save as _ple_save
+                _ple_save(self._session_path)
+            except Exception:
+                logger.exception("Pit-loss estimate analysis failed")
 
             if on_progress:
                 on_progress(100.0)
@@ -491,6 +502,7 @@ class SessionPreProcessor:
         except Exception:
             logger.exception(f"Pre-processing error: {self._session_path.name}")
             self._db.set_meta("status", "error")
+            self.failed = True   # surfaced to the client by the caller (H5)
 
     def _filter_message(self, msg: RawMessage) -> Optional[RawMessage]:
         """Apply timestamp filtering to a message. Returns None to drop it."""
@@ -532,17 +544,9 @@ class SessionPreProcessor:
     def _init_processors(self) -> None:
         telem_proc = TelemetryProcessor(self._bus, self._session_type)
         self._telem_proc = telem_proc  # stash for end-of-session finalize
-        # Pace processor — COMMENTED OUT (placeholder, to be reintroduced /
-        # reworked as pace_prediction). While disabled, the finalize block
-        # gated on `if self._pace_proc:` (pace.json + tyre_phases +
-        # pecking_order + strategy_prediction) is skipped.
-        # from app.processing.processors.pace_processor import PaceProcessor
-        # self._pace_proc = PaceProcessor(
-        #     self._bus, self._session_type,
-        #     session_path=self._session_path,
-        #     session_name=self._session_path.name,
-        # )
-        self._pace_proc = None
+        # (The old per-session PaceProcessor + pace/tyre-phases/strategy analysis stack
+        # was removed — M2. To be rebuilt later. The live pace colours come from the
+        # Race/PQ pace processors below.)
         # LapClassificationProcessor's TimingData handler MUST run
         # BEFORE DriverStatusProcessor's (= so _timing_lap is updated
         # before driverStatus is emitted to wildcard subscribers).
@@ -563,6 +567,9 @@ class SessionPreProcessor:
             TyreProcessor(self._bus, self._session_type),
             StandingsProcessor(self._bus, self._session_type),
             RacePaceProcessor(self._bus, self._session_type),
+            PQPaceProcessor(self._bus, self._session_type),
+            SectorColourProcessor(self._bus, self._session_type),
+            BestSectorProcessor(self._bus, self._session_type),
             RaceControlProcessor(self._bus, self._session_type),
             # FIA Stewards stack — only meaningful for race + sprint;
             # the processor itself no-ops if registered elsewhere.
@@ -576,7 +583,15 @@ class SessionPreProcessor:
             WeatherProcessor(self._bus, self._session_type),
             TeamRadioProcessor(self._bus, self._session_type),
             DataHealthProcessor(self._bus, self._session_type),
-            # self._pace_proc,  # COMMENTED OUT — pace placeholder (see _init above)
+            HeartbeatProcessor(self._bus, self._session_type),
+            # In-race pit-stop time-loss measurement — races only (needs driverInt/gap +
+            # the F1 pit topics). No-ops in P/Q (subscribe() early-returns).
+            *([PitStopLossProcessor(self._bus, self._session_type)]
+              if self._session_type == "race" else []),
+            # Live-dashboard per-driver info tile — P/Q only (subscribe() early-returns otherwise).
+            DashboardInfoProcessor(self._bus, self._session_type),
+            # Dashboard auto-select recommendation (card wfMzaSwh) — all session types.
+            DashboardAutoSelectProcessor(self._bus, self._session_type),
         ]
         for p in self._processors:
             p.skip_animations = True

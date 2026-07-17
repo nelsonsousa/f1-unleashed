@@ -1,25 +1,28 @@
 """
-Race Pace Processor — colour-codes each driver's last lap time against the race
-leader's pace (RACE ONLY).  Trello: "Current race pace".
+Race Pace Processor — colour-codes each driver's last lap time against the FASTEST
+lap on the SAME lap number (RACE ONLY).  Trello: "Current race pace".
 
-Subscribes (wildcard) to: driverLaps:{num}, driverLapClassification:{num}, standings
+Subscribes (wildcard) to: driverLaps:{num}, driverLapClassification:{num}
 Emits: driverPaceColour:{num}  { lap, colour }   (persisted)
 
-Reference = the race leader's (P1) last REPRESENTATIVE lap time, i.e. excluding
-in-laps (PIT), out-laps (OUT) and STOP. If the leader's most recent lap is one of
-those, the reference is left unchanged. Each driver's last representative lap is
-then compared to the reference and binned (delta = driver − reference):
+Reference = the fastest REPRESENTATIVE lap time on that lap number — min across the
+field of each driver's lap-N time, excluding in-laps (PIT), out-laps (OUT) and STOP.
+Stored per lap, so it's stable (monotonic — only improves) and apples-to-apples
+(same fuel/tyre phase). It is NOT the leader's time: the leader can be pace-managing
+while a car behind sets the fastest lap. Each driver's last representative lap is
+compared to its lap's fastest and binned (delta = driver − fastest-on-that-lap):
 
-    delta <= 0           purple   (faster than or equal to the leader)
+    delta <= 0           purple   (the fastest on that lap)
     +0.001 .. +0.250     blue
     +0.251 .. +0.500     green
     +0.501 .. +1.000     yellow
     +1.001 .. +2.000     orange
     > +2.000             red
 
-A driver whose last lap is an in/out/stop lap → "white" (nothing meaningful to
-compare). The whole field is recomputed whenever the leader posts a new
-representative lap (or the leader changes).
+A driver whose last lap is an in/out/stop lap is WHITE (2026-07 SME rule; supersedes
+qKVcxF9n); retired/stopped white, DSQ blank. "white" is also used before any
+same-lap reference exists. The field is recomputed whenever a driver improves the
+fastest time on its lap.
 """
 
 from datetime import datetime
@@ -51,9 +54,10 @@ class RacePaceProcessor(Processor):
         self._is_race = session_type == "race"
         self._cls: dict[str, dict[int, str]] = {}   # num -> {lap -> classification type}
         self._last: dict[str, dict] = {}            # num -> {"lap", "ms"} last completed lap
-        self._leader: Optional[str] = None
-        self._ref_ms: Optional[int] = None          # leader's last representative lap time
+        self._fastest_lap_ms: dict[int, int] = {}   # lap -> fastest representative lap time on it
         self._colour: dict[str, str] = {}           # num -> last emitted colour (dedup)
+        self._status: dict[str, Optional[str]] = {}
+        self._started = False                       # lights out (SessionStatus=Started)
 
     def subscribe(self) -> None:
         if self._is_race:
@@ -64,8 +68,16 @@ class RacePaceProcessor(Processor):
             self._on_laps(topic.split(":", 1)[1], data, clock_time)
         elif topic.startswith("driverLapClassification:"):
             self._on_cls(topic.split(":", 1)[1], data, clock_time)
-        elif topic == "standings":
-            self._on_standings(data, clock_time)
+        elif topic.startswith("driverStatus:"):
+            num = topic.split(":", 1)[1]
+            st = data if isinstance(data, str) else None
+            if st != self._status.get(num):
+                self._status[num] = st
+                self._emit_colour(num, clock_time)
+        elif topic == "SessionStatus":
+            if isinstance(data, dict) and data.get("Status") == "Started" and not self._started:
+                self._started = True
+                self._recompute_all(clock_time)
 
     def _representative(self, num: str, lap: Optional[int]) -> bool:
         if lap is None:
@@ -93,12 +105,12 @@ class RacePaceProcessor(Processor):
         if not isinstance(lap, int):
             return
         self._cls.setdefault(num, {})[lap] = data.get("type", "")
-        # If this updates the representativeness of the driver's last completed
-        # lap, refresh (their colour, and the reference if they're the leader).
+        # Classification just resolved for the driver's last completed lap — it may
+        # now be representative and improve that lap's fastest time.
         last = self._last.get(num)
         if last and last["lap"] == lap:
-            if num == self._leader:
-                self._refresh_reference(clock_time)
+            if self._representative(num, lap) and self._update_fastest(lap, last["ms"]):
+                self._recompute_all(clock_time)
             else:
                 self._emit_colour(num, clock_time)
 
@@ -111,36 +123,22 @@ class RacePaceProcessor(Processor):
         ms = _parse_ms(ll["time"])
         if ms is None:
             return
-        self._last[num] = {"lap": int(ll["lap"]), "ms": ms}
-        if num == self._leader:
-            self._refresh_reference(clock_time)
+        lap = int(ll["lap"])
+        self._last[num] = {"lap": lap, "ms": ms}
+        if self._representative(num, lap) and self._update_fastest(lap, ms):
+            self._recompute_all(clock_time)          # a same-lap fastest improved
         else:
             self._emit_colour(num, clock_time)
 
-    def _on_standings(self, data: Any, clock_time: datetime) -> None:
-        drivers = data.get("drivers") if isinstance(data, dict) else None
-        leader = drivers[0]["num"] if drivers else None
-        if leader == self._leader:
-            return
-        self._leader = leader
-        # Adopt the new leader's last representative lap as the reference.
-        last = self._last.get(leader) if leader else None
-        if last and self._representative(leader, last["lap"]):
-            self._ref_ms = last["ms"]
-        self._recompute_all(clock_time)
-
-    def _refresh_reference(self, clock_time: datetime) -> None:
-        """Leader posted a new lap — update the reference iff it's representative,
-        then recompute the field (or just the leader if the reference is unchanged)."""
-        last = self._last.get(self._leader) if self._leader else None
-        new_ref = self._ref_ms
-        if last and self._representative(self._leader, last["lap"]):
-            new_ref = last["ms"]
-        if new_ref != self._ref_ms:
-            self._ref_ms = new_ref
-            self._recompute_all(clock_time)
-        elif self._leader is not None:
-            self._emit_colour(self._leader, clock_time)
+    def _update_fastest(self, lap: int, ms: int) -> bool:
+        """Fold a representative lap-N time into that lap's fastest. True if it
+        improved — the per-lap min only ever decreases, so the reference is stable
+        and never drops when a car ahead clears its sectors."""
+        cur = self._fastest_lap_ms.get(lap)
+        if cur is None or ms < cur:
+            self._fastest_lap_ms[lap] = ms
+            return True
+        return False
 
     def _recompute_all(self, clock_time: datetime) -> None:
         for num in list(self._last):
@@ -150,10 +148,22 @@ class RacePaceProcessor(Processor):
         last = self._last.get(num)
         if not last:
             return
-        if self._ref_ms is None or not self._representative(num, last["lap"]):
+        cls = self._cls.get(num, {}).get(last["lap"])
+        st = self._status.get(num)
+        if not self._started:
+            colour = "white"     # pre-lights-out (race): grey the lap time
+        elif st == "DSQ":
+            colour = "blank"     # disqualified → clear last-lap (client)
+        elif st in ("RET", "STOP"):
+            colour = "white"     # retired / stopped → dimmed white
+        elif cls == "CHECKERED":
+            # Post-chequered slow-down lap → shown dimmed white (matches white mini).
             colour = "white"
         else:
-            colour = self._band(last["ms"] - self._ref_ms)
+            # Race in/out laps keep DEFAULT band colours (vs the fastest same-lap),
+            # NOT whited out — only P/Q whites in/out laps. (user 2026-07-08)
+            ref = self._fastest_lap_ms.get(last["lap"])   # fastest on THIS lap number
+            colour = "white" if ref is None else self._band(last["ms"] - ref)
         if self._colour.get(num) == colour:
             return
         self._colour[num] = colour

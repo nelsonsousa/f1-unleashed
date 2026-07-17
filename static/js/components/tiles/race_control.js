@@ -147,7 +147,7 @@
     // mid-session distraction (= per SME 2026-06-07).
     function isPeckingSession() {
         const t = window.SESSION_CONFIG?.sessionType || '';
-        return t !== 'practice';
+        return t !== 'practice' && !isRaceSession();   // quali-only: hidden in practice AND race/sprint (card)
     }
 
     function buildChampHtml(drivers, constructors) {
@@ -235,8 +235,10 @@
     function radioRow(clip) {
         const who = escapeHtml(clip.tla || clip.num || '');
         const f = escapeHtml(clip.file);
-        // Order: audio icon · driver TLA · "Team radio" · play · stop.
+        // Order: time · audio icon · driver TLA · "Team radio" · play · stop.
+        // Timestamp matches the RCM rows (clip broadcast Utc → track-local). (938qwRAp)
         return `<div class="race-control-msg rc-radio">` +
+            `<span class="race-control-time">${toLocalTimeStr(clip.utc)}</span>` +
             `<span class="rc-radio-icon">${RADIO_ICON_SVG}</span>` +
             `<span class="rc-radio-tla">${who}</span>` +
             `<span class="race-control-text">Team radio</span>` +
@@ -276,7 +278,7 @@
 
     function applyChampionshipTabVisibility() {
         // Championship tab only relevant in race-style sessions.
-        const tab = document.querySelector('#rcTabs .rc-tab[data-tab="champ"]');
+        const tab = document.querySelector('#rcTabs .tile-btn[data-tab="champ"]');
         const pane = document.getElementById('rcPaneChamp');
         const showChamp = isRaceSession();
         if (tab) tab.style.display = showChamp ? '' : 'none';
@@ -284,7 +286,7 @@
     }
 
     function applyPeckingTabVisibility() {
-        const tab = document.querySelector('#rcTabs .rc-tab[data-tab="pecking"]');
+        const tab = document.querySelector('#rcTabs .tile-btn[data-tab="pecking"]');
         const pane = document.getElementById('rcPanePecking');
         const showPecking = isPeckingSession();
         if (tab) tab.style.display = showPecking ? '' : 'none';
@@ -292,7 +294,7 @@
     }
 
     function activateTab(tab) {
-        document.querySelectorAll('#rcTabs .rc-tab').forEach((b) => {
+        document.querySelectorAll('#rcTabs .tile-btn').forEach((b) => {
             b.classList.toggle('active', b.dataset.tab === tab);
         });
         document.querySelectorAll('.rc-pane').forEach((p) => {
@@ -312,7 +314,7 @@
             if (typeof window.stopTeamRadio === 'function') window.stopTeamRadio();
             return;
         }
-        const btn = e.target.closest('#rcTabs .rc-tab');
+        const btn = e.target.closest('#rcTabs .tile-btn');
         if (!btn) return;
         activateTab(btn.dataset.tab);
         // Lazy fetch — guarantees the pane shows data even if the

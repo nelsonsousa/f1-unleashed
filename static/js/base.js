@@ -54,10 +54,8 @@ const messageBus = {
 
     // Playback state
     isPlaying: false,
+    finished: false,   // server: feed's terminal SessionStatus=Ends reached
     speed: 1,
-
-    // Seek state
-    skipAnimations: false,
 
     // Streaming state
     streamComplete: false,
@@ -162,9 +160,18 @@ const messageBus = {
 
         const ws = new WebSocket(wsUrl);
         this._ws = ws;
+        this._sessionName = sessionName;
+
+        ws.onopen = () => { this._reconnectAttempts = 0; };
 
         ws.onmessage = (event) => {
-            const msg = JSON.parse(event.data);
+            let msg;
+            try {
+                msg = JSON.parse(event.data);   // don't let one malformed frame kill the socket (L11)
+            } catch (e) {
+                console.warn('Dropping malformed WS message', e);
+                return;
+            }
             const topic = msg.topic;
             const data = msg.data;
 
@@ -205,9 +212,11 @@ const messageBus = {
                 // Set initial playback state
                 this.isPlaying = data.isPlaying || false;
                 this.speed = data.speed || 1;
+                this.finished = !!data.finished;
                 this.emit('playback:status', {
                     status: this.isPlaying ? 'playing' : 'paused',
                     isPlaying: this.isPlaying,
+                    finished: this.finished,
                 });
 
                 // Set initial clock position
@@ -256,9 +265,11 @@ const messageBus = {
             } else if (topic === 'state:status') {
                 this.isPlaying = data.isPlaying;
                 this.speed = data.speed || 1;
+                this.finished = !!data.finished;
                 this.emit('playback:status', {
                     status: data.isPlaying ? 'playing' : 'paused',
                     isPlaying: data.isPlaying,
+                    finished: this.finished,
                 });
 
             } else if (topic === 'state:stream-progress') {
@@ -290,6 +301,22 @@ const messageBus = {
 
         ws.onclose = () => {
             console.log('WebSocket closed');
+            if (this._ws === ws) this._ws = null;
+            // Auto-reconnect after an unexpected drop (server/capture restart).
+            // Reconnecting re-pulls state:full → session:loaded, refreshing the
+            // audio segment map so a mid-capture restart doesn't strand a stale
+            // single-segment map on a still-open client (hwu52Zqy). reset() opts
+            // out via _intentionalClose.
+            if (this._intentionalClose) { this._intentionalClose = false; return; }
+            if (this._reconnectTimer) return;
+            const n = this._reconnectAttempts || 0;
+            const delay = Math.min(1000 * Math.pow(2, n), 8000);   // 1,2,4,8,8… s
+            this._reconnectAttempts = n + 1;
+            this.emit('session:reconnecting', { attempt: n + 1 });
+            this._reconnectTimer = setTimeout(() => {
+                this._reconnectTimer = null;
+                this.connect(this._sessionName);
+            }, delay);
         };
 
         ws.onerror = (error) => {
@@ -306,6 +333,8 @@ const messageBus = {
 
     // Clear all state
     reset() {
+        this._intentionalClose = true;
+        if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
         if (this._ws) {
             this._ws.close();
             this._ws = null;
@@ -353,24 +382,39 @@ document.addEventListener('keydown', (e) => {
     if (e.key === ' ') {
         e.preventDefault();
         togglePlayPause();
-    // P: toggle AUDIO only — independent of data play state.
-    } else if (e.key === 'p' || e.key === 'P') {
+    // Enter: jump to the SYNC TO marker (previous sync event shown on the
+    // button) and resume playback (if paused).
+    } else if (e.key === 'Enter') {
         e.preventDefault();
-        if (typeof window.toggleAudioPlay === 'function') {
-            window.toggleAudioPlay();
+        const btn = document.getElementById('syncBtn');
+        if (btn && btn._syncOffset != null) {
+            seekToOffset(btn._syncOffset);
+            messageBus.send({ cmd: 'play' });
         }
-    // Arrow keys: ±10 s skip on streams that are PLAYING. Paused
-    // streams are not affected. Data is the only stream that uses the
-    // global seek; audio piggy-backs through audioScrubberSeek.
+    // Arrow keys: ±10 s skip. Works whether playing OR paused — a paused
+    // seek just repositions the playhead. Data uses the global seek; audio
+    // piggy-backs through skipAudioRelative.
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
         const delta = e.key === 'ArrowLeft' ? -10 : 10;
-        if (messageBus.isPlaying) {
-            seekToOffset(Math.max(0, messageBus.getCurrentOffset() + delta));
-        }
+        seekToOffset(Math.max(0, messageBus.getCurrentOffset() + delta));
         if (typeof window.skipAudioRelative === 'function') {
             window.skipAudioRelative(delta);
         }
+    // + / = : nudge forward 0.5 s (manual sync fine-tune). Modifier-free only,
+    // so Cmd/Ctrl + still zooms the browser.
+    } else if ((e.key === '+' || e.key === '=') && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        seekToOffset(messageBus.getCurrentOffset() + 0.5);
+        if (typeof window.skipAudioRelative === 'function') {
+            window.skipAudioRelative(0.5);
+        }
+    // - : pause 0.1 s then resume — nudges the stream 0.1 s later vs real time
+    // (fine-tune). Modifier-free only, so Cmd/Ctrl - still zooms out.
+    } else if (e.key === '-' && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        messageBus.send({ cmd: 'pause' });
+        setTimeout(() => messageBus.send({ cmd: 'play' }), 100);
     // M: mute toggle (handy without reaching for the mute button).
     } else if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();

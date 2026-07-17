@@ -18,9 +18,12 @@ the pits is PIT; start OUT / end at S/F is OUT; start S/F / end in pits is PIT;
 start and end at S/F is timed (PUSH/SLOW for P/Q, "" for race).
 
 TIMED laps (P/Q):
-  - PUSH by default; SLOW when, between 10%–90% track distance, delta blows out:
-    deltaPct = driverDelta.deltaMs / driverLaps.overallBestLap.time × 100, SLOW iff
-    deltaPct > 7.5 AND deltaMs > 5000. Before 10% stays PUSH; after 90% no flips.
+  - PUSH by default; SLOW when, from the lap start up to 90% track distance, the
+    current lap's elapsed time to this point exceeds the reference lap's time to the
+    SAME point by >10% (driverDelta.deltaMs > 0.10 × driverDelta.refMs) AND the gap
+    is at least 2 s. Comparing to the reference-TO-POINT (not the full best lap) is
+    what makes it react early; the 2 s floor holds off borderline laps. After 90%
+    no flips.
   - Rule 1 (multi-lap prep): at the start of a timed lap N, walking back from
     N-2 while each prior lap is PUSH, reclassify it SLOW if its lap time exceeds
     lapTime(N-1) + 10 s (guarded by N-1 being a timed lap). Re-emits the lap.
@@ -39,9 +42,9 @@ from app.processing.message_bus import SessionMessageBus
 from app.processing.processors.base import Processor
 
 PREP_GAP_MS = 10_000
-SLOW_PCT = 7.5
-SLOW_MIN_MS = 5_000
-WINDOW_LO = 10.0
+SLOW_RATIO = 0.10       # current lap's elapsed / reference-to-here > 1.10 (10% slower) → SLOW
+SLOW_MIN_MS = 2_000     # ...but at least 2 s behind, so a borderline lap isn't flagged early
+WINDOW_LO = 0.0         # assess from the lap start
 WINDOW_HI = 90.0
 WET = {"INTERMEDIATE", "WET"}
 
@@ -66,7 +69,6 @@ class DriverCls:
     stopped: bool = False
     slow: bool = False                # SLOW detected for the current lap
     last_dp: float = 0.0
-    best_ms: Optional[int] = None
     lap_times: dict = field(default_factory=dict)   # lap -> ms
     final_type: dict = field(default_factory=dict)  # lap -> locked classification
     wet: bool = False
@@ -117,6 +119,8 @@ class LapClassificationProcessor(Processor):
             return "STOP"
         if d.went_pit:
             return "PIT"
+        if d.last_status == "CHECKERED":
+            return "CHECKERED"   # driverStatus is CHECKERED — a SLOW-type post-flag lap (all sessions)
         if d.went_out:
             return "OUT"
         if self._is_race:
@@ -149,6 +153,10 @@ class LapClassificationProcessor(Processor):
             d.stopped = True; changed = True
         elif status != "STOP" and d.stopped:
             d.stopped = False; changed = True   # STOP revoked
+        # CHECKERED is NOT re-emitted here: it arrives (driver_status runs first) while
+        # cur_lap is still the finishing lap, which must keep its racing class. The next
+        # _start_lap picks up d.last_status == CHECKERED for the lap that starts after
+        # the flag. (user 2026-07-07)
         if changed:
             self._emit(num, d, clock_time)
 
@@ -158,15 +166,21 @@ class LapClassificationProcessor(Processor):
         d = self._drv(num)
         dp = data.get("trackPct")
         delta = data.get("deltaMs")
+        ref = data.get("refMs")
         if dp is not None:
             d.last_dp = dp
         if d.slow or d.wet or d.went_out or d.went_pit or d.stopped:
             return
-        if dp is None or delta is None or d.best_ms is None:
+        if dp is None or delta is None or not ref:
             return
         if not (WINDOW_LO <= dp <= WINDOW_HI):
             return
-        if delta > SLOW_MIN_MS and (delta / d.best_ms * 100.0) > SLOW_PCT:
+        # SLOW when the current lap's elapsed time to THIS point is >10% over the
+        # reference lap's time to the SAME point (delta > 10% of ref-to-here), with a
+        # 2 s floor so a borderline lap isn't flagged until the gap is meaningful.
+        # Comparing to the reference-TO-POINT (not the full best lap) is what makes it
+        # react early. (user 2026-07-07)
+        if delta > SLOW_MIN_MS and delta > SLOW_RATIO * ref:
             d.slow = True
             self._emit(num, d, clock_time, track_pct=dp)
 
@@ -174,14 +188,6 @@ class LapClassificationProcessor(Processor):
         if not isinstance(data, dict):
             return
         d = self._drv(num)
-        # Session-wide best (overallBestLap): deltaPct = deltaMs / best_ms, and
-        # deltaMs is vs the overall reference lap (lap_delta), so the denominator
-        # must be that same lap (card 63).
-        bl = data.get("overallBestLap")
-        if isinstance(bl, dict) and bl.get("time"):
-            ms = _parse_ms(bl["time"])
-            if ms is not None:
-                d.best_ms = ms
         # driverLaps is thin (no accumulating laps map) — pick up each completed
         # lap's time from lastLap as it arrives (linear stream → no gaps).
         ll = data.get("lastLap")

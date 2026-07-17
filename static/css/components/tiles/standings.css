@@ -16,7 +16,7 @@
     flex-direction: column;
     height: 100%;
     overflow-y: auto;
-    overflow-x: hidden;
+    overflow-x: auto;   /* over-wide rows scroll horizontally (header scrolls with them) */
     /* 15px → 18px → 19px (per polish batch). */
     font-size: 19px;
     padding: 2px 4px;
@@ -29,9 +29,12 @@
 .driver-row,
 .driver-header {
     display: grid;
+    width: max-content;   /* intrinsic (sum of tracks) → grows as gaps grow */
+    margin: 0 auto;       /* centre the table in the tile (fits: centred; over-wide: scrolls) */
     align-items: center;
-    /* Tightened from 4px so all columns fit in the 67% tile. */
-    column-gap: 2px;
+    /* No inter-column spacing — spacer tracks are zeroed; spacing is added back
+       per-column later once the tight baseline is settled. */
+    column-gap: 0;
     padding: 4px 4px;
 }
 
@@ -60,6 +63,7 @@
 .driver-row {
     border-bottom: 1px solid var(--border);
     min-height: 0;
+    cursor: pointer;   /* click → focus that driver on the dashboard */
 }
 
 .driver-row:last-child {
@@ -78,29 +82,37 @@
 
 .driver-list.standings-practice .driver-row,
 .driver-list.standings-practice .driver-header {
-    /* rank | color | tla | status | best | gap | mini | S1 | S2 | S3 | lap-time | tyres | laps | laps-end-spacer | color-end | tla-end
-     * Canonical order: mini-sectors before sectors before lap time.
+    /* rank | color | tla | status | best | best-gap-spacer | gap | lap-time | lap-sec-spacer | S1 | S2 | S3 | mini | tyres | laps | laps-end-spacer | color-end | tla-end  (q9JVTQZg)
+     * Order: last lap before sectors before mini-sectors.
      * color-end + tla-end mirror the row identifier at the right edge.
      * laps-end-spacer = breathing room between Laps and the row-end TLA. */
-    grid-template-columns: 3fr 14px 5fr 4fr 11fr 6fr 13fr 6fr 6fr 6fr 9fr 24fr 4fr 2fr 14px 5fr;
+    /* Fixed px tracks = content + trailing margin, IDENTICAL for every row + header so
+       columns align. No flexible column: the row is width:max-content, so leftover
+       space shows on the right and an over-wide row scrolls horizontally.
+       rank color tla num status | best gap last S1 S2 S3 mini tyres laps | tla color rank */
+    grid-template-columns: 22px 8px 14px 4px 36px 8px 20px 10px 96px 10px 94px 8px 74px 22px 88px 24px 52px 24px 52px 24px 52px 14px 150px 22px 184px 12px 30px 16px 36px 4px 14px 4px 22px;
 }
 
 .driver-list.standings-qualifying .driver-row,
 .driver-list.standings-qualifying .driver-header {
-    /* rank | color | tla | status | best | gap | mini | S1 | S2 | S3 | lap-time | prediction | tyres | laps | laps-end-spacer | color-end | tla-end
+    /* rank | color | tla | status | best | gap | lap-time | delta | S1 | S2 | S3 | mini | tyres | laps | laps-end-spacer | color-end | tla-end  (q9JVTQZg)
      * tyres = 4fr: quali shows only the current tyre (one stint), so the
      * column needs ~half the width of the multi-stint practice/race tyres. */
-    grid-template-columns: 3fr 14px 5fr 4fr 11fr 6fr 13fr 6fr 6fr 6fr 9fr 9fr 4fr 4fr 2fr 14px 5fr;
+    /* Fixed px tracks (see practice). rank color tla num status | best gap last delta
+       S1 S2 S3 mini tyre laps | tla color rank */
+    grid-template-columns: 22px 8px 14px 4px 36px 8px 20px 10px 96px 10px 94px 8px 74px 22px 88px 12px 112px 12px 52px 15px 52px 15px 52px 14px 150px 22px 90px 12px 30px 16px 36px 4px 14px 4px 22px;
 }
 
 .driver-list.standings-race .driver-row,
 .driver-list.standings-race .driver-header {
-    /* rank | color | tla | status | gap | gap-int-spacer | int | mini | S1 | S2 | S3 | lap-time | best-lap | spacer | tyres | laps | laps-end-spacer | color-end | tla-end
+    /* rank | color | tla | status | gap | gap-int-spacer | int | int-lap-spacer | lap-time | lap-sec-spacer | S1 | S2 | S3 | mini | best-lap | spacer | tyres | laps | laps-end-spacer | color-end | tla-end  (q9JVTQZg)
      * Penalties merged into the status badge; standalone column dropped.
      * Status widened to hold the penalty label (! +5s, ! +10s, ! DT, ! S&G).
      * gap-int-spacer = matches best-lap → tyres spacer for visual rhythm.
      * laps-end-spacer = breathing room between Laps and the row-end TLA. */
-    grid-template-columns: 3fr 14px 5fr 8fr 7fr 2fr 7fr 11fr 6fr 6fr 6fr 8fr 9fr 1fr 22fr 4fr 2fr 14px 5fr;
+    /* Fixed px tracks (see practice). rank color tla num status | gap int last S1 S2 S3
+       mini best tyres laps | tla color rank */
+    grid-template-columns: 22px 8px 14px 4px 36px 8px 20px 10px 96px 10px 74px 8px 74px 22px 88px 12px 52px 12px 52px 12px 52px 14px 150px 8px 94px 22px 138px 12px 30px 16px 36px 4px 14px 4px 22px;
 }
 
 /* ─── Cells ─── */
@@ -123,6 +135,37 @@
 .driver-tla {
     font-weight: 700;
     min-width: 0;
+}
+
+/* Sector-column header toggle — two compact .tile-btn (S{n} / BS{n}) that fit the
+   narrow sector track. */
+.sec-toggle {
+    display: inline-flex;
+    gap: 2px;
+    justify-content: flex-end;
+    min-width: 0;
+    overflow: hidden;
+}
+.sec-toggle .sec-btn {
+    font-size: 12px;
+    padding: 0 3px;
+    border-radius: 3px;
+    line-height: 1.4;
+}
+
+/* Car number — secondary identifier next to the start TLA (monospace). */
+.driver-num {
+    text-align: left;
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 14px;
+    color: var(--text-secondary);
+    min-width: 0;
+}
+
+/* Rank repeated at the row END — mirrors the start rank (left-aligned so it sits
+   beside the end colour stripe, as the start rank sits beside the start stripe). */
+.rank-end {
+    text-align: left;
 }
 
 /* Status — no background, text-only colour coding. */
@@ -151,7 +194,7 @@
 .st-chequered-svg { vertical-align: middle; }
 
 /* Overall-fastest purple is fully data-driven via the JS-set
- * .lap-purple class on bestLapCell + lastLapCell (= driven by
+ * .c-purple class on bestLapCell + lastLapCell (= driven by
  * F1's overallFastest flag in driverTiming / driverLastLap, not
  * a row-index-based CSS rule). The old `.driver-row.p1` rule fired
  * on whatever driver happened to be at idx 0 at render time, which
@@ -181,6 +224,12 @@
 .status .status-flag.flag-dsq,
 .status .status-flag.flag-dsq-muted      { color: #ff5555; }
 
+/* Numeric timing cells use a monospace font so column widths are predictable /
+   content-sized (fixed px tracks below). */
+.rank, .lap-time, .sector-time, .gap, .interval, .delta, .pred, .lap-count {
+    font-family: 'Monaco', 'Consolas', monospace;
+}
+
 /* Lap times. Best lap uses .lap-time alone; last lap adds .lap-last and
  * shrinks one extra pixel to de-emphasise it relative to the best. */
 .lap-time {
@@ -194,36 +243,34 @@
     font-size: 16px;
 }
 
-.lap-time.lap-empty { color: var(--text-muted); }
-.lap-time.lap-yellow { color: #ffcc00; }
-.lap-time.lap-green { color: #00ff88; }
-.lap-time.lap-purple { color: #cc66ff; }
-
-/* Race "current pace" bands — last lap vs the leader's reference lap. */
-.lap-time.lap-pace-white  { color: #ffffff; }
-.lap-time.lap-pace-purple { color: #cc66ff; }
-.lap-time.lap-pace-blue   { color: #3399ff; }
-.lap-time.lap-pace-green  { color: #00ff88; }
-.lap-time.lap-pace-yellow { color: #ffcc00; }
-.lap-time.lap-pace-orange { color: #ff9933; }
-.lap-time.lap-pace-red    { color: #ff5555; }
+/* ─── Timing colour scale ───
+ * ONE class set (.c-*) for every colour-coded standings cell — best-lap, last-lap,
+ * gap, interval, sector times. Driven by the --c-* variables (base.css). Compound
+ * .<cell>.c-* selectors so the scale beats each cell's base colour (the codebase
+ * convention). Neutral tiers: c-white (full opacity), c-dim / c-faint (greyed),
+ * c-plain (uncoloured but active), c-empty (no data → text-muted). Mini-sectors
+ * reuse the scale as backgrounds (.seg-bar.c-*, below). */
+.lap-time.c-purple, .sector-time.c-purple, .gap.c-purple, .interval.c-purple { color: var(--c-purple); }
+.lap-time.c-blue,   .sector-time.c-blue,   .gap.c-blue,   .interval.c-blue   { color: var(--c-blue); }
+.lap-time.c-green,  .sector-time.c-green,  .gap.c-green,  .interval.c-green  { color: var(--c-green); }
+.lap-time.c-yellow, .sector-time.c-yellow, .gap.c-yellow, .interval.c-yellow { color: var(--c-yellow); }
+.lap-time.c-orange, .sector-time.c-orange, .gap.c-orange, .interval.c-orange { color: var(--c-orange); }
+.lap-time.c-red,    .sector-time.c-red,    .gap.c-red,    .interval.c-red    { color: var(--c-red); }
+.lap-time.c-white,  .sector-time.c-white,  .gap.c-white,  .interval.c-white  { color: var(--c-white); }
+.lap-time.c-dim,    .sector-time.c-dim,    .gap.c-dim,    .interval.c-dim    { color: var(--c-dim); }
+.lap-time.c-faint,  .sector-time.c-faint,  .gap.c-faint,  .interval.c-faint  { color: var(--c-faint); }
+.lap-time.c-plain,  .sector-time.c-plain,  .gap.c-plain,  .interval.c-plain  { color: var(--c-plain); }
+.lap-time.c-empty,  .sector-time.c-empty,  .gap.c-empty,  .interval.c-empty  { color: var(--text-muted); }
 
 .gap {
     text-align: right;
     font-size: 17px;
-    color: #d4d4d4;
+    color: var(--c-plain);
     min-width: 0;
 }
 
-.gap.gap-red { color: #ff5555; }
-.gap.gap-empty { color: var(--text-muted); }
-
-/* Race gap trend vs the previous value (±0.1 s deadzone stays default/white). */
-.gap.gap-trend-green { color: #00ff88; }
-.gap.gap-trend-yellow { color: #ffd700; }
-
 .gap.p1-lap {
-    color: #ffcc00;
+    color: var(--c-yellow);
     font-weight: 700;
 }
 
@@ -237,21 +284,11 @@
     min-width: 0;
 }
 
-.delta-empty { color: var(--text-muted); }
-.delta-yellow { color: #ffcc00; }
-.delta-green { color: #00ff88; }
-.delta-purple { color: #cc66ff; }
-
 .sector-time {
     text-align: right;
     font-size: 14px;
     min-width: 0;
 }
-
-.sector-empty { color: var(--text-muted); }
-.sector-yellow { color: #ffcc00; }
-.sector-green { color: #00ff88; }
-.sector-purple { color: #cc66ff; }
 
 /* Mini-segments — bars 80% of the driver-colour stripe height (24px×0.8 ≈ 19px),
  * centred vertically inside the row, with breathing room on both sides
@@ -263,7 +300,7 @@
     min-width: 0;
     overflow: hidden;
     height: 100%;
-    padding: 0 20px;
+    padding: 0 8px;   /* before 1st / after last mini-sector = 2× the 4px inter-sector gap */
 }
 
 .seg-bar {
@@ -272,33 +309,51 @@
     background: #333;
 }
 
-.seg-empty { background: #333; }
-.seg-yellow { background: #ffcc00; }
-.seg-green { background: #00ff88; }
-.seg-purple { background: #cc66ff; }
-.seg-white { background: #ffffff; }
+.seg-bar.c-purple { background: var(--c-purple); }
+.seg-bar.c-blue   { background: var(--c-blue); }
+.seg-bar.c-green  { background: var(--c-green); }
+.seg-bar.c-yellow { background: var(--c-yellow); }
+.seg-bar.c-orange { background: var(--c-orange); }
+.seg-bar.c-red    { background: var(--c-red); }
+.seg-bar.c-dim    { background: var(--c-dim); }
 
 .seg-spacer {
     width: 4px;
     flex: 0 0 auto;
 }
 
-/* 10 px buffer so the tyre-history strip doesn't sit flush against
- * the rightmost timing column (last-lap in Q, best-lap in practice).
- * Halved from 20 px per SME polish — visually tighter cluster. */
 .tyres {
-    margin-left: 10px;
+    margin-left: 0;
     display: inline-flex;
     align-items: center;
     gap: 4px;
     min-width: 0;
-    overflow: hidden;
+    /* Fixed-width window; ALL stints render and scroll horizontally into view. No
+       visible scrollbar (wheel / trackpad scrolls it). */
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;         /* Firefox */
+    -ms-overflow-style: none;      /* IE / Edge */
+}
+.tyres::-webkit-scrollbar { display: none; }   /* Chrome / Safari */
+
+/* Hover reveals the full stint history: the strip pops out over the neighbouring
+   columns (opaque stint backing) so past sets show without scrolling. A border +
+   shadow on the popped-out strip separates it from the columns it overlays. */
+.tyres { position: relative; }
+.tyres:hover { overflow: visible; z-index: 10; }
+.tyres:hover .tyre-stint {
+    background: var(--bg-secondary);
+    border-color: var(--border, #3a3a3a);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
 
 .tyre-stint {
     display: inline-flex;
     align-items: center;
     gap: 2px;
+    /* reserved transparent border so the hover reveal's border adds no layout shift */
+    border: 1px solid transparent;
 }
 
 .tyre-stint-icon {
@@ -313,35 +368,37 @@
     text-align: left;
 }
 
-/* Current tyre = the first stint span (tyreCell renders newest first).
-   Enlarge its icon + lap count so the current set stands out; previous
-   sets keep the base (smaller) size. */
-.tyre-stint:first-child .tyre-stint-icon {
-    width: 24px;
-    height: 24px;
-}
+/* Current stint (newest) vs past stints — separate classes so each can be sized /
+   emphasised independently. Tune current size below; de-emphasise past ones (size,
+   or opacity) in the .tyre-stint-past rules. */
+.tyre-stint-current .tyre-stint-icon { width: 24px; height: 24px; }
+.tyre-stint-current .tyre-stint-laps { font-size: 16px; }
 
-.tyre-stint:first-child .tyre-stint-laps {
-    font-size: 16px;
-}
+.tyre-stint-past .tyre-stint-icon { width: 22px; height: 22px; }
+.tyre-stint-past .tyre-stint-laps { font-size: 13px; }
+/* .tyre-stint-past { opacity: 0.5; }  ← enable to fade past stints */
+
+/* ═══ Column spacing ═══
+ * Widths AND gaps are grid tracks: each session's grid-template-columns alternates a
+ * content track and a gap (spacer) track. Tune a gap by editing its px value there —
+ * the row is width:max-content, so it grows. 22px gaps separate the column groups.
+ * interval/delta need an explicit font-size (they inherit otherwise). */
+.interval { font-size: 17px; }
+.pred     { font-size: 14px; }
 
 .lap-count {
     text-align: right;
     font-weight: 700;
     font-size: 17px;
-    color: #d4d4d4;
+    color: var(--c-plain);
     min-width: 0;
 }
 
 .interval {
     text-align: right;
-    color: #cfcfcf;
+    color: var(--c-plain);
     min-width: 0;
 }
-
-/* Race interval trend vs the previous value (±0.1 s deadzone stays default). */
-.interval.int-trend-green { color: #00ff88; }
-.interval.int-trend-yellow { color: #ffd700; }
 
 /* Penalties cell (race) */
 .pens {
@@ -371,42 +428,40 @@
 .pred {
     display: flex;
     align-items: baseline;
-    justify-content: space-between;
+    justify-content: flex-start;   /* pack delta + position to the left */
     gap: 6px;
     min-width: 0;
     overflow: hidden;
     padding: 0 12px;
 }
 
-/* Delta value — same size/face as the sector-time cells (card 67); always
-   left-aligned in a constant slot (wide enough for the 0.001s observed delta)
-   so positions stay aligned right. */
-.pred-delta {
+/* Projected lap time (0.1 s) — wide enough for "1:23.4". Its colour matches the position:
+   the band the projected time earns when improving, white when not. (card Z4PfDRry) */
+.pred-proj {
     font-size: 14px;
     text-align: left;
     flex: 0 0 auto;
-    min-width: 4em;
+    min-width: 4.6em;
+    font-variant-numeric: tabular-nums;
+    color: var(--c-white, #fff);
 }
 
-/* Negative delta = currently faster than best lap = green. */
-.pred-delta-neg { color: #00ff88; }
-
-/* Positive delta = currently slower = yellow (= caution, attempt slipping). */
-.pred-delta-pos { color: #ffd700; }
-
-/* Positions gained: green up-triangle + count, right-aligned. Delta's font
-   face, but kept at the smaller size used before (card 67/64). */
-.pred-pos-gain {
-    color: #00ff88;
+/* Predicted position Pnn — same colour rule as the projected time. */
+.pred-pos {
     font-size: 16px;
     flex: 0 0 auto;
-    text-align: right;
-    min-width: 2.5em;          /* fixed slot so positions stay aligned with/without the delta */
+    text-align: left;
+    min-width: 2.5em;
+    color: var(--c-white, #fff);
 }
 
-/* Positions gained: green arrow, white count (card "Deltas fine-tuning"). */
-.pred-pos-arrow { color: #00ff88; }
-.pred-pos-num { color: #ffffff; }
+.pred-proj.c-purple, .pred-pos.c-purple { color: var(--c-purple); }
+.pred-proj.c-blue,   .pred-pos.c-blue   { color: var(--c-blue); }
+.pred-proj.c-green,  .pred-pos.c-green  { color: var(--c-green); }
+.pred-proj.c-yellow, .pred-pos.c-yellow { color: var(--c-yellow); }
+.pred-proj.c-orange, .pred-pos.c-orange { color: var(--c-orange); }
+.pred-proj.c-red,    .pred-pos.c-red    { color: var(--c-red); }
+.pred-proj.c-white,  .pred-pos.c-white  { color: var(--c-white, #fff); }
 
 /* FIA Stewards penalty / flag stack.
  * Lives inside the status badge. Horizontal flexbox, h-scrolls when
@@ -445,7 +500,8 @@
    status colour (card 85): yellow = under investigation, orange = penalty
    issued. The explicit colour overrides the status cell it's nested in. */
 .pen-yellow { color: #ffd700; }
-.pen-orange { color: #ff8800; }
+/* Penalty issued — filled RED badge, white text (card R8fUBHPd). */
+.pen-orange { background: #e10600; color: #ffffff; border-color: #e10600; }
 .pen-white  { color: #ffffff; }
 .pen-red    { color: #ff4040; }
 .pen-dsq    {

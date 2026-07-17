@@ -58,6 +58,13 @@
             }
 
             state.carMarkersGroup = svgElement.querySelector('#car-markers');
+            if (state.carMarkersGroup) {
+                // Click a car → focus that driver (+ neighbours in a race) on the dashboard.
+                state.carMarkersGroup.addEventListener('click', (e) => {
+                    const m = e.target.closest('.car-marker');
+                    if (m && window.F1Dashboard) window.F1Dashboard.focus(m.dataset.driver);
+                });
+            }
 
             const trackMap = document.getElementById('trackMap');
             if (trackMap) {
@@ -85,6 +92,8 @@
 
                 const calibrating = document.getElementById('trackCalibrating');
                 if (calibrating) calibrating.style.display = 'none';
+
+                if (_mini.pending) mountMini(_mini.pending);   // dashboard requested it before load
             }
         } catch (e) {
             console.warn('Failed to load track SVG:', e);
@@ -137,6 +146,7 @@
         const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         g.setAttribute('class', 'car-marker');
         g.setAttribute('data-driver', num);
+        g.style.cursor = 'pointer';
 
         const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         circle.setAttribute('r', state.markerRadius);
@@ -155,6 +165,164 @@
         g.appendChild(text);
 
         return g;
+    }
+
+    // =========================================================================
+    // Mini-map — zoomed clone of the track map for the race dashboard (card J3V1CFdS)
+    // =========================================================================
+    // A cloned track SVG whose viewBox is a zoomed window that follows the "chaser" driver, so it
+    // stays centered on them while showing every nearby car marker + the same yellow-flag/track-
+    // status colouring as the main map (mirrored each frame). Only the markers are drawn smaller so
+    // they don't blow up with the zoom. No rotation, no weather overlay.
+    const MINI_ZOOM = 10;              // viewBox zoom (crop = trackViewBox / MINI_ZOOM)
+    const MINI_MARKER_SCALE = 0.15;    // marker size (F1 radius) — small so the GPS trail shows the racing line
+    const MINI_SMOOTH = 0.18;          // viewBox-centre low-pass (0..1) — damps GPS jitter at high zoom
+    const _mini = { svg: null, group: null, container: null, markers: {}, focus: null,
+                    baseVB: null, matrix: null, pending: null, sm: {}, warnEl: null };
+    // Latest position/telemetry-outage warning (mirrors the main map's #trackPosWarning).
+    let _posWarn = { active: false, red: false, msg: '' };
+
+    function mountMini(container) {
+        if (!container) return;
+        if (!state.trackSvg) { _mini.pending = container; return; }   // SVG not loaded yet → retry on load
+        _mini.pending = null;
+        const svg = state.trackSvg.cloneNode(true);
+        svg.classList.add('mini-map');   // scope mini-only track styling (see track_map.css)
+        const group = svg.querySelector('#car-markers');
+        if (group) { group.innerHTML = ''; group.style.pointerEvents = 'none'; }
+        // The clone inherits the main map's F1-unit stroke-widths, which render far heavier
+        // through the zoomed mini viewBox. Set the centre line explicitly for the mini-map.
+        // (state.markerStrokeWidth === f1PerPx, set when the track loaded.)
+        svg.querySelectorAll('.track').forEach(el =>
+            el.setAttribute('stroke-width', (5 * state.markerStrokeWidth).toFixed(1)));
+        container.innerHTML = ''; container.appendChild(svg);
+        const vb = (state.trackSvg.getAttribute('viewBox') || '0 0 100 100').split(/\s+/).map(Number);
+        const root = svg.querySelector('#track-root');
+        _mini.svg = svg; _mini.group = group; _mini.container = container; _mini.markers = {};
+        _mini.baseVB = { w: vb[2], h: vb[3] };
+        // Constant F1-coords → SVG-user-space matrix (track-root transform); markers are direct
+        // children of track-root, so this maps a car's (x,y) to the viewBox coordinate system.
+        _mini.matrix = (root && root.transform.baseVal.numberOfItems)
+            ? root.transform.baseVal.consolidate().matrix : null;
+        applyMiniWarning();   // reflect any active outage immediately (e.g. mounted mid-outage)
+    }
+    // When a position/telemetry outage is active, hide the mini-map and show the SAME warning
+    // message the main track map shows (server dataHealth → updatePosWarning).
+    function applyMiniWarning() {
+        if (!_mini.svg || !_mini.container) return;
+        if (!_mini.warnEl) {
+            const w = document.createElement('div');
+            w.className = 'pos-warning mini-pos-warning';
+            w.hidden = true;
+            w.innerHTML =
+                `<svg class="pos-warning-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path class="pos-warning-tri" d="M12 3 L22.5 21 L1.5 21 Z"/>
+                    <rect class="pos-warning-excl" x="11" y="9" width="2" height="6" rx="1"/>
+                    <circle class="pos-warning-excl" cx="12" cy="18" r="1.2"/>
+                </svg><span class="pos-warning-msg"></span>`;
+            _mini.container.appendChild(w);
+            _mini.warnEl = w;
+        }
+        _mini.warnEl.hidden = !_posWarn.active;
+        _mini.warnEl.classList.toggle('red', _posWarn.red);
+        _mini.warnEl.querySelector('.pos-warning-msg').textContent = _posWarn.msg;
+        _mini.svg.style.display = _posWarn.active ? 'none' : '';
+    }
+    function unmountMini() {
+        if (_mini.container) _mini.container.innerHTML = '';
+        _mini.svg = _mini.group = _mini.container = _mini.matrix = _mini.warnEl = null;
+        _mini.markers = {}; _mini.sm = {};
+    }
+    function setMiniFocus(num) {
+        _mini.focus = num || null;
+    }
+
+    function createMiniMarker(color, tla) {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('class', 'car-marker');
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        circle.setAttribute('r', state.markerRadius * MINI_MARKER_SCALE);   // smaller relative to the track
+        circle.setAttribute('fill', color);
+        circle.setAttribute('stroke', '#ffffff');
+        circle.setAttribute('stroke-width', state.markerStrokeWidth * MINI_MARKER_SCALE);
+        g.appendChild(circle);
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('fill', getContrastColor(color));
+        text.setAttribute('font-size', state.markerFontSize * MINI_MARKER_SCALE);
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('dominant-baseline', 'central');
+        text.setAttribute('transform', `scale(1, -1) rotate(${state.rotation || 0})`);
+        text.textContent = tla;
+        g.appendChild(text);
+        return g;
+    }
+    function removeMiniMarker(num) {
+        const m = _mini.markers[num];
+        if (m) { m.remove(); delete _mini.markers[num]; }
+    }
+    function updateMiniMarker(num, x, y) {
+        const info = state.driverInfo[num] || {};
+        let m = _mini.markers[num];
+        if (!m && _mini.group) {
+            m = createMiniMarker(info.color || DEFAULT_CAR_COLOR, info.tla || num);
+            _mini.markers[num] = m; _mini.group.appendChild(m);
+        }
+        if (m) m.setAttribute('transform', `translate(${x.toFixed(1)}, ${y.toFixed(1)})`);
+    }
+
+    // Low-pass a car's interpolated position into its persistent smoothed point (_mini.sm[num]).
+    // At high zoom the GPS sample-boundary kinks magnify into jitter, so EVERY marker is smoothed —
+    // not just the focus — otherwise the others shake against the (smooth) focus-anchored frame.
+    function miniSmoothed(num, t) {
+        const p = interpAt(posBuf[num], t);
+        const s = _mini.sm[num];
+        if (!s) { _mini.sm[num] = { x: p.x, y: p.y }; return _mini.sm[num]; }
+        s.x += MINI_SMOOTH * (p.x - s.x);
+        s.y += MINI_SMOOTH * (p.y - s.y);
+        return s;
+    }
+
+    function renderMini(t) {
+        if (!_mini.svg || !_mini.group) return;
+        for (const num in posBuf) {
+            const buf = posBuf[num]; if (!buf.length) continue;
+            const st = state.driverStatus[num];
+            if (st === 'RET' || st === 'STOP') { removeMiniMarker(num); delete _mini.sm[num]; continue; }
+            const s = miniSmoothed(num, t);
+            updateMiniMarker(num, s.x, s.y);
+        }
+        for (const num in _mini.markers) if (!posBuf[num]) { removeMiniMarker(num); delete _mini.sm[num]; }
+        // Follow the chaser: anchor the viewBox on the focus car's SAME smoothed point, so it sits
+        // pinned dead-centre (marker + frame read the identical value → zero swim) while every marker
+        // shares the low-pass, keeping the whole field steady at high zoom.
+        const s = _mini.focus && _mini.sm[_mini.focus];
+        if (s && _mini.matrix) {
+            const M = _mini.matrix;
+            const sx = M.a * s.x + M.c * s.y + M.e;
+            const sy = M.b * s.x + M.d * s.y + M.f;
+            const w = _mini.baseVB.w / MINI_ZOOM, h = _mini.baseVB.h / MINI_ZOOM;
+            _mini.svg.setAttribute('viewBox',
+                `${(sx - w / 2).toFixed(2)} ${(sy - h / 2).toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)}`);
+        }
+        syncMiniFlags();
+    }
+
+    // Mirror the main map's track-status flash + yellow-flag sectors onto the clone.
+    function syncMiniFlags() {
+        if (!_mini.svg || !state.trackSvg) return;
+        ['#track-outline', '#track-sectors'].forEach(sel => {
+            const a = state.trackSvg.querySelector(sel), b = _mini.svg.querySelector(sel);
+            if (!a || !b) return;
+            b.classList.toggle('flag-blink', a.classList.contains('flag-blink'));
+            const col = a.style.getPropertyValue('--flag-color');
+            if (col) b.style.setProperty('--flag-color', col);
+        });
+        const yellow = new Set();
+        state.trackSvg.querySelectorAll('[data-sector].sector-yellow')
+            .forEach(e => yellow.add(e.getAttribute('data-sector')));
+        _mini.svg.querySelectorAll('[data-sector]').forEach(p => {
+            p.classList.toggle('sector-yellow', yellow.has(p.getAttribute('data-sector')));
+        });
     }
 
     // =========================================================================
@@ -218,13 +386,62 @@
     // Handlers
     // =========================================================================
 
-    function handlePosition(data) {
-        if (!data || typeof data !== 'object') return;
+    // --- smooth marker motion (position interpolation) ---
+    // Markers used to snap to each ~3.7Hz position sample. Instead, buffer samples per
+    // car and, each animation frame, render the car at (playback clock − LAG) linearly
+    // interpolated between its two bracketing samples — so it glides between them over
+    // their real time gap. The small lag guarantees the "next" sample is already here.
+    const POS_LAG_MS = 500;
+    const posBuf = {};                       // num -> [{t, x, y}] ascending by t (t = ms from session start)
+
+    function handlePosition(data, offsetMs) {
+        // The bus passes the message offset (ms from session start) as the 2nd arg — a
+        // NUMBER, not a Date (tiles read the live clock from messageBus.clockTime). Use it
+        // directly as the sample timestamp; renderNowMs is the same ms-from-start frame.
+        if (!data || typeof data !== 'object' || offsetMs == null) return;
         for (const [num, coords] of Object.entries(data)) {
             if (!Array.isArray(coords) || coords.length < 2) continue;
-            updateCarMarker(num, coords[0], coords[1]);
+            const buf = posBuf[num] || (posBuf[num] = []);
+            if (buf.length && offsetMs <= buf[buf.length - 1].t) continue;   // dup / out-of-order guard
+            buf.push({ t: offsetMs, x: coords[0], y: coords[1] });
         }
     }
+
+    function renderNowMs() {
+        const ct = messageBus.clockTime, st = messageBus.startTime;
+        if (!ct || !st) return null;
+        return (ct.getTime() - st.getTime()) - POS_LAG_MS;
+    }
+
+    function interpAt(buf, t) {
+        if (t <= buf[0].t) return buf[0];
+        const last = buf[buf.length - 1];
+        if (t >= last.t) return last;                     // clamp — no next sample yet
+        for (let i = buf.length - 1; i > 0; i--) {
+            const a = buf[i - 1], b = buf[i];
+            if (a.t <= t) {
+                const f = (t - a.t) / (b.t - a.t);
+                return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+            }
+        }
+        return buf[0];
+    }
+
+    function animateMarkers() {
+        const t = renderNowMs();
+        if (t !== null) {
+            for (const num in posBuf) {
+                const buf = posBuf[num];
+                if (!buf.length) continue;
+                const p = interpAt(buf, t);
+                updateCarMarker(num, p.x, p.y);
+                while (buf.length >= 2 && buf[1].t <= t) buf.shift();   // drop passed, keep the lo bracket
+            }
+            renderMini(t);   // race dashboard mini-map (no-op unless mounted)
+        }
+        requestAnimationFrame(animateMarkers);
+    }
+    requestAnimationFrame(animateMarkers);
 
     function handleDriverList(data) {
         if (!data || typeof data !== 'object') return;
@@ -283,6 +500,29 @@
     // The circuit comes from the server (SessionInfo.Meeting.Circuit.ShortName,
     // normalised to the SVG basename, e.g. "Monte_Carlo"). On connect/seek
     // the latest trackCircuit row is restored, so this fires before drawing.
+    function updatePosWarning(health) {
+        const el = document.getElementById('trackPosWarning');
+        const msg = document.getElementById('trackPosWarningMsg');
+        if (!el || !msg) return;
+        const posRed = !!(health && health.position && health.position.level === 'red');
+        const telRed = !!(health && health.telemetry && health.telemetry.level === 'red');
+        if (posRed && telRed) {
+            el.classList.add('red');
+            msg.textContent = 'Telemetry and position data unavailable. Data is unreliable';
+            el.hidden = false;
+            _posWarn = { active: true, red: true, msg: msg.textContent };
+        } else if (posRed || telRed) {
+            el.classList.remove('red');
+            msg.textContent = 'Position data unavailable. Track position estimated from telemetry';
+            el.hidden = false;
+            _posWarn = { active: true, red: false, msg: msg.textContent };
+        } else {
+            el.hidden = true;
+            _posWarn = { active: false, red: false, msg: '' };
+        }
+        applyMiniWarning();   // hide the mini-map + show the same message during an outage
+    }
+
     messageBus.on('trackCircuit', (name) => {
         if (name && !state.location) {
             loadTrackSvg(name);
@@ -294,6 +534,12 @@
     messageBus.on('trackStatus', handleTrackStatus);
     messageBus.on('yellowFlag', handleYellowFlag);
 
+    // Position-data warning driven by the server's dataHealth: yellow when the GPS
+    // OR telemetry feed is down (position is being estimated from telemetry); red
+    // when BOTH are down (nothing to estimate from → unreliable).
+    messageBus.on('dataHealth', updatePosWarning);
+    messageBus.on('state:reset', () => updatePosWarning(null));
+
     // Driver status — remove a car's marker the moment it retires / stops
     // (card 55). The position feed may keep emitting after RET/STOP, so
     // updateCarMarker also guards on this to avoid re-creating it.
@@ -301,7 +547,7 @@
         const num = topic.split(':')[1];
         if (!num) return;
         state.driverStatus[num] = data;
-        if (data === 'RET' || data === 'STOP') removeCarMarker(num);
+        if (data === 'RET' || data === 'STOP') { removeCarMarker(num); delete posBuf[num]; }
     });
 
     messageBus.on('state:reset', () => {
@@ -313,11 +559,15 @@
         // Reset status too — restore re-applies it up to the seek point, so a
         // backward seek before a RET/STOP correctly re-shows that car (card 55).
         state.driverStatus = {};
+        for (const k in posBuf) delete posBuf[k];
         if (state.trackSvg) {
             state.trackSvg.querySelectorAll('[data-sector]').forEach(p => {
                 p.classList.remove('sector-yellow', 'sector-double-yellow');
             });
         }
     });
+
+    // Race dashboard drives a zoomed mini-map instance through this interface (card J3V1CFdS).
+    window.F1TrackMap = { mountMini, setMiniFocus, unmountMini };
 
 })();

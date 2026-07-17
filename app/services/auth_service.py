@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 # FastF1 auth file location
 AUTH_DATA_DIR = Path(os.path.expanduser("~/Library/Application Support/fastf1"))
 AUTH_DATA_FILE = AUTH_DATA_DIR / "f1auth.json"
-JWKS_URL = "https://api.formula1.com/static/jwks.json"
 
 
 @dataclass
@@ -62,6 +61,10 @@ class F1AuthService:
 
         data = {"subscription_token": token}
         AUTH_DATA_FILE.write_text(json.dumps(data, indent=2))
+        try:
+            AUTH_DATA_FILE.chmod(0o600)   # owner-only — it's a subscription JWT (L5)
+        except OSError:
+            pass
         logger.info("Auth token saved successfully")
 
     def _decode_token(self, token: str) -> Optional[dict]:
@@ -73,45 +76,6 @@ class F1AuthService:
         except jwt.exceptions.DecodeError as e:
             logger.warning(f"Failed to decode token: {e}")
             return None
-
-    def _verify_token(self, token: str) -> bool:
-        """Verify token signature using F1's JWKS."""
-        try:
-            # Get the key ID from the token header
-            header = jwt.get_unverified_header(token)
-            kid = header.get("kid")
-
-            if not kid:
-                logger.warning("Token has no key ID")
-                return False
-
-            # Fetch JWKS
-            response = requests.get(JWKS_URL, timeout=10)
-            response.raise_for_status()
-            jwks = response.json()
-
-            # Find the matching key
-            key_data = None
-            for key in jwks.get("keys", []):
-                if key.get("kid") == kid:
-                    key_data = key
-                    break
-
-            if not key_data:
-                logger.warning(f"No matching key found for kid: {kid}")
-                return False
-
-            # Convert JWK to public key
-            from jwt.algorithms import RSAAlgorithm
-            public_key = RSAAlgorithm.from_jwk(json.dumps(key_data))
-
-            # Verify the token
-            jwt.decode(token, public_key, algorithms=["RS256"])
-            return True
-
-        except Exception as e:
-            logger.warning(f"Token verification failed: {e}")
-            return False
 
     def get_status(self) -> AuthStatus:
         """Get current authentication status."""
@@ -355,156 +319,6 @@ class F1AuthService:
             result["notification_sent"] = self.send_expiry_notification(status)
 
         return result
-
-    def headless_login(self) -> dict:
-        """
-        Perform headless login using credentials from .env file.
-
-        This authenticates directly with the F1 API without requiring
-        a browser or GUI.
-
-        Returns:
-            dict with success status and message/error
-        """
-        email = os.getenv("F1_EMAIL")
-        password = os.getenv("F1_PASSWORD")
-
-        if not email or not password:
-            return {
-                "success": False,
-                "error": "F1_EMAIL and F1_PASSWORD must be set in .env file"
-            }
-
-        logger.info(f"Attempting headless login for {email}...")
-
-        try:
-            # F1 API authentication endpoint
-            auth_url = "https://api.formula1.com/v2/account/subscriber/authenticate/by-password"
-
-            headers = {
-                "Content-Type": "application/json",
-                "apiKey": "fCUCjWrKPu9ylJwRAv8BpGLEgiAuThx7",  # F1's public API key
-                "User-Agent": "RaceControl f1viewer"
-            }
-
-            payload = {
-                "Login": email,
-                "Password": password
-            }
-
-            response = requests.post(auth_url, json=payload, headers=headers, timeout=30)
-
-            if response.status_code == 401:
-                return {
-                    "success": False,
-                    "error": "Invalid email or password"
-                }
-
-            response.raise_for_status()
-            data = response.json()
-
-            # Extract subscription token from response
-            subscription_token = data.get("data", {}).get("subscriptionToken")
-
-            if not subscription_token:
-                logger.error(f"No subscription token in response: {data}")
-                return {
-                    "success": False,
-                    "error": "No subscription token in response. Check your F1 TV subscription status."
-                }
-
-            # Validate the token
-            claims = self._decode_token(subscription_token)
-            if not claims:
-                return {
-                    "success": False,
-                    "error": "Invalid token format received"
-                }
-
-            # Check subscription status
-            sub_status = claims.get("SubscriptionStatus", "").lower()
-            if sub_status and sub_status != "active":
-                return {
-                    "success": False,
-                    "error": f"Subscription is not active: {sub_status}"
-                }
-
-            # Save the token
-            self._save_token(subscription_token)
-
-            # Get expiration info
-            exp = claims.get("exp")
-            if exp:
-                exp_time = datetime.fromtimestamp(exp, tz=timezone.utc)
-                expires_at = exp_time.isoformat()
-            else:
-                expires_at = "unknown"
-
-            logger.info(f"Headless login successful! Token expires: {expires_at}")
-
-            return {
-                "success": True,
-                "message": "Login successful",
-                "subscription_status": claims.get("SubscriptionStatus"),
-                "subscribed_product": claims.get("SubscribedProduct"),
-                "expires_at": expires_at
-            }
-
-        except requests.exceptions.Timeout:
-            return {
-                "success": False,
-                "error": "Login request timed out"
-            }
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Login request failed: {e}")
-            return {
-                "success": False,
-                "error": f"Login request failed: {str(e)}"
-            }
-        except Exception as e:
-            logger.error(f"Headless login failed: {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
-
-    def auto_login(self) -> dict:
-        """
-        Automatically log in using the best available method.
-
-        1. First checks if already authenticated with valid token
-        2. If credentials are in .env, attempts headless login
-        3. Otherwise returns instructions for manual login
-
-        Returns:
-            dict with success status and details
-        """
-        # Check if already authenticated
-        status = self.get_status()
-        if status.is_authenticated:
-            return {
-                "success": True,
-                "message": "Already authenticated",
-                "subscription_status": status.subscription_status,
-                "subscribed_product": status.subscribed_product,
-                "expires_at": status.expires_at
-            }
-
-        # Try headless login if credentials are available
-        if self.has_credentials():
-            logger.info("Credentials found, attempting headless login...")
-            return self.headless_login()
-
-        # Fall back to manual instructions
-        return {
-            "success": False,
-            "requires_manual": True,
-            "error": "No credentials configured. Set F1_EMAIL and F1_PASSWORD in .env, or run: python -m app.cli.login",
-            "instructions": [
-                "Option 1: Add F1_EMAIL and F1_PASSWORD to your .env file",
-                "Option 2: Run 'python -m app.cli.login' for browser-based login"
-            ]
-        }
 
 
 # Global instance

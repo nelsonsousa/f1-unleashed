@@ -82,6 +82,11 @@ class FiaStewardsProcessor(Processor):
             return
         self._bus.on("RaceControlMessages", self._handle_rcm)
         self._bus.on("SessionInfo", self._handle_session_info)
+        # Blue flags expire on the session clock (10 s), not on the next RCM — so a
+        # blue flag that is the last RCM of a stint/session still clears. The clock
+        # topic ticks periodically, giving a self-firing expiry that persists a
+        # cleared row (seek-safe). (H6)
+        self._bus.on("clock", self._handle_clock)
 
     # ── Handlers ───────────────────────────────────────────────────────
 
@@ -91,6 +96,18 @@ class FiaStewardsProcessor(Processor):
         # the reference point.
         if self._start_time is None and clock_time is not None:
             self._start_time = clock_time
+
+    def _handle_clock(self, data: Any, clock_time: datetime) -> None:
+        # On each clock tick, if any blue flag has passed its untilMs, re-emit the
+        # cleared per-driver list. _emit() strips expired blue flags before serialising,
+        # and only emits drivers whose list actually changed — so this fires exactly once
+        # per expiry, not every tick. (H6)
+        now_ms = self._session_ms(clock_time)
+        if now_ms is None:
+            return
+        if any(i.get("kind") == "blueFlag" and i.get("untilMs") is not None
+               and i["untilMs"] < now_ms for i in self._stack):
+            self._emit(clock_time)
 
     def _handle_rcm(self, data: Any, clock_time: datetime) -> None:
         if not isinstance(data, dict):
@@ -281,17 +298,22 @@ class FiaStewardsProcessor(Processor):
 
         if "PENALTY SERVED" in upper:
             cars_set = set(cars)
-            # Penalty-served clears any awarded-penalty indicator that
-            # involves any of the named cars + the same reason.
-            changed |= self._remove_matching(
-                lambda i: i.get("kind") in ("dt", "sg")
-                or (isinstance(i.get("kind"), str)
-                    and i["kind"].endswith("s")
-                    and i["kind"][:-1].isdigit())
-                if i.get("reason") == reason
-                and bool(set(i.get("driverNums") or []) & cars_set)
-                else False
-            )
+            # Clear the matching awarded penalty by CAR + KIND (Ns / dt / sg),
+            # parsed from the served message — NOT by reason. The served RCM often
+            # omits or rewords the reason (ALB's 10 s served carried none), so the
+            # old reason-equality check left the badge stuck. (0PMnBjhE)
+            served_kind: Optional[str] = None
+            if m := self._TIME_PEN_RX.search(upper):
+                served_kind = f"{m.group(1)}s"
+            elif "DRIVE THROUGH" in upper:
+                served_kind = "dt"
+            elif "STOP-AND-GO" in upper or "STOP AND GO" in upper:
+                served_kind = "sg"
+            if served_kind is not None:
+                changed |= self._remove_matching(
+                    lambda i: i.get("kind") == served_kind
+                    and bool(set(i.get("driverNums") or []) & cars_set)
+                )
             if changed:
                 self._emit(clock_time)
             return

@@ -28,6 +28,17 @@ from app.services.live_capture import live_capture
 
 logger = logging.getLogger(__name__)
 
+
+def _log_task_exception(task: "asyncio.Task") -> None:
+    """Done-callback for fire-and-forget tasks: surface an exception instead of
+    letting it vanish with the task. (M6)"""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("background task failed", exc_info=exc)
+
+
 TICK_INTERVAL = 0.016  # ~60fps tick rate
 
 # Live-edge audio/data sync (card 78). The live playback edge is capped at
@@ -41,6 +52,12 @@ LIVE_EDGE_BUFFER_S = 8.0
 # capping playback to it so the DATA clock keeps flowing instead of the whole
 # session freezing on an audio hiccup. (Tracker refreshes every ~5 s.)
 AUDIO_EDGE_STALE_S = 9.0
+
+# The data leading edge (MAX processed offset) is "stale" if it hasn't advanced
+# in this long (wall-clock). With Heartbeats emitted (~15 s) a healthy feed
+# always advances well inside this window; a longer gap means the data stream
+# stalled, so the playhead should follow the audio edge alone. (~2 missed beats.)
+DATA_EDGE_STALE_S = 30.0
 
 # Keep the transient scratch DB after the last client disconnects (for
 # inspection) instead of deleting it.
@@ -92,7 +109,14 @@ class SessionEngine:
 
         # Playback state
         self._last_offset_ms = 0
+        self._last_ev_count = -1       # scrubber-event change detection (replay-build push)
+        self._last_pushed_dur = -1.0
+        self._ended = False     # cached: feed's terminal SessionStatus=Ends seen
+        self._terminal = False  # playback parked at the terminal end (→ finished)
+        self._data_live = True  # live: raw data edge advanced recently (stream light)
         self._preprocess_done = asyncio.Event()
+        self._preprocess_error: Optional[str] = None   # set if the build failed (H5)
+        self._bg_tasks: set = set()   # keep refs to fire-and-forget tasks (M6)
         # Set once the offset-0 baseline (driverList, trackGeometry,
         # trackCircuit, sessionInfo) is committed to the DB. add_client waits
         # on this before the connect restore so the build can't be beaten to
@@ -102,6 +126,10 @@ class SessionEngine:
         # WebSocket clients
         self._clients: dict[int, WebSocket] = {}
         self._client_counter = 0
+        # True once a client has ever attached. A freshly-built engine that hasn't
+        # had its first client yet must not be discarded/reaped by a concurrent
+        # connect (H3) — only genuinely idle engines (had clients, all left) are.
+        self._ever_had_client = False
 
         # Lifecycle
         self._preprocess_task: Optional[asyncio.Task] = None
@@ -132,27 +160,8 @@ class SessionEngine:
         self._session_info = self._initial_state.get("SessionInfo", {})
         self._gmt_offset = self._session_info.get("GmtOffset")
 
-        # Load audio info — prefer the EARLIEST segment for multi-segment
-        # captures. The audio endpoint streams segments oldest-first, so
-        # the start_utc that aligns with the start of the playback is the
-        # one belonging to the lowest-numbered segment (audio_info.001.json),
-        # not the latest (audio_info.json).
-        audio_info_file = self._session_path / "audio_info.json"
-        rotated_info = sorted(self._session_path.glob("audio_info.[0-9][0-9][0-9].json"))
-        if rotated_info:
-            audio_info_file = rotated_info[0]
-        if audio_info_file.exists():
-            with open(audio_info_file, "r", encoding="utf-8") as f:
-                self._audio_info = json.load(f)
-            # Per-segment map (start_utc + duration), chronological, so a
-            # multi-segment REPLAY can map the data clock to the audio stream
-            # piecewise and SKIP the real-time gap between capture segments
-            # (issue I15). Single-segment sessions get a 1-entry list (no-op).
-            # Run in a worker thread — it shells out to ffprobe per segment,
-            # which would otherwise block the event loop (and every other
-            # client/session on it) during engine startup.
-            self._audio_info["segments"] = await asyncio.to_thread(
-                self._build_audio_segments)
+        # Load audio info (retried on client connect for live — see add_client).
+        await self._load_audio_info()
 
         # Detect session type from SessionInfo if not provided
         if not self._session_type:
@@ -173,10 +182,31 @@ class SessionEngine:
         #    it's reprocessed by the latest code each time.
         self._db = SessionDatabase(self._session_path)
         capturing = live_capture.is_capturing_path(self._session_path)
+        reuse = False
         if not capturing:
             base = self._db._db_path
-            for suffix in ("", "-wal", "-shm"):
-                base.with_name(base.name + suffix).unlink(missing_ok=True)
+            # Reuse an existing COMPLETE transient DB instead of rebuilding — BUT only if it
+            # was built by the CURRENT processor code. A DB built by older code (e.g. kept
+            # across a DEBUG reconnect) would replay stale-processor output, so a version
+            # mismatch forces a rebuild. This keeps replay on the latest code while still
+            # skipping the rebuild when nothing changed. (M1)
+            if base.exists():
+                try:
+                    import sqlite3
+                    from app.processing.preprocessor import processor_code_version
+                    c = sqlite3.connect(f"file:{base}?mode=ro", uri=True)
+                    status = c.execute(
+                        "SELECT value FROM processing_meta WHERE key='status'").fetchone()
+                    ver = c.execute(
+                        "SELECT value FROM processing_meta WHERE key='processor_version'").fetchone()
+                    c.close()
+                    reuse = bool(status and status[0] == "complete"
+                                 and ver and ver[0] == processor_code_version())
+                except Exception:
+                    reuse = False
+            if not reuse:
+                for suffix in ("", "-wal", "-shm"):
+                    base.with_name(base.name + suffix).unlink(missing_ok=True)
         self._db.open()
 
         # Determine session time bounds from JSONL file
@@ -184,11 +214,13 @@ class SessionEngine:
 
         self._running = True
 
-        if capturing:
+        if capturing or reuse:
             self._preprocess_done.set()
-            # Live capture has already populated the DB — baseline is present.
+            # Live capture populated the DB, OR we're replaying a pre-built complete DB.
             self._baseline_ready.set()
-            logger.info(f"Session DB built live by capture: {self._session_name}")
+            logger.info(
+                f"{'Reusing complete transient DB' if reuse else 'Session DB built live by capture'}"
+                f": {self._session_name}")
         else:
             logger.info(f"Building transient DB for {self._session_name}")
             self._preprocessor = SessionPreProcessor(
@@ -217,9 +249,9 @@ class SessionEngine:
             self._rates_task = asyncio.create_task(self._live_rates_loop())
 
     async def _scan_time_bounds(self) -> None:
-        """Quick scan to find first and last timestamps from JSONL.
+        """Find the first and last payload timestamps in the JSONL (session bounds).
 
-        Only reads first and last lines for speed (avoids full file scan).
+        Scans the file linearly (the last non-empty line gives the end); it is not O(1).
         """
         import json as _json
         from app.processing.file_reader import _parse_timestamp
@@ -285,9 +317,14 @@ class SessionEngine:
             )
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as e:
             logger.exception(f"Pre-processing failed for {self._session_name}")
+            self._preprocess_error = str(e) or "pre-processing failed"
         finally:
+            # A failure swallowed inside run() sets preprocessor.failed but doesn't raise —
+            # surface it too, so a crashed build isn't presented as a finished session (H5).
+            if self._preprocessor.failed and not self._preprocess_error:
+                self._preprocess_error = "pre-processing failed"
             self._preprocessor.close()
             # Build finished: the scrubber now spans the whole session. Pin
             # _duration to the full scanned length (re-applying the post-
@@ -299,10 +336,25 @@ class SessionEngine:
             # (e.g. gate timeout, no matching SessionInfo), unblock any waiting
             # connect so it isn't held until its timeout.
             self._baseline_ready.set()
+            # Tell any connected clients the build failed instead of silently
+            # serving a truncated-but-"complete" replay (H5).
+            if self._preprocess_error:
+                self._spawn_bg(self._broadcast({
+                    "topic": "error",
+                    "data": {"message": f"Session build failed: {self._preprocess_error}"},
+                }))
+
+    def _spawn_bg(self, coro) -> None:
+        """Fire-and-forget a coroutine while keeping a reference (so it isn't GC'd
+        mid-flight) and logging any exception instead of swallowing it. (M6)"""
+        t = asyncio.create_task(coro)
+        self._bg_tasks.add(t)
+        t.add_done_callback(self._bg_tasks.discard)
+        t.add_done_callback(_log_task_exception)
 
     def _on_preprocess_progress(self, pct: float) -> None:
         """Callback from pre-processor."""
-        asyncio.create_task(self._broadcast({
+        self._spawn_bg(self._broadcast({
             "topic": "state:scan-progress",
             "data": {"pct": pct},
         }))
@@ -363,11 +415,35 @@ class SessionEngine:
 
     # ── WebSocket Client Management ──
 
+    async def _load_audio_info(self) -> None:
+        """(Re)load audio_info.json + build the per-segment map, preferring the
+        EARLIEST segment (audio_info.001.json) whose start_utc aligns with the
+        start of playback. For LIVE the audio can start AFTER the engine (audio
+        now begins ~10 min pre-session), so this is retried on client connect
+        until the file appears. Segments built in a worker thread (ffprobe)."""
+        audio_info_file = self._session_path / "audio_info.json"
+        rotated_info = sorted(self._session_path.glob("audio_info.[0-9][0-9][0-9].json"))
+        if rotated_info:
+            audio_info_file = rotated_info[0]
+        if not audio_info_file.exists():
+            return
+        with open(audio_info_file, "r", encoding="utf-8") as f:
+            self._audio_info = json.load(f)
+        self._audio_info["segments"] = await asyncio.to_thread(self._build_audio_segments)
+
     async def add_client(self, ws: WebSocket) -> int:
         """Add a WebSocket client. Returns client ID."""
         self._client_counter += 1
         client_id = self._client_counter
         self._clients[client_id] = ws
+        self._ever_had_client = True
+
+        # Live: audio can start AFTER this engine did (audio begins ~10 min
+        # pre-session), so a client that connected before then would never learn
+        # audio exists. Re-read audio_info.json on connect so a reconnect/reload
+        # picks it up without the engine being torn down.
+        if self._live and self._audio_info is None:
+            await self._load_audio_info()
 
         # Stream immediately: do NOT wait for the transient-DB build to finish.
         # The client connects and plays from offset 0 while the preprocessor
@@ -385,24 +461,38 @@ class SessionEngine:
             ).fetchall()
             events = [{"offset_ms": r[0], "topic": r[1], "data": json.loads(r[2])} for r in rows]
 
+        # Build the audio-info (probes bitrate via ffprobe) off the event loop (H4).
+        audio_info = await asyncio.to_thread(self._build_audio_info_for_client)
         # Send initial state to new client
         await self._send_to_client(ws, {
             "topic": "state:full",
             "data": {
                 "sessionType": self._session_type,
                 "isLive": self._live,
-                "audioInfo": self._build_audio_info_for_client(),
+                "audioInfo": audio_info,
                 "startTime": self._start_time.isoformat() if self._start_time else None,
                 "endTime": self._end_time.isoformat() if self._end_time else None,
                 "duration": self._duration,
                 "isPlaying": self._clock.state == ClockState.PLAYING if self._clock else False,
                 "speed": self._clock.speed if self._clock else 1.0,
                 "offset": self._clock.offset_seconds if self._clock else 0.0,
+                "finished": self._terminal,
+                "dataEdge": (self._data_edge_ms() or 0) / 1000.0,
+                "audioEdge": self._audio_end_offset(),
                 "scanProgress": 100.0 if self._preprocess_done.is_set() else 0.0,
+                "preprocessError": self._preprocess_error,
                 "cacheBytes": self._cache_bytes(),
                 "events": events,
             },
         })
+
+        # If the build failed, tell this (possibly late-joining) client too — the
+        # error broadcast fired at build time, before it connected (H5).
+        if self._preprocess_error:
+            await self._send_to_client(ws, {
+                "topic": "error",
+                "data": {"message": f"Session build failed: {self._preprocess_error}"},
+            })
 
         # For live mode: jump to the live edge ONLY on the first client
         # of an engine's lifetime. Later joins (page reload, second tab,
@@ -517,6 +607,7 @@ class SessionEngine:
         """Start or resume playback."""
         if not self._clock:
             return
+        self._terminal = False
         self._clock.play()
         if not self._playback_task or self._playback_task.done():
             self._playback_task = asyncio.create_task(self._playback_loop())
@@ -558,6 +649,7 @@ class SessionEngine:
         offset_ms = int(offset_seconds * 1000)
 
         # Seek the clock
+        self._terminal = False
         self._clock.seek_to_offset(offset_seconds)
 
         # Query latest display message per topic at target offset
@@ -844,10 +936,15 @@ class SessionEngine:
         self._raw_stream_task = None
 
     async def _set_speed(self, speed: float) -> None:
-        """Change playback speed."""
+        """Change playback speed — clamped to the documented replay range 1x-10x, so a
+        raw WS command can't drive the clock to 0.1x/60x (L1)."""
         if not self._clock:
             return
-        self._clock.speed = speed
+        try:
+            speed = float(speed)
+        except (TypeError, ValueError):
+            return
+        self._clock.speed = max(1.0, min(speed, 10.0))
         await self._broadcast_status()
 
     # ── Live Edge (data ∩ audio) ──
@@ -893,23 +990,93 @@ class SessionEngine:
             return None
         return (edge_pdt - self._start_time).total_seconds()
 
-    def _capped_edge_ms(self) -> Optional[int]:
-        """The playback live edge (ms), capped at the lagging stream.
-
-        Live: min(data_edge, audio_edge) − LIVE_EDGE_BUFFER_S, so playback
-        never outruns either feed and audio/data stay aligned at the edge.
-        Replay, or live with no audio PDT yet, returns the raw data edge
-        (nothing to cap against). None if no data yet."""
-        data_ms = self._data_edge_ms()
-        if data_ms is None:
+    def _audio_end_offset(self) -> Optional[float]:
+        """End of available AUDIO as a data-clock offset (seconds): the live
+        broadcast edge while capturing, else the end of the audio content (last
+        segment's start + its duration) for a completed/replay file. None when
+        the session has no audio. For the buffer-headroom readout (FE6vYOX9)."""
+        live = self._audio_edge_offset()
+        if live is not None:
+            return live
+        info = self._audio_info
+        if not info or not self._start_time:
             return None
+        segs = info.get("segments") or []
+        if not segs:
+            return None
+        last = segs[-1]
+        start = _parse_timestamp(last.get("start_utc", ""))
+        dur = last.get("duration")
+        if start is None or dur is None:
+            return None
+        return (start - self._start_time).total_seconds() + float(dur)
+
+    def _session_ended(self) -> bool:
+        """True once the feed's terminal state has been ingested — the definitive
+        'the whole broadcast is over' signal. It's the trackStatus that
+        TrackStatusProcessor emits for SessionStatus=Ends (message "SESSION
+        ENDED"), which follows the chequered flag + Finalised, so it does NOT cut
+        off the podium/interview wind-down. (Raw SessionStatus isn't persisted to
+        the DB — only the derived trackStatus is.) Queried over the whole history
+        because the Ends state sits at the raw edge, beyond the buffered playhead,
+        and would otherwise never be reached during playback. Cached. Used to give
+        a live session a terminal PAUSED state instead of polling a frozen edge
+        forever (which made the client audio loop — card 9QRPuaVC)."""
+        if self._ended:
+            return True
+        if not self._db:
+            return False
+        try:
+            for d in self._db.get_topic_history("trackStatus", 1 << 62):
+                if isinstance(d, dict) and d.get("message") == "SESSION ENDED":
+                    self._ended = True
+                    return True
+        except Exception:
+            # Don't silently swallow a DB error here — a persistent failure would keep
+            # returning "not ended" and loop a live session forever (H5, related).
+            logger.warning("session-ended check failed (DB read)", exc_info=True)
+            return False
+        return False
+
+    def _capped_edge_ms(self) -> Optional[int]:
+        """The playback live edge (ms), health-gated against both feeds.
+
+        Policy: when BOTH data and audio are healthy, the edge is the lagging
+        (earlier) of the two — min — so playback never outruns either feed. If
+        one feed is UNHEALTHY the other alone sets the edge: stalled/absent audio
+        → data drives; a stalled data stream → audio drives (so the playhead
+        doesn't freeze on a dead data feed while audio still flows). A
+        LIVE_EDGE_BUFFER_S cushion is always applied. Replay returns the raw data
+        edge (nothing to cap). None if neither feed has produced anything."""
+        data_ms = self._data_edge_ms()
         if not self._live:
             return data_ms
-        audio_edge_s = self._audio_edge_offset()
-        if audio_edge_s is None:
-            return data_ms
-        capped = min(data_ms, int(audio_edge_s * 1000)) - int(LIVE_EDGE_BUFFER_S * 1000)
-        return max(0, capped)
+
+        # Data-edge liveness: stale if MAX(offset_ms) hasn't advanced recently.
+        now_mono = time.monotonic()
+        if data_ms is not None and data_ms != getattr(self, "_last_data_ms", None):
+            self._last_data_ms = data_ms
+            self._last_data_advance = now_mono
+        data_healthy = (data_ms is not None
+                        and (now_mono - getattr(self, "_last_data_advance", now_mono))
+                        <= DATA_EDGE_STALE_S)
+        # Feed liveness for the stream light — the RAW data edge (heartbeats are
+        # data, so they keep it fresh), NOT the audio-capped playhead (card
+        # Xqw1feac). Set here since this runs every second via _track_duration.
+        self._data_live = data_healthy
+
+        audio_edge_s = self._audio_edge_offset()   # None when audio stalled/absent
+        audio_ms = int(audio_edge_s * 1000) if audio_edge_s is not None else None
+
+        if data_healthy and audio_ms is not None:
+            edge = min(data_ms, audio_ms)          # both healthy → lagging stream limits
+        elif audio_ms is not None:
+            edge = audio_ms                        # data stalled/absent → audio drives
+        elif data_ms is not None:
+            edge = data_ms                         # audio stalled/absent → data drives
+        else:
+            return None
+        return max(0, edge - int(LIVE_EDGE_BUFFER_S * 1000))
 
     # ── Duration Tracking (live mode) ──
 
@@ -924,19 +1091,60 @@ class SessionEngine:
         try:
             while self._running:
                 await asyncio.sleep(1.0)
-                # Replay: once the build is done the edge is fixed (duration is
-                # pinned in _run_preprocess) — stop following. Live keeps going.
-                if not self._live and self._preprocess_done.is_set():
-                    return
                 if not self._db:
                     continue
-                edge_ms = self._capped_edge_ms()
+                edge_ms = self._capped_edge_ms()   # also refreshes self._data_live
                 if edge_ms:
                     new_dur = edge_ms / 1000.0
                     if new_dur > self._duration:
                         self._duration = new_dur
+                # Buffer headroom (FE6vYOX9): raw data + audio edges (~1/s, not
+                # per tick) so the client shows hh:MM:ss available ahead of the
+                # playhead. Runs for live + replay-still-building.
+                await self._broadcast({"topic": "bufferEdges", "data": {
+                    "dataEdge": (self._data_edge_ms() or 0) / 1000.0,
+                    "audioEdge": self._audio_end_offset(),
+                }})
+                # Server-authoritative feed liveness for the stream light —
+                # decoupled from the audio-capped playhead (card Xqw1feac).
+                if self._live:
+                    await self._broadcast({"topic": "streamLive",
+                                           "data": {"alive": self._data_live}})
+                else:
+                    # Replay build: keep the scrubber current (growing duration + future
+                    # event markers) even when paused — push as events are discovered,
+                    # not only on seek. (user)
+                    await self._push_scrubber_state()
+                    # Replay: once the build is done the edge is fixed (duration pinned in
+                    # _run_preprocess) — this was the final (complete) push, so stop.
+                    if self._preprocess_done.is_set():
+                        return
         except asyncio.CancelledError:
             raise
+
+    async def _push_scrubber_state(self) -> None:
+        """Replay build: broadcast the growing duration + full scrubber-event list so the
+        scrubber's edges and future markers stay current mid-build. Change-gated so the
+        client only re-renders when the duration or event count actually moves."""
+        if not self._db:
+            return
+        if self._duration != self._last_pushed_dur:
+            self._last_pushed_dur = self._duration
+            await self._broadcast({"topic": "state:stream-progress",
+                                   "data": {"duration": self._duration}})
+        try:
+            rows = self._db._conn.execute(
+                "SELECT offset_ms, topic, data FROM messages "
+                "WHERE topic = 'event' ORDER BY offset_ms"
+            ).fetchall()
+        except Exception:
+            logger.exception("Failed to read scrubber events")
+            return
+        if len(rows) != self._last_ev_count:
+            self._last_ev_count = len(rows)
+            events = [{"offset_ms": r[0], "topic": r[1], "data": json.loads(r[2])}
+                      for r in rows]
+            await self._broadcast({"topic": "state:events", "data": events})
 
     # ── Playback Loop ──
 
@@ -945,6 +1153,15 @@ class SessionEngine:
         try:
             while self._running and self._clock and self._clock.state == ClockState.PLAYING:
                 self._clock.tick()
+                # Never let the playhead outrun the available-data edge
+                # (self._duration — the live/build edge, or full length on replay).
+                # At fast speed a caught-up playhead would otherwise race past the
+                # slowly-growing edge: the scrubber pins at 100% and stops tracking,
+                # and newly-arriving messages (incl. heartbeats) land BEHIND
+                # last_offset so they're never delivered — until a manual seek
+                # (cards 1Ad7z8uu scrubber / Xqw1feac stream light).
+                if self._clock.offset_seconds > self._duration:
+                    self._clock.seek_to_offset(self._duration)
                 target_offset_ms = int(self._clock.offset_seconds * 1000)
 
                 # Fetch display messages between last_offset and target_offset
@@ -953,13 +1170,10 @@ class SessionEngine:
                         self._last_offset_ms, target_offset_ms
                     )
 
-                    # Deduplicate: only send latest per topic in this tick
-                    latest: dict[str, tuple[int, Any]] = {}
+                    # Send EVERY message in chronological order (dedup removed — trial:
+                    # gives position/telemetry all their samples for smoother motion;
+                    # rows are ORDER BY offset_ms so sticky-delta topics stay correct).
                     for offset, topic, data in new_messages:
-                        latest[topic] = (offset, data)
-
-                    # Broadcast to clients with offset_ms
-                    for topic, (offset, data) in latest.items():
                         await self._broadcast({"topic": topic, "data": data, "offset_ms": offset})
 
                 # Send clock update
@@ -986,11 +1200,24 @@ class SessionEngine:
                         edge_ms = self._capped_edge_ms()
                         if edge_ms and edge_ms > duration_ms:
                             self._duration = edge_ms / 1000.0
+                        elif self._live and self._session_ended():
+                            # Live, edge frozen, AND the feed's terminal
+                            # SessionStatus=Ends is in the data → the broadcast is
+                            # truly over. Transition to a paused terminal state so
+                            # the client stops cleanly (isPlaying=false pauses the
+                            # audio element — no ~1s snap-back loop, card 9QRPuaVC).
+                            # A plain reconnect stall does NOT end here (no Ends).
+                            self._terminal = True
+                            self._clock.pause()
+                            await self._broadcast_status()
+                            break
                         else:
                             # Nothing new at the capped edge yet — slow polling
                             await asyncio.sleep(0.5)
                             continue
                     else:
+                        # Replay reached its end (build complete) — terminal.
+                        self._terminal = True
                         self._clock.pause()
                         await self._broadcast_status()
                         break
@@ -1035,6 +1262,7 @@ class SessionEngine:
                 "speed": self._clock.speed if self._clock else 1.0,
                 "offset": self._clock.offset_seconds if self._clock else 0.0,
                 "duration": self._duration,
+                "finished": self._terminal,   # playback parked at the terminal end
             },
         })
 
@@ -1104,7 +1332,8 @@ class SessionEngine:
             try:
                 await self._broadcast({
                     "topic": "status:rates",
-                    "data": {"dataBps": d_bps, "audioBps": a_bps},
+                    "data": {"dataBps": d_bps, "audioBps": a_bps,
+                             "cacheBytes": self._cache_bytes()},
                 })
             except Exception:
                 pass
@@ -1170,31 +1399,38 @@ class SessionManager:
         # Default to the OS-appropriate cache location (card 25).
         self._cache_dir = Path(cache_dir) if cache_dir else CACHE_DIR
         self._engines: dict[str, SessionEngine] = {}
+        # Per-session-name lock: serialize concurrent connects for the SAME session so
+        # two near-simultaneous WS connects can't both build+start an engine (the second
+        # would overwrite the first, orphaning its tasks/DB/scratch file). (H3)
+        self._locks: dict[str, asyncio.Lock] = {}
 
     async def get_or_create(self, session_name: str, live: bool = False) -> SessionEngine:
         """Get an existing engine or create a new one for the session."""
-        if session_name in self._engines:
-            engine = self._engines[session_name]
-            # Reuse if it has clients, or if it's a live engine (a live
-            # engine follows the still-growing DB — keep it alive across
-            # reloads rather than re-creating it).
-            if engine.client_count > 0 or engine._live:
-                return engine
-            # Replay engine with no clients — discard and rebuild.
-            await engine.stop()
-            del self._engines[session_name]
+        # setdefault is atomic on the single event loop (no await between get and set).
+        lock = self._locks.setdefault(session_name, asyncio.Lock())
+        async with lock:
+            if session_name in self._engines:
+                engine = self._engines[session_name]
+                # Reuse if it has clients, is live (follows the growing DB across reloads),
+                # or was just built and hasn't had its first client yet — a concurrent connect
+                # must attach to it, not discard it (H3).
+                if engine.client_count > 0 or engine._live or not engine._ever_had_client:
+                    return engine
+                # Genuinely idle replay engine (had clients, all left) — discard and rebuild.
+                await engine.stop()
+                del self._engines[session_name]
 
-        session_path = self._find_session_path(session_name)
-        if not session_path:
-            raise ValueError(f"Session not found: {session_name}")
+            session_path = self._find_session_path(session_name)
+            if not session_path:
+                raise ValueError(f"Session not found: {session_name}")
 
-        # Infer session type from directory name
-        session_type = self._infer_session_type(session_path)
+            # Infer session type from directory name
+            session_type = self._infer_session_type(session_path)
 
-        engine = SessionEngine(session_path, session_name, session_type, live=live)
-        await engine.start()
-        self._engines[session_name] = engine
-        return engine
+            engine = SessionEngine(session_path, session_name, session_type, live=live)
+            await engine.start()
+            self._engines[session_name] = engine
+            return engine
 
     @staticmethod
     def _infer_session_type(session_path: Path) -> str:
@@ -1223,7 +1459,7 @@ class SessionManager:
         """Remove engines with no connected clients (excluding live ones)."""
         empty = [
             name for name, engine in self._engines.items()
-            if engine.client_count == 0 and not engine._live
+            if engine.client_count == 0 and not engine._live and engine._ever_had_client
         ]
         for name in empty:
             await self.remove(name)
@@ -1260,9 +1496,12 @@ class SessionManager:
                                 if stripped_key == session_name:
                                     return session_dir
 
-        # Fallback: try legacy flat path
-        legacy_path = self._cache_dir / session_name
-        if legacy_path.exists():
+        # Fallback: try legacy flat path — contained under the cache dir so a caller-supplied
+        # "../…" name can't escape it (path-traversal guard; the route uses a {…:path} converter
+        # that permits "/" and ".."). Resolving collapses any "..".
+        base = self._cache_dir.resolve()
+        legacy_path = (self._cache_dir / session_name).resolve()
+        if legacy_path.is_relative_to(base) and legacy_path.exists():
             return legacy_path
 
         return None

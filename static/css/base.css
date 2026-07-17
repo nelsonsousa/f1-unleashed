@@ -18,6 +18,47 @@
     --yellow: #ffd700;
     --blue: #0080ff;
     --border: #333;
+
+    /* Timing colour scale — one source of truth for every colour-coded standings
+       cell (best-lap / last-lap / gap / int / delta / sector times / mini-sectors).
+       Applied via the .c-* classes; mini-sectors reuse the same values as bg. */
+    --c-purple: #cc66ff;
+    --c-blue:   #33ccff;
+    --c-green:  #00ff88;
+    --c-yellow: #ffcc00;
+    --c-orange: #ff9933;
+    --c-red:    #ff5555;
+    --c-white:  #ffffff;   /* full-opacity neutral (eliminated best / frozen bubble) */
+    --c-dim:    #8a8a8a;   /* de-emphasised: slow / out / in laps, pre-lights-out */
+    --c-faint:  #555555;   /* even fainter neutral */
+    --c-plain:  #d4d4d4;   /* uncoloured but active (quali last-lap / current sectors) */
+
+    --sp: 3px;             /* standings column-spacing base unit (1u/2u/3u = 3/6/9px) */
+}
+
+/* ─── Shared tile-header button ───
+ * Grey outline, transparent background; grey text idle, white text when hovered or
+ * active. One style for every tile's header controls (standings sector toggles,
+ * telemetry part/driver toggles, race-control tabs). Hover matches the RCM tabs. */
+.tile-btn {
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: var(--text-secondary);
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    line-height: 1.4;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.tile-btn:hover {
+    color: var(--text-primary);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+.tile-btn.active {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    border-color: rgba(255, 255, 255, 0.4);
 }
 
 body {

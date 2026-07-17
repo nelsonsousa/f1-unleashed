@@ -1,7 +1,8 @@
 """
 Playback Clock for session replay.
 
-Maintains current time, speed (1x-60x), play/pause state.
+Maintains current time, speed (playback 1x-10x; the setter clamps to 0.1x-60x
+as a hard bound), play/pause state.
 The SessionEngine calls tick() on each iteration to advance the clock
 and determine which messages should be dispatched.
 """

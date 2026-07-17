@@ -1,0 +1,133 @@
+/* Pit-strategy tabs (injected into the race-control tile). Minimal — iterate later. */
+
+.pit-pane {
+    height: 100%;
+    /* no padding-top: a sticky header sticks at the padding edge, so top padding would leave a
+       gap above it where scrolled rows show through. */
+    padding: 0 6px 4px;
+    overflow: auto;
+    font-size: 14px;
+    color: var(--text-secondary, #c8c8c8);
+}
+
+/* ── Pit stops table ── */
+.pit-row {
+    display: grid;
+    grid-template-columns: 58px 28px 76px 24px 20px 30px 52px 58px 82px 64px;
+    align-items: center;
+    gap: 12px;
+    padding: 3px 3px;
+    border-bottom: 1px solid var(--border, #2a2a2a);
+    white-space: nowrap;
+    width: max-content;
+    min-width: 100%;
+}
+.pit-pos {
+    color: var(--text-secondary, #c8c8c8);
+    font-variant-numeric: tabular-nums;
+}
+.pit-tyre-c { display: flex; align-items: center; }
+.pit-tyre { width: 19px; height: 19px; }
+.pit-traffic-h, .pit-traffic-c { text-align: left; }
+.pit-traffic { font-size: 11px; font-weight: 700; letter-spacing: 0.03em; }
+.pit-traffic.tr-red { color: #ff4b4b; }
+.pit-traffic.tr-yellow { color: var(--yellow, #ffd700); }
+.pit-traffic.tr-green { color: var(--green, #2bd15b); }
+.pit-head {
+    color: var(--text-secondary, #c8c8c8);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    position: sticky;
+    top: 0;
+    background: var(--bg-primary, #111);
+    z-index: 1;
+}
+.pit-c, .pit-lap { color: var(--text-secondary, #c8c8c8); font-variant-numeric: tabular-nums; }
+.pit-time { color: var(--text-muted, #888); font-variant-numeric: tabular-nums; }
+.pit-status { display: flex; align-items: center; }
+.pit-drv {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--text-primary, #eee);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.pit-dot {
+    width: 5px;
+    height: 12px;
+    background: var(--team-colour, var(--border, #888));
+    flex-shrink: 0;
+    border-radius: 1px;
+}
+.pit-num {
+    text-align: right;
+    color: var(--text-primary, #eee);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+.pit-head .pit-num { color: var(--text-secondary, #c8c8c8); font-weight: 400; }
+
+/* Track-status indicator: 30px wide regardless of colour (green flag / SC / VSC). */
+.pit-flag {
+    width: 30px;
+    height: 14px;
+    border-radius: 1px;
+    background: var(--green, #2bd15b);
+}
+.pit-badge {
+    width: 30px;
+    height: 14px;
+    line-height: 14px;
+    text-align: center;
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 2px;
+    color: #111;
+}
+.pit-badge.pit-sc { background: var(--yellow, #ffd700); }
+.pit-badge.pit-vsc { background: var(--yellow, #ffd700); }
+
+/* stop-time colour scale (fastest = purple) */
+.pit-num.st-green { color: var(--green, #2bd15b); }
+.pit-num.st-yellow { color: var(--yellow, #ffd700); }
+.pit-num.st-orange { color: #ff9500; }
+.pit-num.st-red { color: #ff4b4b; }
+.pit-num.st-purple { color: #b026ff; }
+
+/* ── Predicted transit summary (title + value on one line) ── */
+.pit-strat-block {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 16px;
+    padding: 8px 6px;
+    border-bottom: 1px solid var(--border, #2a2a2a);
+}
+.pit-strat-item {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+}
+.pit-strat-label {
+    color: var(--text-primary, #eee);
+    font-size: 16px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.pit-strat-title {
+    color: var(--text-primary, #eee);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.pit-strat-big {
+    color: var(--text-primary, #eee);
+    font-size: 16px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+}

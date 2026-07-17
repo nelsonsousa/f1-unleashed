@@ -31,11 +31,19 @@
     min-width: 0;
 }
 
+/* Solid red pill with white text so the session badge pops, sized + framed to
+   match the track-status widget so the two read as a matching pair (emgy6Lmo). */
 .session-badge {
     font-size: 15px;
-    padding: 2px 8px;
+    height: 38px;
+    padding: 0 10px;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
     background: var(--accent);
-    border-radius: 2px;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    color: #ffffff;
     font-weight: 600;
     text-transform: uppercase;
     white-space: nowrap;
@@ -47,7 +55,9 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 4px 8px;
+    padding: 0 8px;
+    height: 38px;              /* match the clocks/audio/controls boxes (emgy6Lmo) */
+    box-sizing: border-box;
     border-radius: 4px;
     font-size: 14px;
     font-weight: 600;
@@ -96,6 +106,15 @@
     border: 1px solid var(--text-secondary);
 }
 
+/* Blink twice on a status change to draw the eye, then settle (HBAKIcye). */
+.track-status.ts-blink {
+    animation: ts-blink 0.7s ease-in-out 2;
+}
+@keyframes ts-blink {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.2; }
+}
+
 /* Clock Display */
 .clocks {
     display: flex;
@@ -119,7 +138,7 @@
 
 .clock-label {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-secondary);   /* was --text-muted — too faint to read (QQ2vPy4e) */
     text-transform: uppercase;
     letter-spacing: 1px;
 }
@@ -158,11 +177,12 @@
     max-width: 140px;
 }
 
-/* TV-signal + Sync panel — sits before the Audio panel. Capture from a
- * named audio input (= BlackHole-2ch) and align the data clock to the
- * incoming broadcast via cross-correlation. */
+/* SYNC TO panel — "SYNC TO" label on top, two buttons (previous / next marker)
+ * below. Markers are wall-clock minutes / session-clock minutes / lap starts;
+ * clicking a button seeks playback there (see header.js updateSyncButtons). */
 .sync-controls {
     display: flex;
+    flex-direction: row;
     align-items: center;
     gap: 8px;
     flex: 0 0 auto;
@@ -173,6 +193,36 @@
     height: 38px;
     box-sizing: border-box;
 }
+/* "SYNC TO" / mode stacked on two lines, left of the button. */
+.sync-to-title {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.15;
+    text-align: left;
+}
+/* .btn.btn-sync (not just .btn-sync) — the base .btn rule is defined later in
+   this file, so at equal specificity it would override a bare .btn-sync. */
+.btn.btn-sync {
+    font-size: 16px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    font-family: 'Monaco', 'Consolas', monospace;
+    line-height: 1;
+    height: auto;
+    padding: 4px 8px;
+    min-width: 58px;
+    background: rgba(0, 0, 0, 0.4);
+    color: #d4d4d4;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+    cursor: pointer;
+}
+.btn.btn-sync:hover:not(:disabled) {
+    background: #e10600;
+    border-color: #e10600;
+    color: #fff;
+}
+.btn.btn-sync:disabled { opacity: 0.35; cursor: default; }
 .btn-tv-signal,
 .btn-sync {
     display: inline-flex;
@@ -270,6 +320,14 @@
  * aren't crowded together — visually separates audio playback control
  * from the delay adjustment. */
 .audio-delay-label-spaced { margin-left: 16px; }
+/* Two-line AUDIO / DELAY label stack, matching the SYNC TO title (82rHOM2K). */
+.audio-delay-title {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.15;
+    text-align: left;
+    margin-left: 16px;
+}
 
 /* Volume slider — slim horizontal range between mute and audio-play. */
 .volume-slider {
@@ -534,6 +592,26 @@
     background: #e10600;
 }
 
+/* Control-bar buttons: uniform height so play/pause matches Speed/LIVE (0kyhyv9Y). */
+.btn-play, .btn-speed, .btn-go-live {
+    height: 30px;
+    padding-top: 0;
+    padding-bottom: 0;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+/* Speed + LIVE: thin border + red hover, matching the Sync button. */
+.btn-speed, .btn-go-live {
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+.btn-speed:hover, .btn-go-live:not(.at-live):hover {
+    background: #e10600;
+    border-color: #e10600;
+    color: #fff;
+}
+
 /* Scrubber */
 .scrubber {
     flex: 1;
@@ -682,6 +760,10 @@
 .scrubber-flag.chequered { color: #ffffff; }
 .scrubber-flag:hover { transform: translate(-50%, -50%) scale(1.4); }
 
+/* No-spoiler: markers ahead of the playhead are injected but hidden until crossed. */
+.scrubber-event.evt-spoiler,
+.scrubber-flag.evt-spoiler { display: none; }
+
 /* Live button */
 .scrubber-live {
     position: absolute;
@@ -701,9 +783,8 @@
 }
 .scrubber-live:hover { background: #ff2020; }
 
-/* Live mode */
+/* Live mode — same red base, pulsing. */
 .session-badge.live {
-    background: var(--accent);
     animation: pulse 2s infinite;
 }
 

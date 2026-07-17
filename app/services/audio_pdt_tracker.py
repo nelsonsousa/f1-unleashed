@@ -55,6 +55,10 @@ logger = logging.getLogger(__name__)
 
 START_POLL_S = 1.0            # poll fast until anchored
 STEADY_POLL_S = 5.0          # keep the live-edge cap (pdt_map.jsonl) fresh
+# pdt_map.jsonl is append-only but only its LAST line is ever read (the tracker keeps
+# running state in memory), so cap it to a small tail rather than let it grow all session (L4).
+_PDT_MAP_MAX_LINES = 500
+_PDT_MAP_TRIM_EVERY = 200     # only check/trim every N writes (cheap)
 FF_TIMEOUT_S = 20.0          # no ffmpeg-logged segment by now → segs[-3] fallback
 START_TIMEOUT_S = 60.0       # still no PDT → edge−duration fallback
 PLAYLIST_FAIL_TIMEOUT_S = 90
@@ -343,9 +347,18 @@ class PdtTracker(threading.Thread):
             return
         edge = self._byte0_pdt + timedelta(seconds=self._file_frames * 1024 / self._file_sr)
         try:
-            with open(self.cache_path / "pdt_map.jsonl", "a", encoding="utf-8") as f:
+            path = self.cache_path / "pdt_map.jsonl"
+            with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps({"wall_ms": int(time.time() * 1000),
                                     "edge_pdt_utc": _iso_z(edge)}) + "\n")
+            # Keep the file bounded (only the last line is read; keep a tail for debugging).
+            self._pdt_writes = getattr(self, "_pdt_writes", 0) + 1
+            if self._pdt_writes % _PDT_MAP_TRIM_EVERY == 0:
+                with open(path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                if len(lines) > _PDT_MAP_MAX_LINES:
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.writelines(lines[-_PDT_MAP_MAX_LINES:])
         except OSError as e:
             logger.warning(f"PdtTracker: pdt_map.jsonl write failed: {e}")
 

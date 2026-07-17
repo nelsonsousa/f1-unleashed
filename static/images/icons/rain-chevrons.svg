@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36">
+  <!-- three marching chevrons; the pulse travels toward the tip (up) to show the
+       direction the rain is moving. Rotate the whole <img> to aim it. -->
+  <g fill="none" stroke="#57a6ff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 13 L18 5 L27 13">
+      <animate attributeName="opacity" values="0.2;1;0.2" dur="1.05s" begin="0.7s" repeatCount="indefinite"/>
+    </path>
+    <path d="M9 22 L18 14 L27 22">
+      <animate attributeName="opacity" values="0.2;1;0.2" dur="1.05s" begin="0.35s" repeatCount="indefinite"/>
+    </path>
+    <path d="M9 31 L18 23 L27 31">
+      <animate attributeName="opacity" values="0.2;1;0.2" dur="1.05s" begin="0s" repeatCount="indefinite"/>
+    </path>
+  </g>
+</svg>

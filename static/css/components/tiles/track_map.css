@@ -18,6 +18,21 @@
   stroke-linejoin: miter;
 }
 
+/* Mini-map (dashboard clone) — its own line palette: centre line = background,
+   outline = text-primary. */
+.mini-map .track { stroke: var(--bg-primary); }
+.mini-map .track-outline { stroke: var(--text-primary); }
+
+/* Mini-map outage notice — the same message as the main map, centred in the small box.
+   Two classes (higher specificity) so it wins over the base .pos-warning defined later. */
+.pos-warning.mini-pos-warning {
+    top: 50%;
+    bottom: auto;
+    transform: translate(-50%, -50%);
+    max-width: 94%;
+    text-align: center;
+}
+
 /* Marker styles - hidden by default */
 .corner-marker,
 .marshal-sector-marker,
@@ -194,4 +209,64 @@
     stroke-width: 4px;
     stroke: #ff0000;
   }
+}
+
+/* Position-data warning — GPS/telemetry health. Yellow badge matches the SC/VSC
+ * track-status style; red when both position AND telemetry feeds are down. */
+.pos-warning {
+    position: absolute;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 92%;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: left;
+    z-index: 20;
+    pointer-events: none;
+    background: rgba(255, 215, 0, 0.15);
+    color: var(--yellow, #ffd700);
+    border: 1px solid var(--yellow, #ffd700);
+}
+.pos-warning[hidden] { display: none; }
+.pos-warning.red {
+    background: rgba(225, 6, 0, 0.18);
+    color: var(--c-red, #ff5555);
+    border-color: var(--c-red, #ff5555);
+}
+.pos-warning-icon { width: 20px; height: 20px; flex-shrink: 0; }
+.pos-warning-tri { fill: currentColor; }
+.pos-warning-excl { fill: #12121a; }
+
+/* Alerts box — one place that stacks every active track alert (position, rain,
+ * …) bottom-centre. Each module injects/toggles its own badge inside; hidden
+ * ones collapse so only active alerts take space. */
+.track-alerts {
+    position: absolute;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    max-width: 94%;
+    z-index: 20;
+    pointer-events: none;
+}
+/* Badges flow inside the box, so they drop their own absolute placement. */
+.track-alerts > .pos-warning,
+.track-alerts > .rain-alert {
+    position: static;
+    left: auto;
+    bottom: auto;
+    transform: none;
+    max-width: 100%;
+    z-index: auto;
 }
