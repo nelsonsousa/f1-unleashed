@@ -280,11 +280,12 @@ def _render_blue(red: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
-async def fetch_composite(meeting_name: str) -> Optional[bytes]:
-    """Fetch the centred 2x2 zoom-12 ``dbz_u8`` block for a circuit, render it
-    through the blue palette, and return PNG bytes (512x512 RGBA). None on
-    missing key / unknown circuit / monthly budget reached / upstream failure.
-    Each call uses 5 API calls (1 snapshot + 4 tiles)."""
+async def fetch_composite(meeting_name: str) -> Optional[tuple[np.ndarray, dict]]:
+    """Fetch the centred 2x2 zoom-12 ``dbz_u8`` block for a circuit and return
+    ``(red, geometry)`` — the raw 512x512 reflectivity red-channel grid and the
+    composite geometry (for pinning + the rain alert). None on missing key /
+    unknown circuit / monthly budget reached / upstream failure. Each call uses
+    5 API calls (1 snapshot + 4 tiles)."""
     key = _rainbow_key()
     if not key:
         logger.warning("%s not set; skipping radar fetch", RAINBOW_KEY_ENV)
@@ -326,7 +327,17 @@ async def fetch_composite(meeting_name: str) -> Optional[bytes]:
     except httpx.RequestError as e:
         logger.warning("Rainbow request error: %s", e)
         return None
-    return _render_blue(red)
+    return red, composite_geometry(lat, lng)
+
+
+def raw_dbz_png(red: np.ndarray) -> bytes:
+    """Encode the raw dbz_u8 red-channel composite as a lossless grayscale PNG.
+    This is the ORIGINAL reflectivity (not a recoloured render) — the SVG contour
+    JSON is derived from it, and it stays the durable source so the bands can be
+    re-derived later. Reconstruct dBZ with ``(pixel & 0x7F) - 32``."""
+    buf = io.BytesIO()
+    Image.fromarray(red.astype(np.uint8), "L").save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def save_tile(session_dir, fetched_at: datetime, layer: str, data: bytes) -> Path:
@@ -336,6 +347,66 @@ def save_tile(session_dir, fetched_at: datetime, layer: str, data: bytes) -> Pat
     out = d / f"{iso}_{layer}.{TILE_EXT}"
     out.write_bytes(data)
     return out
+
+
+def save_contours(session_dir, fetched_at: datetime, layer: str, payload: dict) -> Path:
+    """Persist the per-snapshot SVG-contour JSON next to its raw tile. Created
+    once at capture; the durable source for replay if the PNG is later deleted."""
+    d = _weather_dir(session_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    iso = fetched_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out = d / f"{iso}_{layer}.json"
+    out.write_text(json.dumps(payload))
+    return out
+
+
+def cached_contours_at(session_dir, layer: str,
+                       target_utc: datetime) -> Optional[Path]:
+    """Most-recent contour JSON at/before ``target_utc`` (causal). Mirrors
+    ``cached_tile_at`` but for the ``_{layer}.json`` sidecars."""
+    d = _weather_dir(session_dir)
+    if not d.exists():
+        return None
+    best, best_ts = None, None
+    for f in d.glob(f"*_{layer}.json"):
+        stem = f.stem.split("_", 1)[0]
+        try:
+            ts = datetime.strptime(stem, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        if ts <= target_utc and (best_ts is None or ts > best_ts):
+            best, best_ts = f, ts
+    return best
+
+
+def latest_contours(session_dir, layer: str) -> Optional[Path]:
+    d = _weather_dir(session_dir)
+    if not d.exists():
+        return None
+    files = sorted(d.glob(f"*_{layer}.json"))
+    return files[-1] if files else None
+
+
+def backfill_contours(session_dir, meeting_name: str,
+                      layer: str = LAYERS[0]) -> int:
+    """Generate the contour JSON for any cached RAW-dbz tile lacking a sidecar
+    (sessions captured before contours existed can be re-derived). Requires the
+    tile PNGs to be raw dbz (grayscale). Returns the count written."""
+    from app.services import weather_contours as wc
+    loc = TRACK_LOCATIONS.get(meeting_name)
+    if not loc:
+        logger.warning("backfill_contours: no coords for %r", meeting_name)
+        return 0
+    geo = composite_geometry(*loc)
+    n = 0
+    for png in list_cached_tiles(session_dir, layer):
+        js = png.with_suffix(".json")
+        if js.exists():
+            continue
+        red = np.asarray(Image.open(png).convert("L"))
+        js.write_text(json.dumps(wc.build_contour_json(red, geo)))
+        n += 1
+    return n
 
 
 class WeatherRadarCapture:
@@ -406,11 +477,14 @@ class WeatherRadarCapture:
                     logger.info("Radar capture reached scheduled stop")
                     break
                 now = datetime.now(timezone.utc)
-                data = await fetch_composite(self._meeting_name)
-                if data:
-                    path = save_tile(self._session_dir, now, LAYERS[0], data)
-                    logger.debug("Radar composite saved: %s (%d bytes)",
-                                 path, len(data))
+                result = await fetch_composite(self._meeting_name)
+                if result:
+                    from app.services import weather_contours as wc
+                    red, geo = result
+                    save_tile(self._session_dir, now, LAYERS[0], raw_dbz_png(red))
+                    save_contours(self._session_dir, now, LAYERS[0],
+                                  wc.build_contour_json(red, geo))
+                    logger.debug("Radar raw tile + contours saved for %s", now)
                 await asyncio.sleep(REFRESH_INTERVAL_S)
         except asyncio.CancelledError:
             raise

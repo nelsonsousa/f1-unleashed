@@ -43,14 +43,18 @@
             </div>
             <div class="weather-forecast hidden" id="weatherForecast"></div>
         </div>
-        {# Position-data warning — shown when GPS/telemetry health degrades (track_map.js). #}
-        <div class="pos-warning" id="trackPosWarning" hidden>
-            <svg class="pos-warning-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path class="pos-warning-tri" d="M12 3 L22.5 21 L1.5 21 Z"/>
-                <rect class="pos-warning-excl" x="11" y="9" width="2" height="6" rx="1"/>
-                <circle class="pos-warning-excl" cx="12" cy="18" r="1.2"/>
-            </svg>
-            <span class="pos-warning-msg" id="trackPosWarningMsg"></span>
+        {# Alerts box — stacks all active track alerts (position, rain, …). Each
+           module injects/toggles its own badge here; container positions them. #}
+        <div class="track-alerts" id="trackAlerts">
+            {# Position-data warning — shown when GPS/telemetry health degrades (track_map.js). #}
+            <div class="pos-warning" id="trackPosWarning" hidden>
+                <svg class="pos-warning-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path class="pos-warning-tri" d="M12 3 L22.5 21 L1.5 21 Z"/>
+                    <rect class="pos-warning-excl" x="11" y="9" width="2" height="6" rx="1"/>
+                    <circle class="pos-warning-excl" cx="12" cy="18" r="1.2"/>
+                </svg>
+                <span class="pos-warning-msg" id="trackPosWarningMsg"></span>
+            </div>
         </div>
     </div>
 </div>

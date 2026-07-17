@@ -138,7 +138,17 @@
         // orientation. See maybeApplyAlignment.
         state.trackRotation = parseFloat(trackRoot?.dataset?.rotation || '') || 0;
         state.trackSvgLoaded = true;
-        maybeApplyAlignment();
+        // Inject any weather contours that arrived before the track SVG mounted.
+        if (state.pendingRadarSvg != null && trackRoot) {
+            let g = trackRoot.querySelector('#weather-contours');
+            if (!g) {
+                g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                g.setAttribute('id', 'weather-contours');
+                trackRoot.insertBefore(g, trackRoot.firstChild);
+            }
+            g.innerHTML = state.pendingRadarSvg;
+            state.pendingRadarSvg = null;
+        }
     }
 
     async function fetchRadarExtent() {
@@ -494,52 +504,91 @@
         await Promise.all(RADAR_LAYERS.map(fetchLayer));
     }
 
+    // ── SVG precipitation contours (card Q046I51N) ───────────────────
+    // The server converts the contours into the TRACK's coordinate system and
+    // ships ready-to-inject SVG (+ a rain alert). The client just drops it into
+    // #track-root, so the single track transform (rotate·scale·y-flip) drives
+    // BOTH the track and the rain — no client-side coordinate maths.
+    const SVGNS = 'http://www.w3.org/2000/svg';
+
     async function fetchLayer(layer) {
-        // Replays: ask for the tile closest to the current playback
-        // clock so the rain pattern matches what was actually overhead
-        // at that moment. Live: omit `t` and the server returns the
-        // most recent cached tile (= what's overhead now).
+        // Replays: ask for the contour set closest to the current playback clock
+        // so the rain matches what was overhead then. Live: omit `t`.
         let tParam = '';
-        if (messageBus.clockTime) {
-            tParam = `&t=${messageBus.clockTime.getTime()}`;
-        }
+        if (messageBus.clockTime) tParam = `&t=${messageBus.clockTime.getTime()}`;
         const sid = (window.SESSION_CONFIG || {}).sessionId || '';
-        const url = `/api/v1/weather/radar/latest?session=${encodeURIComponent(sid)}` +
-                    `&layer=${encodeURIComponent(layer)}` +
-                    tParam +
-                    `&_=${Date.now()}`;
+        const url = `/api/v1/weather/radar/contours?session=${encodeURIComponent(sid)}` +
+                    `&layer=${encodeURIComponent(layer)}${tParam}&_=${Date.now()}`;
         try {
             const resp = await fetch(url);
-            if (resp.status === 204) {
-                // No tile at/before the current clock (e.g. skipped before the
-                // first capture) — remove any stale overlay so none is shown.
-                clearRadarLayer(layer);
-                return;
-            }
+            if (resp.status === 204) { clearRadarLayer(layer); return; }
             if (resp.status !== 200) return;
-            // Skip the swap if the same tile is already shown — avoids needless
-            // blob/image churn when the clock advances within one tile window.
             const tileId = resp.headers.get('X-Tile-Id');
             if (tileId && state.radarTileId[layer] === tileId) return;
-            const blob = await resp.blob();
+            const data = await resp.json();      // { svg, alert }
             state.radarTileId[layer] = tileId;
-            showRadarLayer(layer, URL.createObjectURL(blob));
+            showRadarLayer(layer, data);
         } catch (e) {
-            // Network blip — swallow; next tick will retry.
+            // Network blip — next tick retries.
         }
     }
 
     function clearRadarLayer(layer) {
-        const container = document.getElementById('weatherRadarMap');
-        if (!container) return;
-        const img = container.querySelector(`.weather-radar-tile[data-layer="${layer}"]`);
-        if (img) img.remove();
-        const previous = state.radarObjectUrls[layer];
-        if (previous) {
-            URL.revokeObjectURL(previous);
-            delete state.radarObjectUrls[layer];
-        }
+        const g = document.querySelector('#trackMap #track-root #weather-contours');
+        if (g) g.innerHTML = '';
         delete state.radarTileId[layer];
+        state.pendingRadarSvg = null;
+        updateRainAlert(null);
+    }
+
+    // Rain alert — same badge language as the position-outage warning, in blue.
+    // Server computes the nearest-rain direction + distance (closest wins,
+    // heaviest breaks ties) in the contour payload's `alert`; the client renders
+    // a water-drop, the text, and a set of arrows marching the way the rain is
+    // moving in (its bearing, toward the circuit).
+    const COMPASS_16 = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
+                        'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+    const compass16 = (deg) => COMPASS_16[Math.round((deg % 360) / 22.5) % 16];
+    // Shared icon files (static SVGs in /static/images/icons — no need to build
+    // them every time; a style change to the drop/chevrons is a change to the
+    // file, like a CSS change). width/height pin their size regardless of CSS.
+    const RAIN_DROP_ICON =
+        '<img class="rain-alert-icon" src="/static/images/icons/rain-drop.svg" ' +
+        'width="36" height="36" alt="">';
+    const RAIN_APPROACH_ARROWS =
+        '<img class="rain-alert-arrows" src="/static/images/icons/rain-chevrons.svg" ' +
+        'width="36" height="36" alt="">';
+
+    function updateRainAlert(alert) {
+        // The alert lives in the shared alerts box (#trackAlerts), stacked with
+        // the position warning and any future alerts.
+        const container = document.getElementById('trackAlerts');
+        if (!container) return;
+        let el = document.getElementById('rainAlert');
+        if (!alert || !alert.rain) { if (el) el.classList.add('hidden'); return; }
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'rainAlert';
+            el.className = 'rain-alert';
+            container.appendChild(el);
+        }
+        el.classList.remove('hidden');
+        // Overhead needs no direction — drop the chevrons entirely.
+        if (alert.over_circuit) {
+            el.innerHTML = RAIN_DROP_ICON +
+                '<span class="rain-alert-msg">Rain detected! Currently overhead</span>';
+            return;
+        }
+        const msg = `Rain detected! Currently at ${(alert.distance_m / 1000).toFixed(1)} km ` +
+              `${compass16(alert.bearing_deg)} of circuit edge`;
+        // The chevrons travel the way the rain is moving — its bearing toward the
+        // circuit (bearing + 180). That heading is geographic (North-up), but the
+        // track map is drawn rotated by the circuit's data-rotation, so apply the
+        // same rotation to land the chevrons in the on-screen direction.
+        el.style.setProperty('--arrow-deg',
+            `${(alert.bearing_deg + 180 - state.trackRotation) % 360}deg`);
+        el.innerHTML = RAIN_DROP_ICON +
+            `<span class="rain-alert-msg">${msg}</span>` + RAIN_APPROACH_ARROWS;
     }
 
     // Replays: refresh the radar tile immediately on a seek so we don't
@@ -551,28 +600,22 @@
         }
     });
 
-    function showRadarLayer(layer, objectUrl) {
-        const container = document.getElementById('weatherRadarMap');
-        if (!container) {
-            URL.revokeObjectURL(objectUrl);
-            return;
+    function showRadarLayer(layer, data) {
+        // Server already put the contours in the track's coordinate system.
+        // Inject them as the FIRST child of #track-root (behind the track lines)
+        // so the single track transform drives both. If the track SVG hasn't
+        // mounted yet, stash the markup and inject it on mount (see below).
+        updateRainAlert(data.alert);
+        const trackRoot = document.querySelector('#trackMap #track-root');
+        if (!trackRoot) { state.pendingRadarSvg = data.svg || ''; return; }
+        let g = trackRoot.querySelector('#weather-contours');
+        if (!g) {
+            g = document.createElementNS(SVGNS, 'g');
+            g.setAttribute('id', 'weather-contours');
+            trackRoot.insertBefore(g, trackRoot.firstChild);
         }
-        let img = container.querySelector(`.weather-radar-tile[data-layer="${layer}"]`);
-        if (!img) {
-            img = document.createElement('img');
-            img.className = `weather-radar-tile weather-radar-${layer}`;
-            img.dataset.layer = layer;
-            // Insert at the very back of the stack so the track SVG
-            // and the wind arrow remain on top. CSS controls z-index
-            // between the two layers.
-            container.insertBefore(img, container.firstChild);
-        }
-        const previous = state.radarObjectUrls[layer];
-        state.radarObjectUrls[layer] = objectUrl;
-        img.src = objectUrl;
-        if (previous && previous !== objectUrl) {
-            URL.revokeObjectURL(previous);
-        }
+        g.innerHTML = data.svg || '';
+        state.pendingRadarSvg = null;
     }
 
     messageBus.on('state:reset', () => {
@@ -582,6 +625,7 @@
         state.lastRadarClockMs = null;
         const cond = document.querySelector('#weatherRadarMap .weather-condition');
         if (cond) cond.remove();
+        RADAR_LAYERS.forEach(clearRadarLayer);
     });
 
     // =========================================================================

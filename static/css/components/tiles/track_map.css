@@ -243,3 +243,30 @@
 .pos-warning-icon { width: 20px; height: 20px; flex-shrink: 0; }
 .pos-warning-tri { fill: currentColor; }
 .pos-warning-excl { fill: #12121a; }
+
+/* Alerts box — one place that stacks every active track alert (position, rain,
+ * …) bottom-centre. Each module injects/toggles its own badge inside; hidden
+ * ones collapse so only active alerts take space. */
+.track-alerts {
+    position: absolute;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    max-width: 94%;
+    z-index: 20;
+    pointer-events: none;
+}
+/* Badges flow inside the box, so they drop their own absolute placement. */
+.track-alerts > .pos-warning,
+.track-alerts > .rain-alert {
+    position: static;
+    left: auto;
+    bottom: auto;
+    transform: none;
+    max-width: 100%;
+    z-index: auto;
+}
