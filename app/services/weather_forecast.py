@@ -64,7 +64,10 @@ async def fetch_forecast(meeting_name: str) -> Optional[dict]:
 
 
 def append_snapshot(session_dir: Path, captured_utc: datetime, forecast: dict) -> None:
-    rec = {"captured": captured_utc.replace(microsecond=0).isoformat() + "Z", **forecast}
+    # Format as ...SSZ, NOT isoformat()+"Z": an aware UTC datetime's isoformat()
+    # already carries "+00:00", so the old code produced the invalid "…+00:00Z"
+    # (both an offset and Z), which the client's Date.parse rejects. (a4QfXvwZ)
+    rec = {"captured": captured_utc.strftime("%Y-%m-%dT%H:%M:%SZ"), **forecast}
     try:
         with open(Path(session_dir) / FORECAST_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
@@ -135,6 +138,10 @@ class ForecastCapture:
                 await asyncio.sleep(REFRESH_INTERVAL_S)
         except asyncio.CancelledError:
             raise
+        except Exception:
+            # Don't let an unexpected error kill the capture silently (M6) —
+            # matches WeatherRadarCapture._loop.
+            logger.exception("forecast capture loop failed")
 
 
 forecast_capture = ForecastCapture()

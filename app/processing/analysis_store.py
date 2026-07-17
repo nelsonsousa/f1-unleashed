@@ -82,6 +82,36 @@ def load(livetiming_session_path: Path, analysis_type: str) -> Optional[Any]:
         return None
 
 
+def season_dir(year: int) -> Path:
+    """<data home>/analysis/{year}/ — season-scoped analysis output."""
+    return ANALYSIS_DIR / str(year)
+
+
+def save_season(year: int, analysis_type: str, data: Any) -> Path:
+    """Write ``data`` as JSON to {season_dir}/{analysis_type}.json.
+    Creates parent directories as needed. Returns the written path."""
+    out_dir = season_dir(year)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_file = out_dir / f"{analysis_type}.json"
+    with open(out_file, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    return out_file
+
+
+def load_season(year: int, analysis_type: str) -> Optional[Any]:
+    """Read {season_dir}/{analysis_type}.json. Returns None if missing
+    or unreadable."""
+    out_file = season_dir(year) / f"{analysis_type}.json"
+    if not out_file.exists():
+        return None
+    try:
+        with open(out_file) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        logger.exception("Failed to load %s", out_file)
+        return None
+
+
 def previous_event_dir(livetiming_session_path: Path) -> Optional[Path]:
     """Return <data home>/analysis/{year}/{prev_event}/ — the analysis directory
     for the event sorted immediately BEFORE the current session's event.

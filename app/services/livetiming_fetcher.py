@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -571,10 +571,19 @@ class LiveTimingFetcher:
         for session in self.get_cached_sessions():
             if session["name"] == cache_key:
                 return Path(session["path"])
+            # Clients address sessions WITHOUT the numeric session-key folder
+            # prefix (e.g. "2026_1289_Silverstone_Sprint" for the on-disk
+            # "…/11321_Sprint"), so also match with that prefix stripped.
+            sk = session.get("session_key")
+            if sk and session["name"].replace(f"{sk}_", "", 1) == cache_key:
+                return Path(session["path"])
 
-        # Fallback: try legacy flat path
-        legacy_path = self.cache_dir / cache_key
-        if legacy_path.exists():
+        # Fallback: try legacy flat path — but keep it contained under the cache dir so a
+        # caller-supplied "../…" key can't escape it (path-traversal guard; the route uses a
+        # {…:path} converter that permits "/" and ".."). Resolving collapses any "..".
+        base = self.cache_dir.resolve()
+        legacy_path = (self.cache_dir / cache_key).resolve()
+        if legacy_path.is_relative_to(base) and legacy_path.exists():
             return legacy_path
 
         return None
@@ -659,7 +668,7 @@ class LiveTimingFetcher:
                 session_start = session.start_date
                 logger.warning(f"Using scheduled session start time: {session_start}")
             else:
-                session_start = datetime.utcnow()
+                session_start = datetime.now(timezone.utc).replace(tzinfo=None)
                 logger.warning("Could not determine session start time, using current time")
 
         # Determine which topics to fetch — start with our known list,
@@ -747,8 +756,9 @@ class LiveTimingFetcher:
                     if progress_callback else None
                 )
             )
-            # TODO(analysis, item 4): run the analysis pipeline here and
-            # persist results to data/analysis/ before the DB is deleted.
+            # Note: no analysis pipeline runs here. Post-session analysis
+            # (pecking_order / pit_loss_estimate) runs in the preprocessor's finalize
+            # path; the transient DB is deleted below once the build completes.
         finally:
             pre.close()
         if not REPLAY_DEBUG:
@@ -779,6 +789,12 @@ class LiveTimingFetcher:
                 if response.status == 404:
                     logger.debug(f"Topic {topic} not found (404)")
                     return []
+                if response.status == 403:
+                    # The livetiming CDN (CloudFront WAF) 403s VPN/datacenter IPs — give
+                    # the actionable cause instead of a bare "failed to fetch" (L10).
+                    logger.warning(
+                        f"{topic}: 403 from the livetiming CDN — it blocks VPN/datacenter "
+                        "IPs (CloudFront WAF); retry from a residential connection.")
                 response.raise_for_status()
                 raw_data = await response.text()
         except aiohttp.ClientError as e:
@@ -819,7 +835,7 @@ class LiveTimingFetcher:
                 if session_start:
                     timestamp = session_start + offset
                 else:
-                    timestamp = datetime.utcnow()  # Fallback
+                    timestamp = datetime.now(timezone.utc).replace(tzinfo=None)  # Fallback
 
                 # Parse JSON data
                 data = json.loads(json_str)

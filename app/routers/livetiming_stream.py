@@ -15,6 +15,8 @@ from app.processing.session import session_manager
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/livetiming")
 
+_cleanup_tasks: set = set()   # refs to in-flight _delayed_cleanup tasks (M6)
+
 
 @router.websocket("/ws/{session_name:path}")
 async def websocket_session(websocket: WebSocket, session_name: str, mode: str = ""):
@@ -68,7 +70,10 @@ async def websocket_session(websocket: WebSocket, session_name: str, mode: str =
     finally:
         if client_id is not None:
             engine.remove_client(client_id)
-            asyncio.create_task(_delayed_cleanup(session_name))
+            # Keep a reference so the cleanup task isn't GC'd mid-flight (M6).
+            t = asyncio.create_task(_delayed_cleanup(session_name))
+            _cleanup_tasks.add(t)
+            t.add_done_callback(_cleanup_tasks.discard)
 
 
 async def _delayed_cleanup(session_name: str, delay: float = 30.0):

@@ -42,6 +42,8 @@ Sample tuple (stored): [dp, speed, rpm, gear, throttle, brake, t_ms_rel].
 """
 from __future__ import annotations
 
+import bisect
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -65,15 +67,66 @@ def _ms_to_dt(ms: int) -> datetime:
     return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc)
 
 
+def _dtw_dp(obs: list, prof_s: list, prof_dp: list) -> list:
+    """Plain-Python DTW (algorithm (b)): align an observed per-lap speed
+    sequence to the signature speed(dp) profile; return the inferred dp for each
+    observed sample. Ported from scripts.sim_lap_compare.dtw_dp (numpy → lists).
+    O(n*m); callers downsample `obs` (n<=80) to keep it cheap."""
+    n, m = len(obs), len(prof_s)
+    INF = 1e18
+    D = [[INF] * (m + 1) for _ in range(n + 1)]
+    D[0][0] = 0.0
+    for i in range(1, n + 1):
+        oi = obs[i - 1]
+        row, prow = D[i], D[i - 1]
+        for j in range(1, m + 1):
+            cost = abs(prof_s[j - 1] - oi)
+            row[j] = cost + min(prow[j], row[j - 1], prow[j - 1])
+    i, j = n, m
+    acc: list = [[] for _ in range(n)]
+    while i > 0 and j > 0:
+        acc[i - 1].append(prof_dp[j - 1])
+        diag, up, left = D[i - 1][j - 1], D[i - 1][j], D[i][j - 1]
+        if diag <= up and diag <= left:
+            i, j = i - 1, j - 1
+        elif up <= left:
+            i -= 1
+        else:
+            j -= 1
+    out, last = [], prof_dp[0]
+    for k in range(n):
+        if acc[k]:
+            last = sum(acc[k]) / len(acc[k])
+        out.append(last)
+    return out
+
+
+def _interp1d(xs: list, ys: list, x: float) -> float:
+    """Linear interpolation of y at x over ascending xs (clamped at the ends)."""
+    if x <= xs[0]:
+        return ys[0]
+    if x >= xs[-1]:
+        return ys[-1]
+    j = bisect.bisect_right(xs, x)
+    x0, x1 = xs[j - 1], xs[j]
+    if x1 == x0:
+        return ys[j - 1]
+    y0, y1 = ys[j - 1], ys[j]
+    return y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+
+
 @dataclass
 class DriverData:
     num: str
     activated: bool = False
     # Pairing.
-    pending_pos: Optional[tuple] = None      # (dp, ts) awaiting next CarData
+    pending_pos: Optional[tuple] = None      # (dp, ts, est) awaiting next CarData
     last_dp: Optional[float] = None
     last_pos_ts: Optional[datetime] = None   # ts of the previous position sample
-    # Captured samples since session start: [dp, speed, rpm, gear, thr, brk, abs_ms].
+    # Captured samples since session start:
+    #   [dp, speed, rpm, gear, thr, brk, abs_ms, est]
+    # est = 1 when the position was RECONSTRUCTED (estimated) during a Position.z
+    # outage, else 0. Used at lap-commit to decide whether the (b) DTW matcher runs.
     samples: list = field(default_factory=list)
     # Lap tracking. Completed-lap telemetry is numbered by the AUTHORITATIVE
     # NoL counter (driverLaps.currentLap = the lap the driver is ON), NOT by
@@ -100,13 +153,57 @@ class TelemetryProcessor(Processor):
         self._is_race = session_type == "race"
         self._drivers: dict[str, DriverData] = {}
         self._race_started = False
+        # Circuit signature (loaded once from SessionInfo). matcher "b" → run the
+        # DTW dp re-derivation on reconstructed laps at commit; "a"/None → never.
+        self._matcher: Optional[str] = None
+        self._prof_s: Optional[list] = None   # signature speed profile (per dp step)
+        self._prof_dp: Optional[list] = None  # dp value at each profile index
 
     def subscribe(self) -> None:
         self._bus.on("CarData.z", self._handle_car_data)
         self._bus.on("position", self._handle_position)
+        self._bus.on("SessionInfo", self._handle_session_info_sig)
         if self._is_race:
             self._bus.on("SessionData", self._handle_session_data)
         self._bus.on("*", self._handle_wildcard)
+
+    # ── Circuit signature (DTW matcher + speed profile) ──────────────────────
+    def _handle_session_info_sig(self, data: Any, clock_time: datetime) -> None:
+        """Load the circuit signature ONCE at session start: the matcher flag and
+        speed profile that drive the (b) DTW dp re-derivation. Any missing
+        file/key leaves matcher "a" (no DTW), and real-position laps are never
+        touched regardless."""
+        if self._matcher is not None:
+            return
+        self._matcher = "a"   # default: no DTW unless the signature selects it
+        try:
+            if not isinstance(data, dict):
+                return
+            meeting = data.get("Meeting")
+            location = meeting.get("Location") if isinstance(meeting, dict) else None
+            if not location:
+                return
+            from app.config import DATA_DIR
+            from app.processing.track_geometry import find_svg_path
+            svg = find_svg_path(location)
+            if svg is None:
+                return
+            sig_path = DATA_DIR / "analysis" / "circuit_signatures" / f"{svg.stem}.json"
+            if not sig_path.exists():
+                return
+            with open(sig_path) as fh:
+                j = json.load(fh)
+            matcher = j.get("matcher")
+            profile = j.get("profile")
+            step = j.get("profile_step")
+            if (matcher not in ("a", "b") or not isinstance(profile, list)
+                    or not profile or not isinstance(step, (int, float))):
+                return
+            self._matcher = matcher
+            self._prof_s = [float(v) for v in profile]
+            self._prof_dp = [i * float(step) for i in range(len(profile))]
+        except Exception:
+            logger.debug("telemetry: circuit signature load failed", exc_info=True)
 
     def _drv(self, num: str) -> DriverData:
         d = self._drivers.get(num)
@@ -184,6 +281,13 @@ class TelemetryProcessor(Processor):
         # by its S/F crossing. (currentLap is the lap the driver is ON, so the
         # just-finished lap is one less — true for both P/Q and race.)
         if cur > drv.cur_lap:
+            # Seed the live lap from the authoritative NoL the first time we see it in a race:
+            # the SessionData "Started" activation can be dispatched before a driver's first
+            # CarData (shared gate-open timestamp), in which case _drv() activates the car but
+            # leaves live_lap/cur_lap at 0 → the live lap reads one behind all session. currentLap
+            # is 1 at lights-out, so seeding from it fixes the "Lap 0 at lights-out" off-by-one.
+            if self._is_race and drv.live_lap == 0 and cur >= 1:
+                drv.live_lap = cur
             drv.cur_lap = cur
             if not drv.activated:
                 return
@@ -250,18 +354,31 @@ class TelemetryProcessor(Processor):
             if not isinstance(dp, (int, float)):
                 continue
             dp = float(dp)
+            # Estimated (reconstructed) position marker: position_processor emits a
+            # 4th element = 1 for outage-reconstructed positions ([x, y, dp, 1]);
+            # real positions are length-3. Carried into the sample for lap-commit.
+            est = 1 if (len(coords) >= 4 and coords[3]) else 0
             drv = self._drv(num)
             if not drv.activated:
+                # Pre-race (before lights-out): pair positions with CarData so LIVE telemetry passes
+                # through (dashboard gauges) — but run NO S/F/lap logic and store no samples; there
+                # are no laps to persist yet. (SME 2026-07-15)
+                drv.pending_pos = (dp, clock_time, est)
                 drv.last_dp = dp
                 continue
             if drv.in_pit:
-                # While in the pit lane/garage we ignore the sample altogether —
-                # no capture, no crossing detection, no emission. Capture resumes
-                # on OUT (which re-seeds last_dp).
+                # Through the pit lane/garage we DO capture telemetry (so the stationary
+                # speed==0 stretch is identifiable) but run NO S/F crossing detection —
+                # pit-lane dp wraps are spurious projections that must not count as laps.
+                # pending_pos is set even when dp is stale (a stopped car's dp is constant)
+                # so CarData can pair and emit the speed==0 samples. OUT re-seeds last_dp.
+                drv.pending_pos = (dp, clock_time, est)
+                drv.last_dp = dp
+                drv.last_pos_ts = clock_time
                 continue
             prev = drv.last_dp
             if prev is None:
-                drv.pending_pos = (dp, clock_time)
+                drv.pending_pos = (dp, clock_time, est)
                 drv.last_dp = dp
                 drv.last_pos_ts = clock_time
                 continue
@@ -278,11 +395,11 @@ class TelemetryProcessor(Processor):
                                         drv.pending_report_ts or clock_time)
                     drv.live_lap += 1
                     drv.live_zero_ts = line_ts
-                drv.pending_pos = (dp, clock_time)
+                drv.pending_pos = (dp, clock_time, est)
                 drv.last_dp = dp
                 drv.last_pos_ts = clock_time
             elif dp > prev:
-                drv.pending_pos = (dp, clock_time)
+                drv.pending_pos = (dp, clock_time, est)
                 drv.last_dp = dp
                 drv.last_pos_ts = clock_time
             # else: stale (dp == prev) or backward jump → skip, keep last_dp.
@@ -322,28 +439,38 @@ class TelemetryProcessor(Processor):
                 if not isinstance(ch, dict):
                     continue
                 drv = self._drv(num)
-                if not drv.activated or drv.in_pit or drv.pending_pos is None:
-                    continue   # in pit, or no pending position → skip this CarData
-                dp, pos_ts = drv.pending_pos
+                if drv.pending_pos is None:
+                    continue   # no pending position to pair with → skip this CarData
+                dp, pos_ts, est = drv.pending_pos
                 drv.pending_pos = None
                 abs_ms = _epoch_ms(pos_ts)
                 speed = ch.get("2", 0)
                 thr = ch.get("4", 0)
                 brk = ch.get("5", 0)
+                gear = ch.get("3", 0)
+                # The ECU reports REVERSE as an out-of-range gear value (>8) → map to -1 = R. (SME 2026-07-15)
+                if isinstance(gear, (int, float)) and gear > 8:
+                    gear = -1
+                # speed==0 is a channel dropout ON TRACK (position moving) → nulled; but in
+                # the pit it is a REAL standstill → kept, so stationary time is measurable.
                 invalid = (
                     (isinstance(thr, (int, float)) and thr > 100)
                     or (isinstance(brk, (int, float)) and brk > 100)
-                    or speed == 0
+                    or (speed == 0 and not drv.in_pit)
                 )
                 if invalid:
-                    sample = [dp, None, None, None, None, None, abs_ms]
-                    live = {"dp": dp, "speed": None, "rpm": None, "gear": None,
+                    # R at a standstill is real state (reverse selected while stopped), not a
+                    # dropout — keep the gear so the dash can show R. (SME 2026-07-15)
+                    g = -1 if gear == -1 else None
+                    sample = [dp, None, None, g, None, None, abs_ms, est]
+                    live = {"dp": dp, "speed": None, "rpm": None, "gear": g,
                             "throttle": None, "brake": None}
                 else:
-                    sample = [dp, speed, ch.get("0", 0), ch.get("3", 0), thr, brk, abs_ms]
+                    sample = [dp, speed, ch.get("0", 0), gear, thr, brk, abs_ms, est]
                     live = {"dp": dp, "speed": speed, "rpm": ch.get("0", 0),
-                            "gear": ch.get("3", 0), "throttle": thr, "brake": brk}
-                drv.samples.append(sample)
+                            "gear": gear, "throttle": thr, "brake": brk}
+                if drv.activated:
+                    drv.samples.append(sample)   # store only once running — nothing to persist pre-race
                 live["ts"] = abs_ms
                 live["lap"] = drv.live_lap
                 live["lapElapsedMs"] = (abs_ms - _epoch_ms(drv.live_zero_ts)
@@ -378,6 +505,13 @@ class TelemetryProcessor(Processor):
         end_ms = _epoch_ms(end_ts)
         in_lap = [s for s in drv.samples if start_ms <= s[6] < end_ms]
 
+        # P/Q: never commit the stationary pit samples (speed==0) to the saved lap — a
+        # parked car would flat-line the trace. On-track dropouts are speed=None (not 0),
+        # so this targets only genuine in-box standstill. (Race keeps them: a race pit lap
+        # legitimately shows the stop.)
+        if not self._is_race:
+            in_lap = [s for s in in_lap if s[1] != 0]
+
         # A lap's samples ascend dp 0→100. A boundary that lands a hair before
         # the S/F line leaves a pre-S/F straggler (dp~100) at the front, or a
         # next-lap straggler (dp~0) at the back — either draws a line straight
@@ -398,8 +532,54 @@ class TelemetryProcessor(Processor):
         if synth_end is not None:
             out.append(synth_end[:6] + [int(end_ms - start_ms)])
 
+        # (b) DTW at lap-commit: on circuits whose signature selects the DTW
+        # matcher, re-derive dp for a RECONSTRUCTED lap by aligning its speed
+        # trace to the signature speed profile. Real-position laps (est=0) and
+        # matcher-"a" circuits are left untouched; any failure keeps the un-DTW'd
+        # dp. Majority test on the lap's own samples (8th element = est).
+        if self._matcher == "b" and self._prof_s:
+            est_n = sum(1 for s in in_lap if len(s) > 7 and s[7] == 1)
+            if est_n * 2 > len(in_lap):
+                try:
+                    self._dtw_relabel_dp(out, synth_start is not None,
+                                         synth_end is not None)
+                except Exception:
+                    logger.debug("telemetry: DTW dp relabel failed", exc_info=True)
+
         self._bus.emit(f"telemetryLap:{drv.num}:{n}", out, end_ts)
         drv.emitted.add(n)
+
+    def _dtw_relabel_dp(self, out: list, has_seam_start: bool,
+                        has_seam_end: bool) -> None:
+        """Overwrite dp (row[0]) on the non-seam rows of a reconstructed lap using
+        a DTW alignment of the lap speed trace to the signature speed profile.
+        The interpolated 0.0/100.0 S/F seam rows anchor the lap ends and are left
+        as-is; nulled (None-speed) rows keep their original dp."""
+        lo = 1 if has_seam_start else 0
+        hi = len(out) - (1 if has_seam_end else 0)
+        # Body rows carrying a numeric speed — the only ones we can DTW/relabel.
+        idxs = [k for k in range(lo, hi) if out[k][1] is not None]
+        if len(idxs) < 2:
+            return
+        speeds = [out[k][1] for k in idxs]
+        # Downsample to <=80 evenly-spaced points to keep DTW (O(n*m)) cheap.
+        MAXP = 80
+        if len(speeds) > MAXP:
+            sel: list = []
+            seen: set = set()
+            for t in range(MAXP):
+                p = int(round(t * (len(speeds) - 1) / (MAXP - 1)))
+                if p not in seen:
+                    seen.add(p)
+                    sel.append(p)
+        else:
+            sel = list(range(len(speeds)))
+        ds_speeds = [speeds[p] for p in sel]
+        ds_dp = _dtw_dp(ds_speeds, self._prof_s, self._prof_dp)
+        # Map the DTW dp (defined at downsample positions `sel`, an axis over
+        # 0..len(idxs)-1) back onto every numeric body row by linear interpolation.
+        for pos, k in enumerate(idxs):
+            out[k][0] = round(_interp1d(sel, ds_dp, pos), 3)
 
     def _synthetic_at_seam(self, drv: DriverData, seam_ts: datetime,
                            dp_target: float):

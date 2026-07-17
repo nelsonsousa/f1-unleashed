@@ -26,6 +26,7 @@ let authState = {
 
 // Countdown state
 let nextSession = null;
+let liveSession = null;   // current live session payload from /schedule/live-session (null = none)
 let countdownInterval = null;
 let liveCheckInterval = null;
 
@@ -33,6 +34,11 @@ let liveCheckInterval = null;
 document.addEventListener('DOMContentLoaded', async () => {
     await checkAuthStatus();
     await checkForLiveSession();
+    // Poll continuously so the countdown auto-switches to "Watch live" the moment
+    // a session goes live (and back when it ends) without a manual refresh. Was
+    // only started once a session was ALREADY live, so a page loaded during the
+    // countdown never updated. Idempotent. (GY4Ro9mk)
+    startLiveCheck();
     await setupYearDropdown();
     await refreshCache();
     loadVersionInfo();   // non-blocking — version is informational
@@ -176,6 +182,7 @@ async function checkForLiveSession() {
         const response = await fetch(`${API_BASE}/schedule/live-session`);
 
         if (response.status === 204) {
+            await setLiveSession(null);   // clear grid live markers if a session just ended
             // No live session. Load the countdown if we have none — or REFRESH
             // it if the one we're showing has already started yet never went
             // live (a finished session, or a flaky live check). Without the
@@ -189,7 +196,8 @@ async function checkForLiveSession() {
         }
 
         if (!response.ok) {
-            // Live check failed (e.g. flaky F1 API) — fall back to the schedule,
+            // Live check failed (e.g. flaky F1 API) — keep the last-known live
+            // marker (don't flicker it off on a transient error); fall back to
             // refreshing a stale started-but-not-live countdown for the same
             // reason as the 204 branch above.
             if (!nextSession || sessionHasStarted(nextSession)) {
@@ -201,6 +209,8 @@ async function checkForLiveSession() {
 
         const data = await response.json();
         showLiveSession(data);
+        // Reflect the live session on the schedule grid + open popover (d0en6g29).
+        await setLiveSession(data);
 
         // Keep polling every 60s to detect when session ends
         startLiveCheck();
@@ -266,6 +276,65 @@ function showLiveSession(data) {
 
     document.getElementById('countdownSection').classList.add('is-live');
     document.getElementById('countdownSection').classList.remove('past-event');
+}
+
+// ── Live-state → schedule grid (d0en6g29 / PVlqvdDm) ─────────────────────
+// The schedule-card buttons + grid must reflect the CURRENT live session
+// (whose data comes from the 30 s /schedule/live-session poll), not a stale
+// snapshot. `is_live` is NOT provided by /cached, so match the live session to
+// each row here and re-render on any live-state change.
+const _norm = (x) => String(x || '').toLowerCase().replace(/[\s_]+/g, '');
+function liveKey(s) {
+    return s ? `${s.meeting_key || 0}|${_norm(s.session_name || s.session_type)}` : '';
+}
+function isEventLive(ev) {
+    return !!(liveSession && ev && _norm(liveSession.location) === _norm(ev.location));
+}
+function isSessionLive(ev, s) {
+    if (!isEventLive(ev)) return false;
+    return _norm(liveSession.session_name) === _norm(s.name)
+        || _norm(liveSession.session_type) === _norm(s.name);
+}
+// Live "Watch live" target: prefer the cached entry's authoritative key, else
+// build the same {year}_{meetingKey}_{location}_{session} shape showLiveSession uses.
+function liveHrefFor(year, ev, s, sessionType, entry) {
+    if (entry) return `/${sessionType}?session=${encodeURIComponent(entry.name)}&mode=live`;
+    const mk = (liveSession && liveSession.meeting_key) || 0;
+    const id = `${year}_${mk}_${(ev.location || '').replace(/ /g, '_')}_${(s.name || '').replace(/ /g, '_')}`;
+    return `/${sessionType}?session=${encodeURIComponent(id)}&mode=live`;
+}
+// Set the live session and, on any change (live↔offline or a different session),
+// refresh the cache map + re-render the grid live markers + open popover.
+async function setLiveSession(data) {
+    if (liveKey(data) === liveKey(liveSession)) return;
+    liveSession = data;
+    await onLiveStateChange();
+}
+async function onLiveStateChange() {
+    // A just-live session may now be cached (live.jsonl exists) — refresh so the
+    // Watch-live link resolves to the real cache key.
+    try { await loadCachedKeys(); } catch (e) {}
+    const pop = document.querySelector('.session-popover');
+    if (pop) {
+        // Popover open: a full grid re-render would destroy it (it's appended
+        // inside #scheduleGrid). Toggle the card live-class in place + re-render
+        // the popover's buttons.
+        markLiveCards();
+        const round = parseInt(pop.dataset.round, 10);
+        const ev = currentEvents.find(e => e.round === round);
+        if (ev) pop.innerHTML = renderSessionPopoverHtml(currentYear, ev);
+    } else if (currentEvents.length) {
+        renderScheduleCards(currentYear, currentEvents);   // full re-render → LIVE badge + button
+    }
+}
+// Toggle the .live class on grid cards without a full re-render (preserves any
+// open popover).
+function markLiveCards() {
+    document.querySelectorAll('.gp-card').forEach((card) => {
+        const round = parseInt(card.dataset.round, 10);
+        const ev = currentEvents.find(e => e.round === round);
+        card.classList.toggle('live', !!(ev && isEventLive(ev)));
+    });
 }
 
 // =========================================================================
@@ -507,15 +576,19 @@ function renderScheduleCards(year, events) {
         // (= weekend has begun even if the headline race date is still
         // in the future, e.g. Monaco Sunday with FP/Q already done).
         const past = eventDate < now || cached;
+        const live = isEventLive(e);
         const cardCls = [
             'gp-card',
             past ? '' : 'upcoming',
             cached ? 'cached' : '',
+            live ? 'live' : '',
         ].filter(Boolean).join(' ');
         const onclick = past ? `onclick="toggleEvent(event, ${e.round})"` : '';
-        const badge = cached
-            ? '<span class="gp-badge cached" title="Sessions cached locally">✓</span>'
-            : (past ? '<span class="gp-badge missing" title="Not cached">·</span>' : '');
+        const badge = live
+            ? '<span class="gp-badge live" title="Session live now">LIVE</span>'
+            : cached
+                ? '<span class="gp-badge cached" title="Sessions cached locally">✓</span>'
+                : (past ? '<span class="gp-badge missing" title="Not cached">·</span>' : '');
         html += `
             <div class="${cardCls}" data-round="${e.round}" ${onclick}>
                 <div class="gp-row1">
@@ -568,14 +641,19 @@ function renderSessionPopoverHtml(year, ev) {
         // Button label: "Watch live" if the session is currently
         // running (live capture in progress), "Replay" if cached,
         // "Download" otherwise.
-        const isLive = !!(entry && entry.is_live);
+        const isLive = isSessionLive(ev, s);
+        // Future = scheduled but not started yet, not cached, not live — nothing
+        // to download, so fade the row + disable its button (fyxmiVKo).
+        const future = !!(sd && sd > new Date() && !cached && !isLive);
         const action = isLive
-            ? `<a class="ses-btn live" href="${openUrl}" target="_self">Watch live</a>`
+            ? `<a class="ses-btn live" href="${liveHrefFor(year, ev, s, sessionType, entry)}" target="_self">Watch live</a>`
             : cached
                 ? `<a class="ses-btn open" href="${openUrl}" target="_self">Replay</a>`
-                : `<button class="ses-btn download" onclick="downloadSession(${year}, '${escapeAttr(ev.name)}', '${escapeAttr(s.name)}', this)">Download</button>`;
+                : future
+                    ? `<button class="ses-btn download" disabled title="Session hasn't started yet">Download</button>`
+                    : `<button class="ses-btn download" onclick="downloadSession(${year}, '${escapeAttr(ev.name)}', '${escapeAttr(s.name)}', this)">Download</button>`;
         cards += `
-            <div class="session-card${cached ? ' cached' : ''}">
+            <div class="session-card${cached ? ' cached' : ''}${future ? ' future' : ''}">
                 <div class="ses-name">${escapeHtml(s.name)}</div>
                 <div class="ses-when">${escapeHtml(dlabel)}</div>
                 ${renderSessionStatusIcons(entry, year, ev, s)}
@@ -583,10 +661,28 @@ function renderSessionPopoverHtml(year, ev) {
             </div>
         `;
     }
-    const allCached = eventAllCached(ev);
-    const downloadAllBtn = allCached
-        ? `<button class="ses-btn download-all done" disabled title="All sessions cached">Download all</button>`
-        : `<button class="ses-btn download-all" onclick="downloadAllSessions(${year}, '${escapeAttr(ev.name)}', this)">Download all</button>`;
+    // "Download all" over PAST (finished, non-live) sessions only — never the
+    // in-progress live session, never the not-yet-happened future ones. Three
+    // states by how many of those are on disk (CHQlhpkq):
+    //   none cached → "Download all"; some → "Download missing"; all → "Re-download all".
+    const now = new Date();
+    const pastSessions = (ev.sessions || []).filter(s => {
+        const sd = s.date_utc ? new Date(s.date_utc + 'Z') : null;
+        return sd && sd <= now && !isSessionLive(ev, s);
+    });
+    const pastCachedN = pastSessions.filter(s => sessionIsCached(ev, s.name)).length;
+    const dlAll = (label, extra, title) =>
+        `<button class="ses-btn download-all" onclick="downloadAllSessions(${year}, '${escapeAttr(ev.name)}', this${extra})" title="${title}">${label}</button>`;
+    let downloadAllBtn;
+    if (pastSessions.length === 0) {
+        downloadAllBtn = `<button class="ses-btn download-all" disabled title="No finished sessions yet">Download all</button>`;
+    } else if (pastCachedN === pastSessions.length) {
+        downloadAllBtn = dlAll('Re-download all', ', true', 'Re-download all timing data');
+    } else if (pastCachedN > 0) {
+        downloadAllBtn = dlAll('Download missing', '', 'Download the sessions not yet on disk');
+    } else {
+        downloadAllBtn = dlAll('Download all', '', 'Download all sessions');
+    }
     cards += `
         <div class="session-card actions">
             ${downloadAllBtn}
@@ -622,16 +718,18 @@ function renderSessionStatusIcons(entry, year, ev, s) {
         ? `<button class="ses-redl" title="Re-download timing data" onclick="redownloadSession(${year}, '${escapeAttr(ev.name)}', '${escapeAttr(s.name)}', this)">&#8595;</button>`
         : '';
 
+    // Three status icons side-by-side (jsonl / audio / weather); the re-download
+    // button sits BELOW the jsonl icon in its column (8oHiZeIW).
     return `
         <div class="ses-icons">
-            <div class="ses-ico-row">
+            <div class="ses-ico-col">
                 <span class="ses-ico ${statusClass(dataS)}" title="${escapeAttr(tip('Timing data', dataS))}">${fileSvg}</span>
                 ${dlBtn}
             </div>
-            <div class="ses-ico-row">
+            <div class="ses-ico-col">
                 <span class="ses-ico ${statusClass(audioS)}" title="${escapeAttr(tip('Audio', audioS))}">${audioSvg}</span>
             </div>
-            <div class="ses-ico-row">
+            <div class="ses-ico-col">
                 <span class="ses-ico ${statusClass(wxS)}" title="${escapeAttr(tip('Weather data', wxS))}">${wxSvg}</span>
             </div>
         </div>
@@ -758,13 +856,17 @@ window.redownloadSession = async function(year, eventName, sessionName, btn) {
     }
 };
 
-window.downloadAllSessions = async function(year, eventName, btn) {
+window.downloadAllSessions = async function(year, eventName, btn, force) {
     btn.disabled = true;
     btn.textContent = 'Downloading…';
     const ev = currentEvents.find(e => e.name === eventName);
     if (!ev) { btn.disabled = false; btn.textContent = 'Download all'; return; }
+    const now = new Date();
     for (const s of (ev.sessions || [])) {
-        if (sessionIsCached(ev, s.name)) continue;
+        const sd = s.date_utc ? new Date(s.date_utc + 'Z') : null;
+        if (sd && sd > now) continue;                        // future — nothing to grab yet
+        if (isSessionLive(ev, s)) continue;                  // never bulk-download the live one
+        if (!force && sessionIsCached(ev, s.name)) continue; // "Download missing" skips cached
         try {
             await fetch(`${API_BASE}/livetiming/fetch`, {
                 method: 'POST',
@@ -772,6 +874,7 @@ window.downloadAllSessions = async function(year, eventName, btn) {
                 body: JSON.stringify({
                     year, meeting_name: eventName,
                     session_type: s.name,   // specific session name (not the generic type)
+                    force: !!force,         // "Re-download all" re-fetches cached sessions too
                 }),
             });
         } catch (e) { console.error(e); }

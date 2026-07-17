@@ -47,15 +47,102 @@ class SectorTimingProcessor(Processor):
 
     def __init__(self, bus: SessionMessageBus, session_type: str):
         super().__init__(bus, session_type)
+        self._is_race = session_type == "race"
         self._sectors: dict[str, list] = {}
+        self._status: dict[str, Optional[str]] = {}   # num -> driverStatus
+        self._cls_lap: dict[str, dict] = {}            # num -> {lap -> classification type}
+        self._current_lap: dict[str, Any] = {}         # num -> driverLaps.currentLap
+        self._display_lap: dict[str, Any] = {}         # num -> lap the SHOWN sector TIMES belong to
+        self._mini_display_lap: dict[str, Any] = {}    # num -> lap the SHOWN mini-sectors belong to
+        self._part: Optional[int] = None   # current qualifying part (reset trigger)
+        self._started = False              # race: lights out (SessionStatus=Started)
+        self._pending_roll: dict[str, bool] = {}   # a real sector time seen since the last rollover
         # Max segment count seen per sector (track-wide — all cars share the
         # mini-sector layout). Mini-sector arrays are padded to this on every
         # emit so the layout is fixed-length and the client render is
         # width-invariant (no jitter as segments arrive within a lap).
         self._seg_counts: list[int] = [0, 0, 0]
+        self._emitted_lap: dict[str, Any] = {}    # dedup for driverSectorLap
 
     def subscribe(self) -> None:
         self._bus.on("TimingData", self._handle)
+        self._bus.on("qualifyingPart", self._handle_part)
+        self._bus.on("*", self._handle_aux)   # driverStatus / driverLapClassification
+
+    def _handle_aux(self, topic: str, data: Any, clock_time: datetime) -> None:
+        """Status / lap-classification drive the display suppression (retired,
+        eliminated, finished, out/in/slow). Not a cycle — nothing in their
+        producers consumes driverSectors."""
+        if topic.startswith("driverStatus:"):
+            num = topic.split(":", 1)[1]
+            st = data if isinstance(data, str) else None
+            if st != self._status.get(num):
+                self._status[num] = st
+                if num in self._sectors:
+                    self._emit(num, clock_time)
+        elif topic.startswith("driverLapClassification:"):
+            num = topic.split(":", 1)[1]
+            if isinstance(data, dict):
+                lap = data.get("lap")
+                if isinstance(lap, int) and self._cls_lap.setdefault(num, {}).get(lap) != data.get("type"):
+                    self._cls_lap[num][lap] = data.get("type")
+                    if num in self._sectors:
+                        self._emit(num, clock_time)
+        elif topic.startswith("driverLaps:"):
+            num = topic.split(":", 1)[1]
+            if isinstance(data, dict) and data.get("currentLap") is not None:
+                self._current_lap[num] = data["currentLap"]
+        elif topic == "SessionStatus":
+            if isinstance(data, dict) and data.get("Status") == "Started" and not self._started:
+                self._started = True   # lights out → un-grey + seed the lap counters to 1
+                for num in list(self._sectors):
+                    self._display_lap[num] = 1        # racing lap 1 (discard pre-race out-laps)
+                    self._mini_display_lap[num] = 1
+                    self._pending_roll[num] = False
+                    self._emit(num, clock_time)
+
+    def _suppress_mode(self, num: str):
+        """(sector_mode, mini_mode), each None | 'white' | 'blank'. Sector times and
+        mini-sectors share the SAME suppression: 'white' shows the value/segments
+        dimmed white (0.5 opacity), 'blank' clears them. Sector TIMES use
+        _display_lap (sticky until the rollover Value="" clear); MINI-SECTORS use
+        _mini_display_lap — they paint from the lap START, before that clear, so
+        keying them off _display_lap left a whole first sector on the PREVIOUS lap's
+        class. (user 2026-07-07)"""
+        if self._is_race and not self._started:
+            return ("white", "white")                 # pre-lights-out (race): grey all timing
+        st = self._status.get(num)
+        if st in ("DSQ", "ELIMINATED"):
+            return ("blank", "blank")                 # out of contention → clear both
+        if st in ("RET", "STOP"):
+            return ("white", "white")                 # retired / stopped → dimmed white
+        sector_mode, _ = self._suppresses(num, self._display_lap.get(num))
+        _, mini_mode = self._suppresses(num, self._mini_display_lap.get(num))
+        return (sector_mode, mini_mode)
+
+    def _suppresses(self, num: str, lap: Any):
+        """(sector_mode, mini_mode) for the classification of `lap`. Every
+        non-representative lap — out / in / cool-down / post-chequered — shows dimmed
+        white (not cleared). The post-chequered slow-down lap is classified SLOW, so
+        this covers FINISHED too: the finishing lap keeps its class, the slow-down
+        lap is SLOW."""
+        dcls = self._cls_lap.get(num, {}).get(lap)
+        if dcls == "CHECKERED":
+            return ("white", "white")                 # post-chequered slow-down (all sessions)
+        if not self._is_race and dcls in ("OUT", "PIT", "SLOW"):
+            return ("white", "white")                 # out / in / cool-down — P/Q only; races keep
+        return (None, None)                           # default colours on in/out laps (user 2026-07-08)
+
+    def _handle_part(self, data: Any, clock_time: datetime) -> None:
+        """New qualifying part → blank every driver's sector times + mini-sectors
+        so the client shows a clean slate, server-driven (no client-side reset)."""
+        part = data if isinstance(data, int) else None
+        if part is None or part == self._part:
+            return
+        self._part = part
+        for num in list(self._sectors.keys()):
+            self._sectors[num] = _empty_sectors()
+            self._emit(num, clock_time)
 
     def _handle(self, data: Any, clock_time: datetime) -> None:
         lines = data.get("Lines") if isinstance(data, dict) else None
@@ -65,6 +152,10 @@ class SectorTimingProcessor(Processor):
             if not isinstance(d, dict):
                 continue
             sectors = self._sectors.setdefault(num, _empty_sectors())
+            if self._display_lap.get(num) is None:
+                self._display_lap[num] = self._current_lap.get(num)
+            if self._mini_display_lap.get(num) is None:
+                self._mini_display_lap[num] = self._current_lap.get(num)
 
             # Sector times are STICKY: a completed lap's sectors stay shown
             # until F1 clears them. At the new lap F1 sends Value="" per sector
@@ -72,6 +163,7 @@ class SectorTimingProcessor(Processor):
             # showing). There is NO NoL-driven reset — the empty-Value clears
             # drive the rollover, so a same-time lap is still seen.
             changed = False
+            seg_painted = False
             sp = d.get("Sectors")
             if sp:
                 items = sp.items() if isinstance(sp, dict) else enumerate(sp)
@@ -85,8 +177,17 @@ class SectorTimingProcessor(Processor):
                     if "Value" in sec:
                         if sec["Value"]:
                             s["value"] = sec["Value"]
+                            self._pending_roll[num] = True   # real sector time — arm the rollover
                         else:
-                            # Explicit clear (lap rollover) — reset this sector.
+                            # Explicit clear (lap rollover). Advance the display lap by
+                            # ONE per lap — the S/F crossing itself, which lands a sector
+                            # BEFORE currentLap updates (NoL arrives with the lap-time
+                            # calc). _pending_roll guards against the 2–3 sector clears in
+                            # one rollover double-counting. (user 2026-07-08)
+                            if self._pending_roll.get(num):
+                                dl = self._display_lap.get(num)
+                                self._display_lap[num] = (dl + 1) if dl is not None else self._current_lap.get(num)
+                                self._pending_roll[num] = False
                             s["value"] = None
                             s["overallFastest"] = False
                             s["personalFastest"] = False
@@ -106,22 +207,51 @@ class SectorTimingProcessor(Processor):
                             while len(s["segments"]) <= si:
                                 s["segments"].append(None)
                             if "Status" in seg:
-                                s["segments"][si] = _segment_color(seg["Status"]); changed = True
+                                s["segments"][si] = _segment_color(seg["Status"])
+                                changed = True; seg_painted = True
+            # Mini-sectors paint from the lap START: advance _mini_display_lap on the
+            # FIRST segment message after the lap increment, so the new lap's segments
+            # take its own class immediately — instead of the previous lap's, which
+            # _display_lap only sheds at the far-later Value="" clear. (user)
+            if seg_painted and self._mini_display_lap.get(num) != self._current_lap.get(num):
+                self._mini_display_lap[num] = self._current_lap.get(num)
             if changed:
                 self._emit(num, clock_time)
 
     def _emit(self, num: str, clock_time: datetime) -> None:
+        # Publish the lap the shown sector TIMES belong to (the display lap) so
+        # downstream same-lap references (race sector/lap colours) key off it, not
+        # currentLap — which runs one ahead of the sticky sectors at the S/F
+        # boundary. (card FlZTMf2u)
+        dl = self._display_lap.get(num)
+        if self._emitted_lap.get(num) != dl:
+            self._emitted_lap[num] = dl
+            self._bus.emit(f"driverSectorLap:{num}", dl, clock_time)
         sec = self._sectors[num]
-        self._bus.emit(f"driverSectors:{num}", [
-            {"value": s["value"], "overallFastest": s["overallFastest"],
-             "personalFastest": s["personalFastest"]} for s in sec
-        ], clock_time)
+        sector_mode, mini_mode = self._suppress_mode(num)
+        if sector_mode == "blank":
+            payload = [{"value": None, "overallFastest": False, "personalFastest": False, "white": False}
+                       for _ in range(3)]
+        else:
+            white = sector_mode == "white"            # slow / out / post-flag → value shown dimmed white
+            payload = [{"value": s["value"], "overallFastest": s["overallFastest"],
+                        "personalFastest": s["personalFastest"], "white": white} for s in sec]
+        self._bus.emit(f"driverSectors:{num}", payload, clock_time)
         # Pad each sector's segments to the max count ever seen for that sector
         # so the array length (and thus the client layout) is fixed; trailing
-        # not-yet-reached segments are None.
+        # not-yet-reached segments are None. Suppression: white = all segments
+        # white, blank = all empty.
         mini = []
         for i, s in enumerate(sec):
             self._seg_counts[i] = max(self._seg_counts[i], len(s["segments"]))
-            pad = self._seg_counts[i] - len(s["segments"])
-            mini.append(list(s["segments"]) + [None] * pad)
+            cnt = self._seg_counts[i]
+            if mini_mode == "white":
+                # Repaint PAINTED segments white; null stays null — keeps the
+                # painted-vs-null progress shape (where the driver is on track).
+                mini.append(["#ffffff" if seg else None for seg in s["segments"]]
+                            + [None] * (cnt - len(s["segments"])))
+            elif mini_mode == "blank":
+                mini.append([None] * cnt)
+            else:
+                mini.append(list(s["segments"]) + [None] * (cnt - len(s["segments"])))
         self._bus.emit(f"driverMiniSectors:{num}", mini, clock_time)

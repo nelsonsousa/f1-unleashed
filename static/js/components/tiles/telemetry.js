@@ -14,8 +14,10 @@
  */
 
 (function() {
+    const _ST = (window.SESSION_CONFIG && window.SESSION_CONFIG.sessionType) || '';
+    const IS_RACE = _ST === 'race' || _ST === 'sprint';   // race dashboard mode (card J3V1CFdS)
     const CHANNELS = {
-        speed:         { idx: 1, label: 'Speed (km/h)', min: 0, max: 350 },
+        speed:         { idx: 1, label: 'Speed (km/h)', min: 0, max: 360 },
         rpm:           { idx: 2, label: 'RPM',          min: 5500, max: 13500 },
         gear:          { idx: 3, label: 'Gear',          min: 0, max: 9 },
         throttleBrake: { idx: -1, label: 'Thr/Brk',     min: 0, max: 100 },
@@ -41,6 +43,8 @@
         lastSeenLastLap: {},           // num -> last lastLap.lap (Last auto-refresh)
         liveSamples: {},      // num -> [[distPct, spd, rpm, gear, thr, brk], ...]
         liveLap: {},          // num -> current lap of the live trace (from liveTelemetry)
+        lapStartMs: {},       // num -> playback offset (ms) at the current lap's S/F crossing (stopwatch)
+        dashInfo: {},         // num -> dashInfo {blank, running, stopwatchMs, delta, position, flag} (P/Q, server)
         driverStatus: {},     // num -> "PIT"|"OUT"|"TRACK"|...
         lapTimes: {},         // num -> {lapNum -> "1:23.456"}
         lapCls: {},           // num -> {lapNum -> type}
@@ -52,6 +56,8 @@
         lapNoData: {},        // num -> Set(lapNum) — laps that came in empty
         telemetryLaps: {},    // num -> Set(laps that have telemetry on disk)
         hiddenDrivers: new Set(),
+        view: 'dashboard',    // default view (card 280); 'telemetry' (trace chart) | 'dashboard' (live gauges)
+        dashSlots: [null, null],  // driver nums in the 2 dashboard gauges (pos1 left, pos2 right)
         canvas: null,
         ctx: null,
         renderPending: false,
@@ -92,13 +98,577 @@
     }
 
     function scheduleRender() {
+        if (_telPlaying && (state.view === 'dashboard' || state.mode === 'live')) return;   // animateLive covers it
         if (state.renderPending) return;
         state.renderPending = true;
         requestAnimationFrame(() => {
             state.renderPending = false;
-            renderChart();
+            if (state.view === 'dashboard') renderDashboard(); else renderChart();
         });
     }
+
+    // --- smooth live marker/trace (interpolation, mirrors track_map) ---
+    // Live samples arrive at ~3.7Hz; render the marker and the trace's leading edge each
+    // frame at (playback clock − LAG) interpolated between bracketing samples so they
+    // glide instead of snapping. LAG guarantees the "next" sample is already buffered.
+    // Only runs in live-follow mode while playing.
+    const TEL_LAG_MS = 500;
+    let _telPlaying = false;
+
+    function telRenderNowMs() {
+        const ct = messageBus.clockTime, st = messageBus.startTime;
+        if (!ct || !st) return null;
+        return (ct.getTime() - st.getTime()) - TEL_LAG_MS;
+    }
+
+    // Live samples ([dp,speed,rpm,gear,throttle,brake,offsetMs] ascending by offsetMs)
+    // truncated + interpolated to render time t (ms from start). Returns {trace, marker}.
+    function liveViewAt(samples, t) {
+        const last = samples[samples.length - 1];
+        if (t == null || last[6] == null || t >= last[6]) return { trace: samples, marker: last };
+        if (t <= samples[0][6]) return { trace: [samples[0]], marker: samples[0] };
+        let i = samples.length - 1;
+        while (i > 0 && samples[i][6] > t) i--;
+        const a = samples[i], b = samples[i + 1];
+        const f = (t - a[6]) / (b[6] - a[6]);
+        const m = a.slice();
+        for (let k = 0; k < 6; k++) if (k !== 3) m[k] = a[k] + (b[k] - a[k]) * f;   // gear (idx 3) discrete
+        m[6] = t;
+        return { trace: samples.slice(0, i + 1).concat([m]), marker: m };
+    }
+
+    function animateLive() {
+        if (_telPlaying) {
+            if (state.view === 'dashboard') renderDashboard();
+            else if (state.mode === 'live') renderChart();
+        }
+        requestAnimationFrame(animateLive);
+    }
+    requestAnimationFrame(animateLive);
+
+    messageBus.on('playback:status', (data) => {
+        if (data) { _telPlaying = !!data.isPlaying; scheduleRender(); }
+    });
+
+    // ═══════════════════════ Live dashboard view ═══════════════════════
+    // 2–3 driver gauges (speed dial 0–360, throttle/brake arc, gear tape) that replace
+    // the trace chart on demand. Fed by the same interpolated liveSamples, so the speed
+    // sweeps smoothly between the ~3.7Hz samples (renderDashboard runs every rAF frame).
+    const D_A0 = 215, D_A1 = 360, D_B0 = 0, D_B1 = 145;   // throttle 215→360, brake 0→145
+    // D_CELL = gear-cell stride (% of the tape row). Narrow enough that the prev/next gears show
+    // faded at the window edges (glass effect) while the current gear sits centred. (card 277)
+    const D_SPAN = (D_A1 - D_A0) + (D_B1 - D_B0), D_VMAX = 360, D_CELL = 34;
+    let _dashPanels = [], _dashBuilt = false, _dashSelBar = null, _dashMidInfo = [], _dashPushEls = {}, _dashMapCv = null, _dashRace = null;
+    // Auto-select (card wfMzaSwh): server recommends the pair (already debounced ~3 s server-side);
+    // apply it as it arrives while the toggle is ON. Not persisted.
+    let _autoOn = true, _autoPair = [], _autoBtn = null;
+    const autoNorm = p => { const s = (p || []).filter(Boolean).map(String).slice(0, 2); return [s[0] || null, s[1] || null]; };
+
+    const dPt = (cx, cy, r, d) => { const t = d * Math.PI / 180; return [cx + r * Math.sin(t), cy - r * Math.cos(t)]; };
+    function dArc(cx, cy, r, d0, d1) {
+        const [x0, y0] = dPt(cx, cy, r, d0), [x1, y1] = dPt(cx, cy, r, d1);
+        const large = Math.abs(d1 - d0) > 180 ? 1 : 0, sweep = d1 > d0 ? 1 : 0;
+        return `M${x0.toFixed(2)} ${y0.toFixed(2)} A${r} ${r} 0 ${large} ${sweep} ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+    }
+    function dashInk(hex) {
+        const c = (hex || '').replace('#', ''); if (c.length < 6) return '#fff';
+        const l = parseInt(c.slice(0, 2), 16) * .299 + parseInt(c.slice(2, 4), 16) * .587 + parseInt(c.slice(4, 6), 16) * .114;
+        // 128 midpoint (was 150) — bright team colours like Mercedes green (#00D7B6, ~147) take dark
+        // text; matches getContrastColor used elsewhere.
+        return l > 128 ? '#0b0d10' : '#fff';
+    }
+    // Manual driver selection (card 277): two gauge slots, pos1 (left) + pos2 (right). Selecting a
+    // NEW driver puts them in pos2 and promotes the current pos2 → pos1 (oldest drops off); clicking
+    // an already-selected driver unselects it. Same for every session (P/Q + race). Driven by the
+    // top selector, and by standings / track-map clicks via F1Dashboard.focus. (user)
+    function dashToggle(num) {
+        if (_autoOn) { _autoOn = false; syncAutoBtn(); }   // a manual pick turns auto-select off (card)
+        num = String(num);
+        if (!state.drivers[num]) return;
+        let sel = state.dashSlots.filter(Boolean);
+        const at = sel.indexOf(num);
+        if (at >= 0) sel.splice(at, 1);          // already selected → unselect
+        else sel.push(num);                       // new → append (pos2); left-pack keeps 2 max
+        sel = sel.slice(-2);
+        state.dashSlots = [sel[0] || null, sel[1] || null];
+        if (_dashBuilt) { paintDashSlot(0); paintDashSlot(1); paintDashSelector(); }
+    }
+
+    // ── auto-select apply (card wfMzaSwh) ──
+    function applyAuto(pair) {
+        const s = autoNorm(pair);
+        state.dashSlots = s;
+        if (_dashBuilt) { paintDashSlot(0); paintDashSlot(1); paintDashSelector(); }
+    }
+    // Called each dashboard frame: switch to the latest recommendation, but only once ≥3 s of
+    // playback have passed since the previous switch (anti-flicker). Runs via a code path separate
+    // from dashToggle so it never flips the toggle off.
+    function autoTick() {
+        if (!_autoOn) return;
+        const want = autoNorm(_autoPair);
+        if (want[0] === state.dashSlots[0] && want[1] === state.dashSlots[1]) return;
+        applyAuto(want);   // debounce lives server-side; apply the recommendation as it arrives
+    }
+    function syncAutoBtn() { if (_autoBtn) _autoBtn.classList.toggle('on', _autoOn); }
+    function toggleAuto() {
+        _autoOn = !_autoOn; syncAutoBtn();
+        if (_autoOn) autoTick();   // enabling → apply the current recommendation
+    }
+
+    function buildDashboard() {
+        const cont = document.getElementById('dashboardContainer');
+        if (!cont) return;
+        cont.innerHTML = ''; _dashPanels = [];
+        // Top driver selector (card 277) — click a driver to select/unselect it.
+        _dashSelBar = document.createElement('div'); _dashSelBar.className = 'dash-selbar';
+        cont.appendChild(_dashSelBar);
+        // Two gauge panels (pos1 left, pos2 right) with a reserved middle for the zoomed
+        // track map (added later, card 277).
+        const panels = document.createElement('div'); panels.className = 'dash-panels';
+        cont.appendChild(panels);
+        let ticks = '';
+        for (const s of [60, 120, 180, 240, 300, 360]) {
+            let d = D_A0 + D_SPAN * (s / D_VMAX); if (d > 360) d -= 360;
+            const [tx, ty] = dPt(120, 120, 118, d);
+            ticks += `<text class="dash-tick" x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="middle" dominant-baseline="middle">${s}</text>`;
+        }
+        const mkPanel = (idx) => {
+            const el = document.createElement('div'); el.className = 'dash-panel';
+            el.innerHTML = `
+                <div class="dash-gauge">
+                    <svg viewBox="0 0 240 240" aria-hidden="true">
+                        <path class="dash-track" stroke-width="12" d="${dArc(120,120,105,D_A0,D_A1)} ${dArc(120,120,105,D_B0,D_B1)}"/>
+                        <path class="dash-track" stroke-width="16" d="${dArc(120,120,84,D_A0,D_A1)}"/>
+                        <path class="dash-track" stroke-width="16" d="${dArc(120,120,84,D_B0,D_B1)}"/>
+                        <path class="dash-fill d-spd" stroke="var(--c-blue)"  stroke-width="12" d=""/>
+                        <path class="dash-fill d-thr" stroke="var(--c-green)" stroke-width="16" d=""/>
+                        <path class="dash-fill d-brk" stroke="var(--c-red)"   stroke-width="16" d=""/>
+                        ${ticks}
+                    </svg>
+                    <div class="dash-readout">
+                        <div class="dash-speed d-v">0</div>
+                        <div class="dash-kmh">KM/H</div>
+                        <div class="dash-tape"><div class="dash-tape-mark"></div><div class="dash-tape-row d-tape"></div></div>
+                    </div>
+                </div>
+                <div class="dash-tla d-tla"></div>`;
+            const row = el.querySelector('.d-tape');
+            // Order R N 1 2 … 8. gear=0 → N; R (=-1) isn't in the feed but is shown for completeness.
+            for (const gv of [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8]) {
+                const c = document.createElement('div'); c.className = 'dash-tape-cell';
+                c.textContent = gv === -1 ? 'R' : gv === 0 ? 'N' : gv; c.dataset.g = gv; row.appendChild(c);
+            }
+            const p = {
+                el, spd: el.querySelector('.d-spd'), thr: el.querySelector('.d-thr'), brk: el.querySelector('.d-brk'),
+                v: el.querySelector('.d-v'), tapeRow: row, cells: row.querySelectorAll('.dash-tape-cell'),
+                tla: el.querySelector('.d-tla'),
+            };
+            return p;
+        };
+        const p0 = mkPanel(0); panels.appendChild(p0.el); _dashPanels.push(p0);
+        // Middle: 2×2 grid — top row reserved for the zoomed track maps (later), bottom row is the
+        // per-driver info tile (stopwatch + delta/classification), left = pos1, right = pos2. (card 277)
+        const mid = document.createElement('div'); mid.className = 'dash-mid';
+        if (IS_RACE) {
+            // Race: top = zoomed track mini-map; bottom = combined Int/position panel. (card J3V1CFdS)
+            // Row 1: P{n} | Int | P{n} (positions + gap aligned horizontally); row 2: statuses.
+            // Row 1: TLA | (empty) | TLA; row 2: P{n} | Int | P{n}; row 3: statuses.
+            mid.innerHTML = `
+                <div class="dm-map dm-map-race"></div>
+                <div class="dm-race">
+                    <div class="dr-tla" data-side="0"></div>
+                    <div></div>
+                    <div class="dr-tla" data-side="1"></div>
+                    <div class="dr-pos" data-side="0"></div>
+                    <div class="dr-gap"></div>
+                    <div class="dr-pos" data-side="1"></div>
+                    <div class="dr-status" data-side="0"></div>
+                    <div></div>
+                    <div class="dr-status" data-side="1"></div>
+                </div>`;
+            _dashRace = {
+                map: mid.querySelector('.dm-map'),
+                gap: mid.querySelector('.dr-gap'),
+                sides: [0, 1].map(i => ({
+                    tla: mid.querySelector(`.dr-tla[data-side="${i}"]`),
+                    pos: mid.querySelector(`.dr-pos[data-side="${i}"]`),
+                    status: mid.querySelector(`.dr-status[data-side="${i}"]`),
+                })),
+            };
+            _dashMapCv = null; _dashMidInfo = [];
+            if (window.F1TrackMap && window.F1TrackMap.mountMini) window.F1TrackMap.mountMini(_dashRace.map);
+        } else {
+            const infoHtml = (slot) => `<div class="dm-info" data-slot="${slot}">` +
+                `<div class="dm-flag"></div>` +
+                `<div class="dm-topline"><span class="dm-tla"></span><span class="dm-watch">-:--.-</span></div>` +
+                `<div class="dm-label"></div>` +
+                `<div class="dm-delta"></div>` +
+                `<div class="dm-pos"></div></div>`;
+            mid.innerHTML = `
+                <div class="dm-map"><canvas class="dm-map-cv"></canvas></div>
+                ${infoHtml(0)}${infoHtml(1)}`;
+            _dashMapCv = mid.querySelector('.dm-map-cv');
+            _dashMidInfo = [...mid.querySelectorAll('.dm-info')].map(el => ({
+                el, flag: el.querySelector('.dm-flag'), tla: el.querySelector('.dm-tla'), watch: el.querySelector('.dm-watch'),
+                label: el.querySelector('.dm-label'), delta: el.querySelector('.dm-delta'), pos: el.querySelector('.dm-pos'),
+            }));
+        }
+        panels.appendChild(mid);
+        const p1 = mkPanel(1); panels.appendChild(p1.el); _dashPanels.push(p1);
+        _dashBuilt = true;
+        refreshDashDrivers();
+    }
+
+    // Rebuild the top selector (current running order, else team order) + repaint both slots.
+    function paintDashSelector() {
+        if (!_dashSelBar) return;
+        const order = _dashOrder.length ? _dashOrder : getSortedDrivers().map(d => d.num);
+        _dashSelBar.innerHTML = ''; _dashPushEls = {};
+        order.forEach(num => {
+            const d = state.drivers[num]; if (!d) return;
+            const cell = document.createElement('div'); cell.className = 'dash-selcell';
+            const b = document.createElement('button'); b.className = 'dash-selbtn'; b.dataset.num = num;
+            b.textContent = d.tla || num;
+            // CSS drives fill/border/text per state from these; ink = contrast for the selected fill.
+            b.style.setProperty('--team', d.color || '#888');
+            b.style.setProperty('--ink', dashInk(d.color));
+            if (state.dashSlots.includes(num)) b.classList.add('sel');
+            b.addEventListener('click', () => dashToggle(num));
+            cell.appendChild(b);
+            // PUSH marker under the button (not clickable) — green while this driver's current lap is PUSH.
+            const push = document.createElement('div'); push.className = 'dash-selpush';
+            cell.appendChild(push); _dashPushEls[num] = push;
+            _dashSelBar.appendChild(cell);
+        });
+        paintDashPush();
+    }
+
+    // Colour the marker under each selector button. P/Q: green while the driver's current lap is
+    // PUSH. Race: server indicator (green = Int < 1 s / orange = PIT-OUT). (card J3V1CFdS)
+    function paintDashPush() {
+        for (const num in _dashPushEls) {
+            let colour = null;
+            if (IS_RACE) {
+                colour = (state.dashInfo[num] || {}).indicator || null;
+            } else if ((state.lapCls[num] || {})[state.liveLap[num]] === 'PUSH') {
+                colour = 'green';
+            }
+            const el = _dashPushEls[num];
+            el.classList.toggle('push', colour === 'green');
+            el.classList.toggle('orange', colour === 'orange');
+        }
+    }
+
+    function refreshDashDrivers() {
+        if (!_dashBuilt) return;
+        paintDashSelector();
+        paintDashSlot(0); paintDashSlot(1);
+    }
+
+    function paintDashSlot(i) {
+        const p = _dashPanels[i]; if (!p) return;
+        const num = state.dashSlots[i], d = num && state.drivers[num];
+        p.el.classList.toggle('empty', !d);
+        p.tla.style.background = d ? d.color : 'transparent';
+        p.tla.style.color = d ? dashInk(d.color) : '';
+        p.tla.textContent = d ? d.tla : '---';
+    }
+
+    function renderDashboard() {
+        if (!_dashBuilt) return;
+        autoTick();   // apply the (debounced) auto-select recommendation
+        const t = telRenderNowMs();
+        _dashPanels.forEach((p, i) => {
+            const num = state.dashSlots[i];
+            const samples = num && state.liveSamples[num];
+            let spd = 0, thr = 0, brk = 0, gear = 1;
+            if (samples && samples.length && !liveTraceSuppressed(num)) {
+                const m = liveViewAt(samples, t).marker;
+                spd = m[1] || 0; gear = m[3] == null ? 1 : m[3];   // 0 = Neutral (don't coerce to 1)
+                thr = Math.max(0, Math.min(1, (m[4] || 0) / 100));
+                brk = Math.max(0, Math.min(1, (m[5] || 0) / 100));
+            }
+            p.thr.setAttribute('d', dArc(120, 120, 84, D_A0, D_A0 + (D_A1 - D_A0) * thr));
+            p.brk.setAttribute('d', dArc(120, 120, 84, D_B1 - (D_B1 - D_B0) * brk, D_B1));
+            p.spd.setAttribute('d', dArc(120, 120, 105, D_A0, D_A0 + D_SPAN * (Math.min(spd, D_VMAX) / D_VMAX)));
+            p.v.textContent = Math.round(spd);
+            const g = Math.max(-1, Math.min(8, Math.round(gear)));   // -1 = R, 0 = N
+            // cells are [R,N,1..8]; the current gear g sits at index g+1 (N=idx1, gear1=idx2, …).
+            p.tapeRow.style.transform = `translateX(${50 - (g + 1.5) * D_CELL}%)`;
+            p.cells.forEach(c => c.classList.toggle('cur', +c.dataset.g === g));
+        });
+        if (IS_RACE) {
+            renderRaceInfo();
+        } else {
+            renderDashInfo(0); renderDashInfo(1);
+            renderDashMap();
+        }
+        paintDashPush();
+    }
+
+    // Race center-bottom panel: each selected driver's P{n} (+ PIT/OUT status), and the gap between
+    // the two (Int, or Int-chain when non-adjacent) coloured by the chaser's Int band. Mini-map
+    // follows the chaser (worse race position). (card J3V1CFdS)
+    function renderRaceInfo() {
+        const R = _dashRace; if (!R) return;
+        if (R.map) R.map.style.display = state.dashSlots.some(Boolean) ? '' : 'none';   // no selection → no map
+        const infos = state.dashSlots.map(num => (num && state.dashInfo[num]) || null);
+        R.sides.forEach((side, i) => {
+            const num = state.dashSlots[i], di = infos[i];
+            if (!num || !state.drivers[num] || !di) {
+                side.tla.textContent = '';
+                side.pos.textContent = ''; side.pos.className = 'dr-pos';
+                side.status.innerHTML = ''; side.status.className = 'dr-status'; side._key = '';
+                return;
+            }
+            side.tla.textContent = state.drivers[num].tla || num;
+            side.pos.textContent = di.position != null ? `P${di.position}` : '';
+            side.pos.className = 'dr-pos';
+            // status line: PIT replaces the tyre with "PIT"; otherwise (on track OR out-lap) the
+            // current tyre + age — the tyre comes back once the driver is OUT. (SME 2026-07-15)
+            let key, html, cls;
+            if (di.status === 'PIT') {
+                key = 'PIT'; html = 'PIT'; cls = 'dr-status st-pit';
+            } else if (di.tyreCompound) {
+                const comp = String(di.tyreCompound).toLowerCase();
+                key = `T${comp}${di.tyreNew ? 1 : 0}${di.tyreAge}`;
+                html = `<img class="dr-tyre" src="/static/images/tyres/${comp}-${di.tyreNew ? 'new' : 'used'}.svg" alt="">` +
+                       `<span class="dr-tyre-age">${di.tyreAge != null ? di.tyreAge : ''}</span>`;
+                cls = 'dr-status st-tyre';
+            } else { key = ''; html = ''; cls = 'dr-status'; }
+            if (side._key !== key) {   // only touch the DOM when it changes (renders every frame)
+                side.status.innerHTML = html; side.status.className = cls; side._key = key;
+            }
+        });
+        // gap between the two + chaser (worse position)
+        let gapText = '', gapCls = 'dr-gap', chaser = null;
+        if (state.dashSlots.every(Boolean) && infos.every(d => d && d.position != null)) {
+            const pL = infos[0].position, pR = infos[1].position;   // left slot / right slot positions
+            chaser = pL >= pR ? state.dashSlots[0] : state.dashSlots[1];
+            const ms = raceGapMs(Math.max(pL, pR), Math.min(pL, pR));
+            if (ms != null) {
+                // Unsigned magnitude — the positions on either side show who's ahead. (SME)
+                gapText = (ms / 1000).toFixed(3);
+                const col = (state.dashInfo[chaser] || {}).intColour;
+                if (col) gapCls += ` c-${col}`;
+            } else {
+                gapText = ((state.dashInfo[chaser] || {}).intText || '—').replace(/^\+/, '');   // lapped / unknown
+            }
+        }
+        R.gap.textContent = gapText; R.gap.className = gapCls;
+        const focus = chaser || state.dashSlots.filter(Boolean).slice(-1)[0] || null;
+        if (window.F1TrackMap && window.F1TrackMap.setMiniFocus) window.F1TrackMap.setMiniFocus(focus);
+    }
+
+    // Int-chain: sum each driver's interval-to-car-ahead over positions (leaderPos, chaserPos].
+    // Null if any link is missing/lapped (can't chain).
+    function raceGapMs(chaserPos, leaderPos) {
+        const byPos = {};
+        for (const n in state.dashInfo) {
+            const di = state.dashInfo[n];
+            if (di && di.position != null) byPos[di.position] = di.intMs;
+        }
+        let sum = 0;
+        for (let p = leaderPos + 1; p <= chaserPos; p++) {
+            const iv = byPos[p];
+            if (iv == null) return null;
+            sum += iv;
+        }
+        return sum;
+    }
+
+    // Mini live speed-trace viewer (card 287): a scaled-down clone of the large telemetry chart —
+    // both selected drivers' live SPEED traces over the full lap, 60 km/h grid + y labels, corner
+    // markers/numbers, plot bbox. Display-only (no zoom/pan). One wide canvas spanning the mid row.
+    function renderDashMap() {
+        const cv = _dashMapCv; if (!cv) return;
+        const dpr = window.devicePixelRatio || 1;
+        const cw = cv.clientWidth, ch = cv.clientHeight;
+        if (cw <= 0 || ch <= 0) return;
+        if (cv.width !== Math.round(cw * dpr) || cv.height !== Math.round(ch * dpr)) {
+            cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
+        }
+        const ctx = cv.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, cw, ch);
+        const margin = { top: 8, right: 8, bottom: 8, left: 30 };
+        const plotW = cw - margin.left - margin.right, plotH = ch - margin.top - margin.bottom;
+        if (plotW <= 0 || plotH <= 0) return;
+        const yMin = CHANNELS.speed.min, yMax = CHANNELS.speed.max, range = yMax - yMin || 1;
+
+        // Lock the x-window to the full lap so the shared pctToX helpers (drawTrace/drawCornerMarkers)
+        // project 0–100% across the mini chart; restore after (no zoom/pan here).
+        const sMin = state.xMin, sMax = state.xMax;
+        state.xMin = 0; state.xMax = 100;
+        try {
+            // horizontal speed grid every 60 km/h + y labels
+            ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 0.5;
+            ctx.fillStyle = '#666'; ctx.font = '9px Monaco, Consolas, monospace';
+            ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+            for (let v = 0; v <= yMax; v += 60) {
+                const y = margin.top + (1 - (v - yMin) / range) * plotH;
+                ctx.beginPath(); ctx.moveTo(margin.left, y); ctx.lineTo(margin.left + plotW, y); ctx.stroke();
+                ctx.fillText(v, margin.left - 3, y);
+            }
+            ctx.textBaseline = 'alphabetic';
+            // plot bbox
+            ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 1;
+            ctx.strokeRect(margin.left, margin.top, plotW, plotH);
+            // corner markers (dashed verticals) + numbers
+            drawCornerMarkers(ctx, margin.left, margin.top, plotW, plotH);
+            drawMiniCornerNumbers(ctx, margin.left, margin.top, plotW, plotH);
+            // both selected drivers' live speed traces (2nd car of a team → dashed)
+            const teamOrder = {};
+            for (const { num, teamOrder: to } of getSortedDrivers()) teamOrder[num] = to;
+            for (const num of state.dashSlots) {
+                if (!num) continue;
+                const samples = state.liveSamples[num];
+                if (!samples || !samples.length || liveTraceSuppressed(num)) continue;
+                const d = state.drivers[num], color = d ? d.color : DEFAULT_CAR_COLOR;
+                const view = liveViewAt(samples, telRenderNowMs());
+                drawTrace(ctx, view.trace, color, 'speed', margin, plotW, plotH, yMin, yMax, teamOrder[num] === 1);
+                drawMiniMarker(ctx, view.marker, color, d ? d.tla : num, margin, plotW, plotH, yMin, yMax);
+            }
+        } finally {
+            state.xMin = sMin; state.xMax = sMax;
+        }
+    }
+
+    // Small leading-edge TLA marker for the mini chart (scaled down from drawMarker).
+    function drawMiniMarker(ctx, sample, color, tla, margin, plotW, plotH, yMin, yMax) {
+        if (!sample || sample[1] == null || sample[0] < 0 || sample[0] > 100) return;
+        const x = pctToX(sample[0], margin.left, plotW);
+        const y = margin.top + (1 - (sample[1] - yMin) / (yMax - yMin)) * plotH;
+        ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2);
+        ctx.fillStyle = color; ctx.fill();
+        ctx.lineWidth = 1; ctx.strokeStyle = '#fff'; ctx.stroke();
+        ctx.fillStyle = getContrastColor(color); ctx.font = 'bold 7px Monaco, Consolas, monospace';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(tla, x, y);
+        ctx.textBaseline = 'alphabetic';
+    }
+
+    // Corner numbers on the mini chart (top of each dashed marker), left-to-right overlap nudge.
+    function drawMiniCornerNumbers(ctx, left, top, plotW, plotH) {
+        if (!state.corners || state.corners.length === 0) return;
+        const items = [];
+        for (const c of state.corners) {
+            const pct = Number(c.pct);
+            if (isFinite(pct)) items.push({ px: pctToX(pct, left, plotW), n: c.number ?? '' });
+        }
+        items.sort((a, b) => a.px - b.px);
+        ctx.fillStyle = 'rgba(255,213,0,0.9)'; ctx.font = '8px Monaco, Consolas, monospace';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        const MIN_GAP = 10; let last = -Infinity;
+        for (const it of items) {
+            let x = it.px; if (x - last < MIN_GAP) x = last + MIN_GAP; last = x;
+            ctx.fillText(it.n, x, top + 1);
+        }
+        ctx.textBaseline = 'alphabetic';
+    }
+
+    // Lap stopwatch M:SS.s — dp decimals (live = tenths, frozen = ms).
+    function fmtWatch(ms, dp) {
+        dp = dp || 1;
+        const t = Math.max(0, ms) / 1000, m = Math.floor(t / 60), s = t - m * 60;
+        return `${m}:${s < 10 ? '0' : ''}${s.toFixed(dp)}`;
+    }
+
+    // Middle info tile — pure renderer of the server's dashInfo:{num} (P/Q). Stopwatch = the current
+    // lap's running time (client ticks its own S/F anchor, resetting each lap); the middle line is the
+    // projected lap time (predicting) then the actual (observed); the bottom line is the position.
+    // (card Z4PfDRry)
+    function renderDashInfo(i) {
+        const info = _dashMidInfo[i]; if (!info) return;
+        const num = state.dashSlots[i];
+        const di = num && state.dashInfo[num];
+        if (!num || !state.drivers[num] || !di) {
+            info.el.classList.add('empty');
+            info.flag.className = 'dm-flag';
+            info.tla.textContent = '';
+            info._run = null; info._fc = false;
+            info.watch.textContent = '-:--.-'; info.watch.className = 'dm-watch';
+            info.label.textContent = '';
+            info.delta.textContent = ''; info.delta.className = 'dm-delta';
+            info.pos.textContent = ''; info.pos.className = 'dm-pos';
+            return;
+        }
+        info.el.classList.remove('empty');
+        info.tla.textContent = state.drivers[num].tla || num;
+        // stopwatch: ticks during the forecast (predicting); on lap end (server → observed, label
+        // "LAP TIME") it FREEZES at the lap's final value rather than resetting to 0. (SME 2026-07-15)
+        const forecasting = di.lapTimeLabel === 'FORECAST';
+        const eNow = (di.running && state.lapStartMs[num] != null) ? (telRenderNowMs() - state.lapStartMs[num]) : null;
+        if (forecasting && eNow != null) {
+            if (!info._fc) info._run = null;   // new forecast session → start fresh
+            info._fc = true;
+            // monotonic within a session: ignore a >1 s drop (lap-anchor reset before the lap-end),
+            // so the frozen value is the completed lap's time, not ~0.
+            info._run = (info._run != null && eNow < info._run - 1000) ? info._run : eNow;
+            info.watch.textContent = fmtWatch(info._run, 1);
+        } else {
+            info._fc = false;
+            if (di.lapTimeLabel === 'LAP TIME' && info._run != null) {
+                info.watch.textContent = fmtWatch(info._run, 1);   // frozen at lap end
+            } else {
+                info._run = null;
+                info.watch.textContent = '-:--.-';
+            }
+        }
+        info.watch.className = 'dm-watch';
+        // section title: LAP TIME FORECAST (forecast) / LAP TIME (observed)
+        info.label.textContent = di.lapTimeLabel || '';
+        // lap time — projected (predicting, 1dp) or actual (observed, 3dp)
+        if (di.lapTime) {
+            info.delta.textContent = di.lapTime.ms != null ? fmtWatch(di.lapTime.ms, di.lapTime.dp || 1) : '-:--.-';
+            info.delta.className = 'dm-delta' + (di.lapTime.colour ? ` c-${di.lapTime.colour}` : '');
+        } else { info.delta.textContent = ''; info.delta.className = 'dm-delta'; }
+        // position
+        if (di.position) {
+            info.pos.textContent = di.position.text;
+            info.pos.className = 'dm-pos' + (di.position.colour ? ` c-${di.position.colour}` : '');
+        } else { info.pos.textContent = ''; info.pos.className = 'dm-pos'; }
+        // classification circle
+        info.flag.className = 'dm-flag' + (di.flag ? ` flag-${di.flag}` : '');
+    }
+
+    function setView(view) {
+        state.view = view;
+        document.querySelectorAll('#telemetryViewToggle .tile-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+        const tile = document.getElementById('telemetryTile');
+        if (view === 'dashboard') {
+            if (!_dashBuilt) buildDashboard(); else refreshDashDrivers();
+            tile.classList.add('dashboard-mode');
+            renderDashboard();
+        } else {
+            tile.classList.remove('dashboard-mode');
+            resizeCanvas(); renderChart();   // canvas was hidden → re-measure + redraw
+            renderCornerLabels();            // recompute label positions now the canvas has width (fixes all-left)
+        }
+    }
+
+    // ── external selection API (standings / track map drive the dashboard) ──
+    // window.F1Dashboard.focus(num): toggle that driver in the two gauge slots (card 277) —
+    // select/unselect manually, same for every session; the clicked driver goes to pos2 and
+    // promotes the current pos2 → pos1.
+    let _dashOrder = [];   // running order [num,…] from the `standings` topic (selector order)
+    messageBus.on('standings', (d) => {
+        if (d && Array.isArray(d.drivers)) {
+            _dashOrder = d.drivers.map(x => String(x.num));
+            if (state.view === 'dashboard') paintDashSelector();   // keep selector in running order
+            renderDriverSelector();   // telemetry rows follow current standings order (card)
+        }
+    });
+    function dashSelect(nums) {
+        const s = (nums || []).filter(Boolean).map(String).slice(0, 2);
+        state.dashSlots = [s[0] || null, s[1] || null];
+        setView('dashboard');   // populate + reveal the dashboard
+        if (_dashBuilt) refreshDashDrivers();
+    }
+    // Server auto-select recommendation (card wfMzaSwh) — stored; applied (debounced) in renderDashboard.
+    messageBus.on('dashAutoSelect', (pair) => { _autoPair = Array.isArray(pair) ? pair : []; autoTick(); });
+    function dashFocus(num) { dashToggle(num); setView('dashboard'); }
+    window.F1Dashboard = { focus: dashFocus, select: dashSelect };
 
     /**
      * Return drivers grouped by team, teams ordered by lowest driver number.
@@ -234,25 +804,14 @@
             btn.addEventListener('click', () => setMode(btn.dataset.mode));
         });
 
-        // ALL DRIVERS toggle — event-delegated so it works regardless of
-        // when the button is in the DOM (header or re-rendered driver
-        // panel). Matches anything with data-action="all".
-        document.addEventListener('click', (e) => {
-            const btn = e.target.closest('[data-action="all"]');
-            if (!btn) return;
-            if (!btn.classList.contains('telemetry-driver-toggle-all')) return;
-            const willShowAll = state.hiddenDrivers.size > 0;
-            if (state.hiddenDrivers.size === 0) {
-                state.hiddenDrivers = new Set(Object.keys(state.drivers));
-            } else {
-                state.hiddenDrivers.clear();
-            }
-            if (willShowAll && (state.mode === 'last' || state.mode === 'best')) {
-                fetchLapsForVisibleDrivers(state.mode);
-            }
-            renderDriverSelector();
-            scheduleRender();
+        // View toggle: trace chart ↔ live gauge dashboard.
+        document.querySelectorAll('#telemetryViewToggle .tile-btn').forEach(btn => {
+            btn.addEventListener('click', () => setView(btn.dataset.view));
         });
+
+        // Auto-select toggle in the title bar (card wfMzaSwh).
+        _autoBtn = document.getElementById('dashAutoToggle');
+        if (_autoBtn) { _autoBtn.addEventListener('click', toggleAuto); syncAutoBtn(); }
 
         setupZoomInteractions();
 
@@ -260,6 +819,7 @@
         renderChart();
         renderCornerLabels();
         renderPartTabs();   // hidden until a qualifyingSegment arrives
+        setView('dashboard');   // default to the live dashboard view (card 280)
         window.addEventListener('resize', () => {
             resizeCanvas();
             renderChart();
@@ -344,9 +904,12 @@
             delete state.selectionLaps[key];
             renderChart();
             updateDriverBar();
+            renderDriverSelector();   // update the pill's selected (filled) state
         } else {
+            state.hiddenDrivers.delete(driverNum);   // selecting a lap selects its driver (card)
             state.pendingSelection.add(key);
             messageBus.send({ cmd: 'getLapTelemetry', driver: driverNum, lap: lapIndex });
+            renderDriverSelector();                  // reflect the now-selected driver chip
         }
     }
 
@@ -419,6 +982,7 @@
 
         renderChart();
         updateDriverBar();
+        renderDriverSelector();   // reflect the selected (filled) pill state
     }
 
     // =========================================================================
@@ -429,7 +993,7 @@
     // ts, lap, lapElapsedMs}. dp is the track distance %. A change in `lap`
     // marks an S/F crossing → start a fresh live-lap trace. Samples with a
     // null dp (position outage) are skipped.
-    function handleLiveTelemetry(num, data) {
+    function handleLiveTelemetry(num, data, offsetMs) {
         if (!data || typeof data !== 'object') return;
         if (data.dp == null) return;
 
@@ -438,6 +1002,8 @@
             state.liveSamples[num] = [];
         }
         state.liveLap[num] = data.lap;
+        // Lap stopwatch: the absolute offset at this lap's S/F crossing = now − elapsed-since-S/F.
+        if (data.lapElapsedMs != null) state.lapStartMs[num] = offsetMs - data.lapElapsedMs;
 
         const sample = [
             data.dp,
@@ -446,6 +1012,7 @@
             data.gear || 0,
             data.throttle || 0,
             data.brake || 0,
+            offsetMs,          // [6] message offset (ms from session start) — for interpolation
         ];
         if (!state.liveSamples[num]) state.liveSamples[num] = [];
         state.liveSamples[num].push(sample);
@@ -506,7 +1073,7 @@
     }
 
     function renderSingle(ctx, w, h, channel) {
-        const margin = { top: 10, right: 10, bottom: 20, left: 45 };
+        const margin = { top: 10, right: 10, bottom: 4, left: 45 };   // bottom trimmed — x-axis values removed (card 289)
         const plotW = w - margin.left - margin.right;
         const plotH = h - margin.top - margin.bottom;
         if (plotW <= 0 || plotH <= 0) return;
@@ -515,8 +1082,11 @@
         const yMin = chInfo.min;
         const yMax = chInfo.max;
 
-        drawGrid(ctx, margin, plotW, plotH, yMin, yMax, h);
-        drawYellowSectors(ctx, margin, plotW, plotH);
+        drawGrid(ctx, margin, plotW, plotH, yMin, yMax, h, channel === 'speed' ? 60 : (yMax - yMin) / 5);
+        // Yellow marshal-sector bands reflect the *current* track status, so
+        // they only make sense against the live trace — the Best/Last/Selection
+        // views show historical laps where a "now" yellow is meaningless.
+        if (state.mode === 'live') drawYellowSectors(ctx, margin, plotW, plotH);
 
         const teamOrder = {};
         for (const { num, teamOrder: to } of getSortedDrivers()) teamOrder[num] = to;
@@ -544,30 +1114,22 @@
                 const color = driver ? driver.color : DEFAULT_CAR_COLOR;
                 const tla = driver ? driver.tla : num;
                 const dashed = teamOrder[num] === 1;
-                drawTrace(ctx, samples, color, channel, margin, plotW, plotH, yMin, yMax, dashed);
-                drawMarker(ctx, samples[samples.length - 1], color, tla,
+                const view = liveViewAt(samples, telRenderNowMs());
+                drawTrace(ctx, view.trace, color, channel, margin, plotW, plotH, yMin, yMax, dashed);
+                drawMarker(ctx, view.marker, color, tla,
                     channel, margin, plotW, plotH, yMin, yMax);
             }
         }
     }
 
-    function drawGrid(ctx, margin, plotW, plotH, yMin, yMax, h) {
+    function drawGrid(ctx, margin, plotW, plotH, yMin, yMax, h, yStep) {
+        const range = yMax - yMin || 1;
+        yStep = yStep || range / 5;
+        // Horizontal grid only (vertical x-grid removed, card 289) — lines + labels at each yStep.
         ctx.strokeStyle = 'rgba(255,255,255,0.08)';
         ctx.lineWidth = 0.5;
-        // X-grid stride adapts to the zoom span — finer ticks when zoomed in.
-        const xSpan = state.xMax - state.xMin;
-        const stride = xSpan > 50 ? 10 : xSpan > 20 ? 5 : xSpan > 10 ? 2 : 1;
-        const startTick = Math.ceil(state.xMin / stride) * stride;
-        for (let pct = startTick; pct <= state.xMax + 1e-6; pct += stride) {
-            const x = pctToX(pct, margin.left, plotW);
-            ctx.beginPath();
-            ctx.moveTo(x, margin.top);
-            ctx.lineTo(x, margin.top + plotH);
-            ctx.stroke();
-        }
-        const yTicks = 5;
-        for (let i = 0; i <= yTicks; i++) {
-            const y = margin.top + (i / yTicks) * plotH;
+        for (let v = yMin; v <= yMax + 1e-6; v += yStep) {
+            const y = margin.top + (1 - (v - yMin) / range) * plotH;
             ctx.beginPath();
             ctx.moveTo(margin.left, y);
             ctx.lineTo(margin.left + plotW, y);
@@ -576,17 +1138,11 @@
         ctx.fillStyle = '#666';
         ctx.font = '10px Monaco, Consolas, monospace';
         ctx.textAlign = 'right';
-        for (let i = 0; i <= yTicks; i++) {
-            const val = yMax - (i / yTicks) * (yMax - yMin);
-            const y = margin.top + (i / yTicks) * plotH;
-            ctx.fillText(Math.round(val), margin.left - 4, y + 3);
+        for (let v = yMin; v <= yMax + 1e-6; v += yStep) {
+            const y = margin.top + (1 - (v - yMin) / range) * plotH;
+            ctx.fillText(Math.round(v), margin.left - 4, y + 3);
         }
-        ctx.textAlign = 'center';
-        for (let pct = startTick; pct <= state.xMax + 1e-6; pct += stride) {
-            const x = pctToX(pct, margin.left, plotW);
-            const label = stride < 1 ? pct.toFixed(1) : String(Math.round(pct));
-            ctx.fillText(`${label}%`, x, h - 4);
-        }
+        // x-axis distance values removed (card 289) — only the corner numbers remain (HTML strip).
 
         drawCornerMarkers(ctx, margin.left, margin.top, plotW, plotH);
     }
@@ -628,7 +1184,8 @@
             let samples = null;
             if (state.mode === 'live') {
                 if (liveTraceSuppressed(num)) continue;  // RET/STOP (+ OUT/PIT in P/Q)
-                samples = state.liveSamples[num];
+                const ls = state.liveSamples[num];
+                samples = (ls && ls.length) ? liveViewAt(ls, telRenderNowMs()).trace : ls;
             } else {
                 const lap = Object.values(currentLaps()).find(l => l.driver === num);
                 if (!lap) continue;
@@ -747,6 +1304,7 @@
         // pen styles via beginPath()/stroke().
         let inRun = false;
         let lastValid = null;  // {x, y} of the last valid sample drawn
+        let lastPct = null;    // previous sample's distance % — to detect lap wrap
 
         for (const s of samples) {
             const outage = isOutageSample(s);
@@ -761,9 +1319,19 @@
             const x = pctToX(s[0], margin.left, plotW);
             const val = s[valIdx];
             const y = margin.top + (1 - (val - yMin) / range) * plotH;
+            // Lap rollover: distance % resets ~100 → ~0 at the S/F line. Break the
+            // trace here (pen up, NO bridge) so a live multi-lap trace doesn't
+            // streak straight across the plot from ~100% back to ~0%. A single
+            // completed lap climbs 0→100 monotonically, so this never fires there.
+            // (eg7seHVk)
+            const wrap = lastPct !== null && lastPct - s[0] > 50;
+            if (wrap && inRun) {
+                ctx.stroke();
+                inRun = false;
+            }
             if (!inRun) {
-                // Bridge across the gap if we have a previous valid point.
-                if (lastValid) {
+                // Bridge across an outage gap — but NOT across a lap wrap.
+                if (lastValid && !wrap) {
                     ctx.strokeStyle = color;
                     ctx.lineWidth = 1;
                     ctx.setLineDash(bridgeDash);
@@ -783,6 +1351,7 @@
                 ctx.lineTo(x, y);
             }
             lastValid = { x, y };
+            lastPct = s[0];
         }
         if (inRun) ctx.stroke();
         ctx.restore();
@@ -806,7 +1375,18 @@
     function renderDriverSelectorNow() {
         const el = document.getElementById('telemetryDriverSelector');
         if (!el) return;
-        const sorted = getSortedDrivers();
+        // Rows in current standings order (falls back to team/car-number order); teamOrder (0/1)
+        // still marks each team's 2nd car for the dashed-trace cue. (card)
+        const teamOrderMap = {};
+        for (const { num, teamOrder: to } of getSortedDrivers()) teamOrderMap[num] = to;
+        const seen = new Set();
+        const sorted = [];
+        for (const num of _dashOrder) {
+            if (state.drivers[num] && !seen.has(num)) { seen.add(num); sorted.push({ num, teamOrder: teamOrderMap[num] || 0 }); }
+        }
+        for (const { num } of getSortedDrivers()) {
+            if (!seen.has(num)) { seen.add(num); sorted.push({ num, teamOrder: teamOrderMap[num] || 0 }); }
+        }
         if (!sorted.length) { el.innerHTML = ''; return; }
 
         // Find the highest lap across all drivers, using the union of
@@ -872,18 +1452,13 @@
         // Grid width: the active part's lap count in quali, else absolute maxLap.
         const totalLapCols = hasSegments ? Math.max(1, partMax) : maxLap;
 
-        const allShown = state.hiddenDrivers.size === 0;
-        const allBtn = document.getElementById('telemetryAllDrivers');
-        if (allBtn) allBtn.classList.toggle('all-selected', allShown);
-
         let html = `<div class="telemetry-driver-list" style="--max-lap:${totalLapCols}">`;
         for (const { num, teamOrder } of sorted) {
             const d = state.drivers[num];
             const hidden = state.hiddenDrivers.has(num) ? ' hidden' : '';
             const second = teamOrder === 1 ? ' second' : '';
-            html += `<div class="telemetry-driver-entry${hidden}${second}" data-driver="${num}" style="--swatch-color:${d.color}">` +
+            html += `<div class="telemetry-driver-entry${hidden}${second}" data-driver="${num}" style="--swatch-color:${d.color};--swatch-ink:${getContrastColor(d.color)}">` +
                     `<span class="telemetry-driver-row" data-action="toggle">` +
-                    `<span class="telemetry-driver-swatch"></span>` +
                     `<span class="telemetry-driver-tla">${d.tla}</span>` +
                     `</span>` +
                     renderLapList(num, maxLap, { hasSegments, activePart, localPos: localPos[num] || {} }) +
@@ -932,7 +1507,7 @@
         });
 
         // The ALL DRIVERS button lives in the tile header and is wired
-        // once in init(); only its `all-selected` class is toggled here.
+        // once in init(); only its `.active` class is toggled here (shared .tile-btn).
     }
 
     // Render the recorded-lap list for one driver as small clickable pills.
@@ -1004,21 +1579,20 @@
         const isRace = (sessionType === 'race');
 
         // In-progress lap = the highest lap still being DRIVEN — no lap_time and
-        // not yet a completed lap. In P/Q, don't render a pill (can't be selected
-        // mid-lap). An IN/OUT/STOP lap is complete the moment the driver pits/stops
-        // (its telemetry is committed there) even though F1 reports its lap-time
-        // only at the next out-lap — so those, and any lap with committed
-        // telemetry, are NOT in-progress and DO get a (grey, selectable) pill.
+        // not yet a completed lap. Don't render a pill for it (can't be selected
+        // mid-lap); the current lap is only viewable in the Live view. An
+        // IN/OUT/STOP lap is complete the moment the driver pits/stops (its
+        // telemetry is committed there) even though F1 reports its lap-time only
+        // at the next out-lap — so those, and any lap with committed telemetry,
+        // are NOT in-progress and DO get a (grey, selectable) pill.
         let inProgressLap = null;
-        if (!_isRaceLike) {
-            for (const lap of allLaps) {
-                if (lap in times) continue;                       // has a lap-time → complete
-                const st = cls[lap];
-                if (st === 'PIT' || st === 'STOP' || st === 'OUT') continue;  // completed in/out/stop lap
-                if (teleLaps && teleLaps.has(lap)) continue;      // committed telemetry → selectable
-                if (inProgressLap === null || lap > inProgressLap) {
-                    inProgressLap = lap;
-                }
+        for (const lap of allLaps) {
+            if (lap in times) continue;                       // has a lap-time → complete
+            const st = cls[lap];
+            if (st === 'PIT' || st === 'STOP' || st === 'OUT') continue;  // completed in/out/stop lap
+            if (teleLaps && teleLaps.has(lap)) continue;      // committed telemetry → selectable
+            if (inProgressLap === null || lap > inProgressLap) {
+                inProgressLap = lap;
             }
         }
 
@@ -1070,7 +1644,8 @@
             // Driver's own fastest lap → purple (recomputed each render from
             // state.bestLapNum, so it moves off the old lap automatically).
             if (state.bestLapNum[num] === lap) bestTypeCls += ' lap-purple';
-            html += `<span class="telemetry-lap-pill ${colorCls}${bestTypeCls}"`
+            const selCls = state.selectionLaps[`${num}:${lap}`] ? ' selected' : '';
+            html += `<span class="telemetry-lap-pill ${colorCls}${bestTypeCls}${selCls}"`
                   + ` data-driver="${num}" data-lap="${lap}" title="L${lap} ${times[lap] || ''}"`
                   + ` style="grid-column:${col}">${pillLabel}</span>`;
         }
@@ -1078,9 +1653,9 @@
     }
 
     // Qualifying lap-part selector (cards 66/83): a single button showing the
-    // active part (Q1/Q2/Q3 or SQ1-3). Clicking cycles DOWN through the parts
-    // reached so far, wrapping back to the current part (Q3→Q2→Q1→Q3…). The
-    // pills show the selected part. Hidden outside quali; inert in Q1.
+    // Q1/Q2/Q3 (or SQ1-3): three always-visible buttons. A part that hasn't started yet is
+    // disabled (Q2/Q3 during Q1, Q3 during Q2). The current part auto-selects when it starts
+    // (state.activePart, set on qualifyingSegment). Hidden outside quali.
     function renderPartTabs() {
         const el = document.getElementById('telemetryPartTabs');
         if (!el) return;
@@ -1089,17 +1664,16 @@
         el.classList.remove('hidden');
         const prefix = state.isSprintQuali ? 'SQ' : 'Q';
         const active = state.activePart || part;
-        el.innerHTML = `<button class="telemetry-part-toggle" id="telemetryPartToggle"`
-                     + `${part > 1 ? '' : ' disabled'} title="Show another qualifying part">`
-                     + `${prefix}${active}</button>`;
-        const btn = document.getElementById('telemetryPartToggle');
-        if (btn) btn.addEventListener('click', () => {
-            if ((state.qualifyingPart || 0) <= 1) return;     // Q1: nothing to cycle
-            const cur = state.activePart || state.qualifyingPart;
-            state.activePart = cur > 1 ? cur - 1 : state.qualifyingPart;
+        el.innerHTML = [1, 2, 3].map(p =>
+            `<button class="telemetry-part${p === active ? ' active' : ''}" data-part="${p}"`
+            + `${p > part ? ' disabled' : ''}>${prefix}${p}</button>`).join('');
+        el.querySelectorAll('.telemetry-part').forEach(btn => btn.addEventListener('click', () => {
+            const p = +btn.dataset.part;
+            if (p > (state.qualifyingPart || 0)) return;   // future part → not selectable
+            state.activePart = p;
             renderPartTabs();
             renderDriverSelector();
-        });
+        }));
     }
 
     // =========================================================================
@@ -1176,6 +1750,7 @@
                 delete currentLaps()[key];
                 renderChart();
                 updateDriverBar();
+                renderDriverSelector();   // clear the pill's selected (filled) state
             });
         });
     }
@@ -1190,24 +1765,50 @@
         }
     });
 
+    // Position-data warning (above the x-axis), driven by the server's dataHealth:
+    // yellow when the GPS OR telemetry feed is down; red when BOTH are down.
+    function updatePosWarning(health) {
+        const el = document.getElementById('telePosWarning');
+        const msg = document.getElementById('telePosWarningMsg');
+        if (!el || !msg) return;
+        const posRed = !!(health && health.position && health.position.level === 'red');
+        const telRed = !!(health && health.telemetry && health.telemetry.level === 'red');
+        if (posRed && telRed) {
+            el.classList.add('red');
+            msg.textContent = 'Telemetry and position data unavailable. Data is unreliable';
+            el.hidden = false;
+        } else if (posRed || telRed) {
+            el.classList.remove('red');
+            msg.textContent = 'Position data unavailable. Track position estimated from telemetry';
+            el.hidden = false;
+        } else {
+            el.hidden = true;
+        }
+    }
+    messageBus.on('dataHealth', updatePosWarning);
+    messageBus.on('state:reset', () => updatePosWarning(null));
+
     messageBus.on('driverList', (data) => {
         if (!data || typeof data !== 'object') return;
         for (const [num, info] of Object.entries(data)) {
+            const isNew = !state.drivers[num];
             state.drivers[num] = {
                 tla: info.tla || num,
                 color: info.teamColour ? `#${info.teamColour}` : (TEAM_COLORS[num] || DEFAULT_CAR_COLOR),
                 teamName: info.teamName || '',
             };
+            if (isNew) state.hiddenDrivers.add(num);   // default: unselected (no trace until picked) (card)
         }
         renderDriverSelector();
+        refreshDashDrivers();   // dashboard ticker + slots follow the driver list
     });
 
     // Live trace: the server now emits a fully-decoded per-driver sample
     // (dp = track %, channels, lap) — no more client-side CarData.z decode
     // or position-derived distance. One sample per emit.
-    messageBus.on('liveTelemetry:', (topic, data) => {
+    messageBus.on('liveTelemetry:', (topic, data, offsetMs) => {
         const num = topic.split(':')[1];
-        if (num) handleLiveTelemetry(num, data);
+        if (num) handleLiveTelemetry(num, data, offsetMs);
     });
 
     messageBus.on('driverStatus:', (topic, data) => {
@@ -1291,6 +1892,13 @@
         renderDriverSelector();
     });
 
+    // dashInfo:{num} — server-computed dashboard info-tile state (P/Q): stopwatch running/frozen,
+    // delta/result, position, classification circle. Render-only (card 277).
+    messageBus.on('dashInfo:', (topic, data) => {
+        const num = topic.split(':')[1];
+        if (num) state.dashInfo[num] = data || {};
+    });
+
     messageBus.on('telemetryLap:', (topic, data, offset_ms) => {
         handleLapTelemetry(topic, data);
     });
@@ -1358,6 +1966,9 @@
         const cssW = state.canvas.clientWidth;
         const leftMargin = 45, rightMargin = 10;
         const plotW = Math.max(0, cssW - leftMargin - rightMargin);
+        // Canvas hidden/unmeasured (e.g. dashboard view active) → plotW 0 would pctToX every corner
+        // to leftMargin (all labels pile on the left). Bail; setView/resize recompute once it's shown.
+        if (plotW <= 0) return;
 
         // Compute px for each corner first, then sort by px so we can
         // detect overlaps in display order (corners aren't always

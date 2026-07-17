@@ -34,6 +34,17 @@ RELIABILITY_GAP_PCT = 1.0
 MIN_ELAPSED_MS = 5_000
 
 
+def _parse_ms(s: Any) -> Optional[int]:
+    if not isinstance(s, str) or ":" not in s:
+        return None
+    try:
+        mm, rest = s.split(":")
+        sec, _, ms = rest.partition(".")
+        return int(mm) * 60000 + int(sec) * 1000 + int((ms or "0").ljust(3, "0")[:3])
+    except (ValueError, IndexError):
+        return None
+
+
 class LapDeltaProcessor(Processor):
     """Live delta to the driver's best lap, sampled by track position."""
 
@@ -41,9 +52,10 @@ class LapDeltaProcessor(Processor):
         super().__init__(bus, session_type)
         self._enabled = session_type in ("practice", "qualifying")
         self._laps: dict[str, dict[int, list]] = {}    # num -> {lap: [(dp, t_ms)]}
-        self._best_num: dict[str, int] = {}             # num -> best lap number (driverLaps)
-        self._best_curve: dict[str, list] = {}          # num -> sorted [(dp, t_ms)]
-        self._best_curve_lap: dict[str, int] = {}       # num -> lap the curve was built for
+        self._best_num: dict[str, int] = {}             # num -> own reference lap number (driverLaps)
+        self._ref_full: dict[str, int] = {}             # num -> own reference lap's FULL time ms
+        self._curves: dict[tuple, list] = {}            # (num, lap) -> sorted [(dp, t_ms)]
+        self._fastest: Optional[tuple] = None           # session-fastest lap (num, lap, time_ms) — priority 3
 
     def subscribe(self) -> None:
         if self._enabled:
@@ -61,6 +73,13 @@ class LapDeltaProcessor(Processor):
                     pass
         elif topic.startswith("driverLaps:"):
             self._on_driver_laps(topic.split(":", 1)[1], data)
+        elif topic == "fastestLap":
+            # Priority-3 reference: the session-fastest overall lap, for a driver with
+            # NO lap of their own. Only updates when a new fastest is set. (user 2026-07-08)
+            if isinstance(data, dict) and data.get("num") is not None and isinstance(data.get("lap"), int):
+                t = _parse_ms(data.get("time"))
+                if t is not None:
+                    self._fastest = (data["num"], data["lap"], t)
 
     def _on_lap(self, num: str, lap: int, samples: Any) -> None:
         if not isinstance(samples, list):
@@ -73,27 +92,49 @@ class LapDeltaProcessor(Processor):
     def _on_driver_laps(self, num: str, data: Any) -> None:
         if not isinstance(data, dict):
             return
-        # Reference the SESSION-WIDE best (overallBestLap), not the per-part
-        # bestLap — the delta predictor needs the overall benchmark lap, which
-        # is kept across qualifying parts (card 63). Equal outside quali.
-        bl = data.get("overallBestLap")
-        b = bl.get("lap") if isinstance(bl, dict) else None
-        if isinstance(b, int):
-            self._best_num[num] = b
+        # Reference = the driver's PERSONAL BEST, by priority (user 2026-07-08):
+        #   1. best lap THIS part (driverLaps.bestLap) if set;
+        #   2. else best lap across all parts (overallBestLap).
+        # (Priority 3 — another driver's lap when the driver has none — is handled
+        #  in lap_prediction, not here.) Outside quali bestLap == overallBestLap, so
+        #  behaviour is unchanged there.
+        ref = data.get("bestLap")
+        if not (isinstance(ref, dict) and ref.get("lap") is not None):
+            ref = data.get("overallBestLap")
+        if isinstance(ref, dict) and isinstance(ref.get("lap"), int):
+            self._best_num[num] = ref["lap"]
+            t = _parse_ms(ref.get("time"))
+            if t is not None:
+                self._ref_full[num] = t
 
-    def _ref_curve(self, num: str) -> Optional[list]:
-        """The current best lap's curve, rebuilt only once its telemetryLap is
-        cached — so a freshly-set best never resolves to a stale reference."""
-        bn = self._best_num.get(num)
-        if bn is None:
+    def _build_curve(self, num: str, lap: Optional[int]) -> Optional[list]:
+        """Sorted [(dp, t_ms)] for a driver's lap, cached by (num, lap). None until
+        that lap's telemetryLap is cached — so a reference never resolves stale."""
+        if lap is None:
             return None
-        if self._best_curve_lap.get(num) != bn:
-            c = self._laps.get(num, {}).get(bn)
-            if not c:
-                return None   # best lap known but its telemetry not cached yet
-            self._best_curve[num] = sorted(c, key=lambda x: x[0])
-            self._best_curve_lap[num] = bn
-        return self._best_curve[num]
+        key = (num, lap)
+        cached = self._curves.get(key)
+        if cached is not None:
+            return cached
+        c = self._laps.get(num, {}).get(lap)
+        if not c:
+            return None
+        curve = sorted(c, key=lambda x: x[0])
+        self._curves[key] = curve
+        return curve
+
+    def _ref(self, num: str):
+        """(curve, refFullMs) for the reference lap: the driver's own best (this-part
+        or overall) if known, else the session-fastest overall lap (another driver's)."""
+        bn = self._best_num.get(num)
+        if bn is not None:
+            curve = self._build_curve(num, bn)
+            return (curve, self._ref_full.get(num)) if curve else (None, None)
+        if self._fastest is not None:
+            curve = self._build_curve(self._fastest[0], self._fastest[1])
+            if curve:
+                return curve, self._fastest[2]
+        return None, None
 
     def _on_live(self, num: str, data: Any, clock_time: datetime) -> None:
         if not isinstance(data, dict):
@@ -102,14 +143,16 @@ class LapDeltaProcessor(Processor):
         elapsed = data.get("lapElapsedMs")
         if dp is None or elapsed is None or elapsed < MIN_ELAPSED_MS:
             return
-        curve = self._ref_curve(num)
-        if not curve:
-            return
-        best_t = self._interp(curve, dp)
-        if best_t is None:
-            return
+        # With no reference yet (the session's first runner, before anyone has set a lap) still
+        # publish trackPct so the prediction can fire a placeholder forecast; delta/ref stay
+        # null. (user 2026-07-15)
+        curve, ref_full = self._ref(num)
+        best_t = self._interp(curve, dp) if curve else None
+        has_ref = best_t is not None
         self._bus.emit(f"driverDelta:{num}", {
-            "deltaMs": int(elapsed - best_t),
+            "deltaMs": int(elapsed - best_t) if has_ref else None,
+            "refMs": int(best_t) if has_ref else None,   # ref lap's time to THIS point (SLOW ratio denom)
+            "refFullMs": ref_full if has_ref else None,  # ref lap's FULL time → predicted = this + delta
             "lap": data.get("lap"),
             "trackPct": dp,
         }, clock_time)

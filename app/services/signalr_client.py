@@ -11,7 +11,7 @@ import json
 import logging
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -146,7 +146,7 @@ class F1SignalRClient:
     def _on_message(self, msg: list | CompletionMessage):
         """Handle incoming SignalR messages."""
         self._t_last_message = time.time()
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc).replace(tzinfo=None)
 
         if self._session_start is None:
             self._session_start = timestamp
@@ -425,7 +425,7 @@ class F1SignalRClient:
             try:
                 end_marker = {
                     "Type": "_SessionEnd",
-                    "DateTime": datetime.utcnow().isoformat(),
+                    "DateTime": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                     "Json": {"MessageCount": self._message_count},
                 }
                 self._output_file.write(json.dumps(end_marker) + "\n")

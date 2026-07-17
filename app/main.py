@@ -54,15 +54,18 @@ async def _chequered_grace_expired(session_id: str, now_utc: datetime) -> bool:
     db_path = transient_db_path(cache_path)   # live DB is the transient scratch file
     if not db_path.exists():
         return False
+    conn = None
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         row = conn.execute(
             "SELECT data FROM messages WHERE topic='trackStatus' "
             "ORDER BY offset_ms DESC LIMIT 1"
         ).fetchone()
-        conn.close()
     except sqlite3.Error:
         return False
+    finally:
+        if conn is not None:
+            conn.close()   # closed even if execute raises (M6)
     if not row:
         _chequered_first_seen.pop(session_id, None)
         return False
@@ -107,8 +110,8 @@ async def live_session_monitor():
 
     Also:
     - Refreshes schedule every hour to detect changes.
-    - Checks token expiry once every 24h. Only alerts if token expires
-      within 24h AND next session is more than 18h away.
+    - Checks token expiry once every 24h. Only alerts if the token expires
+      within 24h AND the next session starts within ~6h before expiry.
     """
     import aiohttp
 
@@ -188,15 +191,23 @@ async def live_session_monitor():
                                     _active_live_capture["session_type"] != live_type):
                                 need_start = True
                             elif _active_live_capture["session_id"]:
-                                # Same session — check if capture is still healthy
+                                # Same session — check the capture's health.
                                 try:
                                     info = live_capture.get_status(
                                         _active_live_capture["session_id"])
-                                    if info["status"] in ("completed", "error"):
+                                    if info["status"] == "error":
                                         logger.info(
                                             f"Capture {_active_live_capture['session_id']} "
-                                            f"ended ({info['status']}), restarting")
+                                            f"errored, restarting")
                                         need_start = True
+                                    # "completed" = the SignalR feed closed = session
+                                    # over. Do NOT restart: F1 can still report a
+                                    # just-ended session as live while ArchiveStatus
+                                    # lags, and restarting re-captures post-session —
+                                    # rotating the real audio to commentary.NNN.aac
+                                    # and recording junk (card xJAG0l4A). Red-flag
+                                    # data gaps never reach "completed" (SignalR owns
+                                    # reconnection, so is_alive stays true).
                                 except (ValueError, KeyError):
                                     need_start = True
 
@@ -241,6 +252,7 @@ async def live_session_monitor():
                                 _active_live_capture["event_name"] = None
                                 _active_live_capture["session_type"] = None
                                 _chequered_first_seen.pop(sid, None)
+                                _sent_notifications.clear()   # match the 204 stop path (L4)
 
                         elif live_resp.status == 204:
                             # Definitive "no session live" — safe to stop.
@@ -276,27 +288,30 @@ async def live_session_monitor():
                         s = cached_next_session
                         radar_window_start = s["session_date"] - timedelta(minutes=15)
                         radar_window_end = s["session_date"] + timedelta(hours=4)
-                        # Start the radar only once the live feed is up — so the
-                        # F1 meeting/session keys are known and the session cache
-                        # dir exists — AND we're within the 15-min-before → end
-                        # window. Tiles co-locate in that session dir (card).
+                        # Both start only once the live feed is up — so the F1 keys are known and
+                        # the session cache dir exists. Tiles co-locate in that session dir.
                         live_sid = _active_live_capture["session_id"]
-                        if (radar_window_start <= now_utc <= radar_window_end
-                                and live_sid):
-                            cache_path = live_capture.cache_path_for(live_sid)
-                            if cache_path and radar_capture.active_key != str(cache_path):
-                                radar_capture.start(
-                                    session_dir=cache_path,
-                                    meeting_name=s["event_name"],
-                                    stop_at=radar_window_end,
-                                )
-                            # Forecast capture rides the same window (card 118).
-                            if cache_path and forecast_capture.active_key != str(cache_path):
-                                forecast_capture.start(
-                                    session_dir=cache_path,
-                                    meeting_name=s["event_name"],
-                                    stop_at=radar_window_end,
-                                )
+                        cache_path = live_capture.cache_path_for(live_sid) if live_sid else None
+                        # Forecast + current conditions: begin as soon as the session data STREAM
+                        # begins (live feed up), NOT only from 15-min-before — otherwise the
+                        # opening minutes of the session have no forecast/condition coverage and
+                        # the tile shows nothing. minutely_15 is quarter-hour aligned, so the first
+                        # capture already covers from the marker containing the stream. (user)
+                        if (cache_path and now_utc <= radar_window_end
+                                and forecast_capture.active_key != str(cache_path)):
+                            forecast_capture.start(
+                                session_dir=cache_path,
+                                meeting_name=s["event_name"],
+                                stop_at=radar_window_end,
+                            )
+                        # Radar stays gated to the 15-min-before → end window (Rainbow.ai call budget).
+                        if (radar_window_start <= now_utc <= radar_window_end and cache_path
+                                and radar_capture.active_key != str(cache_path)):
+                            radar_capture.start(
+                                session_dir=cache_path,
+                                meeting_name=s["event_name"],
+                                stop_at=radar_window_end,
+                            )
 
                     # ── Pre-session notifications (gated + lead from settings, card 27) ──
                     if cached_next_session and settings.get("ntfy.preSession", True):
@@ -413,6 +428,19 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
 
+    # Stop the background weather captures and close the shared HTTP session so
+    # nothing is left running/open at shutdown (M6).
+    for cap in (radar_capture, forecast_capture):
+        try:
+            cap.stop()
+        except Exception:
+            pass
+    try:
+        from app.services.livetiming_fetcher import livetiming_fetcher
+        await livetiming_fetcher.close()
+    except Exception:
+        pass
+
 
 app = FastAPI(
     title="Formula 1 Live Timing API",
@@ -452,18 +480,34 @@ def root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+# The in-app user guide (release v2.0.0) is split into four context pages: the
+# main window + player, and one per session type. Sources live in docs/guide/.
+GUIDE_PARTS = [
+    ("main", "Main window"),
+    ("practice", "Practice"),
+    ("qualifying", "Qualifying"),
+    ("race", "Race"),
+    ("support", "Support"),
+]
+
+
 @app.get("/help")
-def help_page(request: Request):
-    """Render DOCUMENTATION.md as a styled HTML page (card 119)."""
+@app.get("/help/{part}")
+def help_page(request: Request, part: str = "main"):
+    """Render one part of the split user guide (docs/guide/{part}.md)."""
     import markdown as _md
+    valid = {k for k, _ in GUIDE_PARTS}
+    if part not in valid:
+        part = "main"
     try:
-        text = Path("DOCUMENTATION.md").read_text(encoding="utf-8")
+        text = Path(f"docs/guide/{part}.md").read_text(encoding="utf-8")
         content = _md.markdown(
             text, extensions=["tables", "fenced_code", "toc", "sane_lists"])
     except OSError:
         content = "<p>Documentation not found.</p>"
+    nav = [(k, label, k == part) for k, label in GUIDE_PARTS]
     return templates.TemplateResponse(
-        "help.html", {"request": request, "content": content})
+        "help.html", {"request": request, "content": content, "nav": nav})
 
 
 @app.get("/api/v1/version")

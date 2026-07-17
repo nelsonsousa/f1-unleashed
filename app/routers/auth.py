@@ -106,18 +106,6 @@ def set_token(request: SetTokenRequest):
     return SetTokenResponse(**result)
 
 
-@router.post("/auto-login")
-def auto_login():
-    """
-    Automatically log in using stored credentials.
-
-    Requires F1_EMAIL and F1_PASSWORD to be set in the .env file.
-    Uses headless browser automation to perform the login.
-    """
-    result = auth_service.auto_login()
-    return result
-
-
 @router.post("/browser-login")
 def browser_login():
     """
@@ -165,9 +153,9 @@ def check_token_expiry():
     """
     Check if token is expiring soon and optionally send notification.
 
-    If NOTIFICATION_WEBHOOK_URL is configured in .env, sends a webhook
-    notification when the token is expiring within AUTH_EXPIRY_WARNING_HOURS
-    (default: 24 hours).
+    If a webhook is configured in settings (`ntfy.webhookUrl`), sends a
+    notification when the token is expiring within the configured warning
+    window (`auth.expiryWarningHours`, default 24 h).
 
     Returns expiry status and whether notification was sent.
     """

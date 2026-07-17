@@ -31,11 +31,13 @@
     const IS_QUALI = SESSION_TYPE === 'qualifying';
     const IS_PRACTICE = !IS_RACE && !IS_QUALI;
 
+    // Server segment hex → the shared colour scale (.seg-bar.c-* paints it as bg).
+    // The mini "white" is the suppressed state (slow/out/pre-race) → dimmed grey.
     const SEGMENT_COLOR_CLASS = {
-        '#ffd700': 'seg-yellow',
-        '#00ff00': 'seg-green',
-        '#ff00ff': 'seg-purple',
-        '#ffffff': 'seg-white',
+        '#ffd700': 'c-yellow',
+        '#00ff00': 'c-green',
+        '#ff00ff': 'c-purple',
+        '#ffffff': 'c-dim',
     };
 
     const state = {
@@ -44,23 +46,17 @@
         driverData: {},       // num → assembled {gap, gapIsRed, interval, bestLap, …}
         timing: {},           // num → assembled current lap {lap, lapTime, bestLapTime, sectors[]}
         prevLap: {},          // num → snapshot of last completed lap (lapTime + sectors)
-        prevFastLap: {},      // num → snapshot of last non-cool lap
-        sectorsCleared: {},   // num → bool: have we cleared prev-lap sectors yet
+        sectorsCleared: {},   // num → bool: one-shot latch for the position-gain drop
         tyres: {},            // num → assembled tyre stints array (render)
         currentTyre: {},      // num → {compound, isNew, age}
         tyreHistory: {},      // num → [{compound, totalLaps, isNew}] past stints
         lapTimes: {},         // num → {lap → time_str} from driverLaps.laps
         status: {},           // num → DSQ/ELIMINATED/RET/STOP/OUT/PIT/FINISHED/TRACK
         lapCls: {},           // num → {lap, status} (latest classification type)
-        lapClsByLap: {},      // num → {lapNum → type} per-lap map
-        prediction: {},       // num → lapPrediction {lap, delta, placesGained}
+        prediction: {},       // num → lapPrediction {lap, projectedMs, improving, predictedPos, posColour}
         currentLap: 0,        // race-only (from raceLaps)
         qualifyingSegment: null,
         eliminated: new Set(),
-        // Overall-fastest lap (from the server `fastestLap` topic) so we can
-        // purple-tint the holder and a lap that matches it.
-        overallBestLapMs: null,
-        overallBestLapDriver: null,
     };
 
     // ─── Helpers ───
@@ -71,27 +67,14 @@
     // (state.finishedDrivers / _prevChequeredCount / markDriverFinishedIfPassive)
     // is superseded and left dead pending cleanup — see issue #26.
     function isFinished(num) {
-        // Server-authoritative: driver_status emits FINISHED once a driver
-        // has taken the chequered flag (race S/F crossing / P-Q first-car).
-        return state.status[num] === 'FINISHED';
+        // Server-authoritative: driver_status emits CHECKERED once a driver
+        // starts a new lap under the chequered flag (race S/F crossing / P-Q first-car).
+        return state.status[num] === 'CHECKERED';
     }
 
     function getTyreSvg(compound, isNew) {
         const c = (compound || 'unknown').toLowerCase();
         return `/static/images/tyres/${c}-${isNew ? 'new' : 'used'}.svg`;
-    }
-
-    function parseLapMs(s) {
-        if (!s) return null;
-        const m = s.match(/^(\d+):(\d+)\.(\d+)$/);
-        if (!m) return null;
-        return parseInt(m[1]) * 60000 + parseInt(m[2]) * 1000
-             + parseInt(m[3].padEnd(3, '0').slice(0, 3));
-    }
-
-    function formatGap(ms) {
-        const s = ms / 1000;
-        return (s >= 0 ? '+' : '') + s.toFixed(3);
     }
 
     function ensureDriver(num) {
@@ -196,16 +179,9 @@
         return state.status[num] === 'DSQ';
     }
     function renderPenaltyStack(num) {
-        // Retired drivers (RET / STOP / DSQ) — penalties / investigations
-        // no longer matter. Clear the stack from their status badge.
-        if (typeof isRetired === 'function' && isRetired(num)) return '';
-        // Drivers who have taken the chequered flag: any remaining time
-        // penalty is just added to their race time, not a pending action.
-        // Investigations + flags also stop mattering once they're done.
-        // (`finishedDrivers` is populated as each driver crosses S/F under
-        // chequered, not session-wide at the flag — see markDriverFinishedIfPassive
-        // and the driverLastLap handler.)
-        if (isFinished(num)) return '';
+        // (Retired/finished penalty-stack suppression removed — client renders
+        // whatever indicators the server sends; any suppression is a server
+        // decision, TBD. ybTVoVep)
         if (isDriverDSQ(num)) {
             return `<span class="pen-stack"><span class="pen-badge pen-dsq" data-tooltip="DISQUALIFIED">DSQ</span></span>`;
         }
@@ -256,8 +232,27 @@
     // qualifyingSegment {segment, eliminated:[nums], isSprintQuali}.
     messageBus.on('qualifyingSegment', (data) => {
         if (!data) return;
+        const newElim = new Set((data.eliminated || []).map(String));
+        // A new part starting clears best laps (server-driven). Clear gap + last
+        // lap too, so the prior part's values don't linger — but NOT for
+        // eliminated drivers, who keep their best + a frozen gap from the part
+        // they were knocked out in (handled elsewhere).
+        if (data.segment && data.segment !== state.qualifyingSegment) {
+            for (const num of Object.keys(state.timing)) {
+                if (newElim.has(num)) continue;
+                const t = state.timing[num];
+                t.lapTime = null; t.personalFastest = false; t.overallFastest = false;
+                delete state.prevLap[num];
+                state.sectorsCleared[num] = false;
+            }
+            for (const num of Object.keys(state.driverData)) {
+                if (newElim.has(num)) continue;
+                const e = state.driverData[num];
+                e.gap = ''; e.gapIsRed = false; e.gapTrend = '';
+            }
+        }
         if (data.segment) state.qualifyingSegment = data.segment;
-        state.eliminated = new Set((data.eliminated || []).map(String));
+        state.eliminated = newElim;
         render();
     });
 
@@ -278,6 +273,7 @@
         e.gap = data.gap || '';
         e.gapIsRed = !!data.cutoff;
         e.gapTrend = data.trend || '';
+        e.gapBand = data.band || '';
         render();
     });
 
@@ -301,11 +297,39 @@
         render();
     });
 
-    // fastestLap {num, lap, time} — the session's overall-fastest holder.
-    messageBus.on('fastestLap', (data) => {
-        if (!data || data.num == null) return;
-        state.overallBestLapDriver = String(data.num);
-        state.overallBestLapMs = parseLapMs(data.time);
+    // driverBestLapColour:{num} {lap, colour} — server-computed best-lap colour
+    // (atcmh1cL): purple=current fastest-overall holder, else Δ-to-fastest band;
+    // null clears it. (Replaces the removed client fastestLap purple/PB tracking.)
+    messageBus.on('driverBestLapColour:', (topic, data) => {
+        const num = topic.split(':')[1];
+        if (!num || !data) return;
+        ensureData(num).bestLapColour = data.colour || null;
+        render();
+    });
+
+    // driverSectorColour:{num} [c0,c1,c2] — server-computed per-sector colour
+    // (atcmh1cL): vs best-overall in P/Q, vs the leader's same-lap in race; in/out
+    // white. Client just applies sector-{colour}.
+    messageBus.on('driverSectorColour:', (topic, data) => {
+        const num = topic.split(':')[1];
+        if (!num) return;
+        ensureData(num).sectorColour = Array.isArray(data) ? data : [];
+        render();
+    });
+
+    // driverBestSectors:{num} [v0,v1,v2] + driverBestSectorColour:{num} [c0,c1,c2] —
+    // each driver's fastest S1/S2/S3 + band colour vs the session-best sector
+    // (best_sector_processor). Shown when a sector column header is toggled to "best".
+    messageBus.on('driverBestSectors:', (topic, data) => {
+        const num = topic.split(':')[1];
+        if (!num) return;
+        ensureData(num).bestSectors = Array.isArray(data) ? data : [];
+        render();
+    });
+    messageBus.on('driverBestSectorColour:', (topic, data) => {
+        const num = topic.split(':')[1];
+        if (!num) return;
+        ensureData(num).bestSectorColour = Array.isArray(data) ? data : [];
         render();
     });
 
@@ -331,6 +355,12 @@
             t.lapTime = data.lastLap.time;
             t.personalFastest = data.lastLap.personalBest;
             t.overallFastest = data.lastLap.overallBest;
+        } else {
+            // Server blanked the last lap (e.g. new quali part) — clear it so the
+            // cell blanks instead of holding the previous value. (hqb93XEw)
+            t.lapTime = null;
+            t.personalFastest = false;
+            t.overallFastest = false;
         }
 
         // Per-lap times map {lapNum → time_str} (lapCount + prediction ref).
@@ -357,21 +387,15 @@
 
         // Completed-lap snapshot — capture the live sectors (still holding
         // the just-finished lap's S1/S2/S3 at this instant) plus lastLap's
-        // time/flags. prevFastLap only if that lap wasn't COOL/ABORT/OUT/IN.
+        // time/flags. Used by the race-mode segment-bar merge (segmentBarsCell).
         if (data.lastLap && data.lastLap.lap != null) {
-            const snap = {
+            state.prevLap[num] = {
                 lap: data.lastLap.lap,
                 lapTime: data.lastLap.time,
                 overallFastest: data.lastLap.overallBest,
                 personalFastest: data.lastLap.personalBest,
                 sectors: t.sectors ? t.sectors.map(s => ({ ...s })) : null,
             };
-            state.prevLap[num] = snap;
-            const cls = (state.lapClsByLap[num] || {})[data.lastLap.lap];
-            if (!cls || (cls !== 'COOL' && cls !== 'ABORT'
-                    && cls !== 'OUT' && cls !== 'IN')) {
-                state.prevFastLap[num] = snap;
-            }
         }
 
         // Rollover → new lap starting: re-arm the sector-clear overlay so
@@ -392,6 +416,13 @@
         if (!t.sectors) t.sectors = [{}, {}, {}];
         if (data[0] && data[0].value && !state.sectorsCleared[num]) {
             state.sectorsCleared[num] = true;   // first new S1 → clear overlay
+            // Drop a spent observed position-gain once the driver reaches S1 of
+            // a lap AFTER the one that earned it — one-shot delete, so it can't
+            // reappear later (e.g. after a pit stop / new run). (Card V2auWGhu.)
+            const pg = state.prediction[num];
+            if (pg && pg.observed && pg.lap != null && (t.lap || 0) > pg.lap) {
+                delete state.prediction[num];
+            }
         }
         for (let i = 0; i < 3; i++) {
             const seg = t.sectors[i] && t.sectors[i].segments;
@@ -456,24 +487,25 @@
         if (!num) return;
         state.status[num] = data;
         if (data === 'ELIMINATED') state.eliminated.add(num);
+        // A spent observed position-gain is dropped when the driver STOPs or
+        // pits (their run is over) so it doesn't linger or reappear on the way
+        // back out. (Card V2auWGhu.)
+        if (data === 'STOP' || data === 'PIT') {
+            const pg = state.prediction[num];
+            if (pg && pg.observed) delete state.prediction[num];
+        }
         render();
     });
 
     // driverLapClassification:{num} {lap, trackPct, type}. type ∈
     // PUSH / SLOW / OUT / PIT / STOP / "" (race). Gate the current-lap
-    // indicator so a retroactive finalize for an older lap can't regress
-    // it; keep a per-lap map for the prevFastLap decision.
+    // indicator so a retroactive finalize for an older lap can't regress it.
     messageBus.on('driverLapClassification:', (topic, data) => {
         const num = topic.split(':')[1];
         if (!num || !data) return;
         const curr = state.lapCls[num] || { lap: 0 };
         if (data.lap != null && data.lap >= (curr.lap || 0)) {
             state.lapCls[num] = { lap: data.lap, status: data.type };
-        }
-        if (data.lap != null) {
-            const map = state.lapClsByLap[num] || {};
-            map[data.lap] = data.type;
-            state.lapClsByLap[num] = map;
         }
         render();
     });
@@ -498,40 +530,24 @@
         // (lap counts, sector times, last-lap snapshot) hanging around.
         state.lapTimes = {};
         state.prevLap = {};
-        state.prevFastLap = {};
         state.sectorsCleared = {};
         state.tyres = {};
         state.currentTyre = {};
         state.tyreHistory = {};
         state.status = {};
         state.lapCls = {};
-        state.lapClsByLap = {};
         state.prediction = {};
         state.currentLap = 0;
         state.qualifyingSegment = null;
         state.eliminated = new Set();
-        state.overallBestLapMs = null;
-        state.overallBestLapDriver = null;
         driverPenalties = {};
         render();
     });
 
     // ─── Render ───
 
-    // Practice / qualifying only: when the driver isn't on a flying lap
-    // (out lap, slow/cool-down, in-pit, etc.) the current-lap timing
-    // data is irrelevant. Hide sectors / last-lap / Δ / mini-segments so
-    // the row only shows persistent info (best lap, gap, tyres).
-    const SLOW_CLASSIFICATIONS = new Set(['OUT', 'SLOW']);
-    function isSlowLap(num) {
-        if (state.status[num] === 'PIT') return true;
-        if (state.status[num] === 'STOP' || state.status[num] === 'RET') return true;
-        const lc = state.lapCls[num];
-        return !!(lc && SLOW_CLASSIFICATIONS.has(lc.status));
-    }
-
     function emptySectorCells() {
-        return '<span class="sector-time sector-empty"></span>'.repeat(3);
+        return '<span class="sector-time c-empty"></span>'.repeat(3);
     }
 
     function emptySegmentsHtml() {
@@ -540,7 +556,7 @@
         for (let si = 0; si < 3; si++) {
             if (si > 0) html += '<span class="seg-spacer"></span>';
             for (let j = 0; j < (layout[si] || 0); j++) {
-                html += '<span class="seg-bar seg-empty"></span>';
+                html += '<span class="seg-bar"></span>';
             }
         }
         return html;
@@ -609,100 +625,39 @@
         return base;
     }
 
+    // P1-delta colour bands. deltaMs = value − reference (>=0). `sector` uses the
+    // tighter sector thresholds (card cKNdwUoZ); otherwise the gap/best/last
+    // thresholds (card IeBKH1Xz). Returns a band-* class or null.
+    // (bandClass / parseSectorMs / fastestSectors removed — the client-derived
+    // Δ-to-fastest colour bands moved server-side. atcmh1cL)
+
+    const BEST_LAP_COLOUR_CLASS = {
+        purple: 'c-purple', blue: 'c-blue', green: 'c-green',
+        yellow: 'c-yellow', orange: 'c-orange', red: 'c-red',
+        white: 'c-white',   // eliminated driver's best — full-opacity neutral
+    };
+
     function bestLapCell(num) {
         const e = state.driverData[num] || {};
         const t = state.timing[num] || {};
-        // Don't surface an out/in/stopped lap as a "best lap" (can happen
-        // when it's the only completed lap and F1 flags it personal-best).
-        const bt = lapTypeAt(num, e.bestLapNum);
-        if (bt === 'OUT' || bt === 'PIT' || bt === 'STOP') {
-            return `<span class="lap-time lap-empty">--:--.---</span>`;
-        }
         const txt = e.bestLap || t.bestLapTime || '';
-        let cls = 'lap-empty';
-        if (txt) {
-            if (IS_RACE) {
-                // Race: recompute the overall fastest from all drivers'
-                // bestLap. F1 doesn't push a reliable demotion signal
-                // and retroactive lap-time changes shuffle the leader,
-                // so the data-driven flag-tracking path used for P/Q
-                // is too lossy here. 20-driver sweep per cell is cheap.
-                const ms = parseLapMs(txt);
-                let overallBest = Infinity;
-                for (const n of Object.keys(state.driverData)) {
-                    const od = state.driverData[n] || {};
-                    const ot = state.timing[n] || {};
-                    const m = parseLapMs(od.bestLap || ot.bestLapTime);
-                    if (m != null && m < overallBest) overallBest = m;
-                }
-                if (ms != null && ms === overallBest) cls = 'lap-purple';
-                else if (e.bestLapPersonal) cls = 'lap-green';
-                else cls = 'lap-yellow';
-            } else {
-                // P/Q: trust F1's overallFastest flag tracking. Single
-                // purple holder maintained in state.overallBestLapDriver
-                // and reset on Q segment change.
-                if (state.overallBestLapDriver === num) cls = 'lap-purple';
-                else if (e.bestLapPersonal) cls = 'lap-green';
-                else cls = 'lap-yellow';
-            }
-        }
+        // Server-emitted best-lap colour (atcmh1cL): purple = fastest-overall
+        // holder, else Δ-to-fastest band. Client just applies the class.
+        const cls = txt ? (BEST_LAP_COLOUR_CLASS[e.bestLapColour] || '') : 'c-empty';
         return `<span class="lap-time ${cls}">${txt || '--:--.---'}</span>`;
     }
 
     function gapCellEmpty() {
-        return '<span class="gap gap-empty">--.---</span>';
+        return '<span class="gap c-empty">--.---</span>';
     }
 
-    function isSlowLapClass(num) {
-        // Cool-down (SLOW) only. OUT no longer suppresses — out-lap times and
-        // sectors are shown now (card 81 reverses the old OUT-lap suppression).
-        const cls = state.lapCls[num] && state.lapCls[num].status;
-        return cls === 'SLOW';
-    }
-
-    // Per-lap classification type (from driverLapClassification). Used to
-    // suppress rendering a lap TIME for out/in/stopped laps — those aren't
-    // representative timed laps even though F1 reports a time for them.
-    function lapTypeAt(num, lapNum) {
-        return lapNum != null ? (state.lapClsByLap[num] || {})[lapNum] : undefined;
-    }
-
-    // Pick the lap object whose data we should display in the last-lap +
-    // sector cells. Rules:
-    //   - if the current lap's classification is COOL/OUT/ABORT, NEVER
-    //     show current-lap data — fall back to the previous fast lap if
-    //     we have one, otherwise return null (callers render placeholders)
-    //   - while the new lap hasn't reached sector 1 yet, keep showing the
-    //     previous lap so the row doesn't blank out for ~30s
-    //   - otherwise use the live current lap
-    // Returns null if nothing is appropriate to display.
-    function chooseLapForDisplay(num) {
-        const t = state.timing[num];
-        if (isSlowLapClass(num)) {
-            return state.prevFastLap[num] || null;
-        }
-        if (!t || !state.sectorsCleared[num]) {
-            return state.prevFastLap[num] || state.prevLap[num] || t || null;
-        }
-        return t;
-    }
-
-    // Retired drivers (= status RET / STOP / DSQ): clear last-lap +
-    // sector + mini-sector cells. Race retirements stop accumulating
-    // useful data; the row should keep only persistent identity (= rank,
-    // best lap, tyre history). Applies to race only — in P/Q a "RET"
-    // state during the session isn't a final retirement.
-    function isRetired(num) {
-        if (!IS_RACE) return false;
-        const st = state.status[num];
-        return st === 'RET' || st === 'STOP' || isDriverDSQ(num);
-    }
+    // (isSlowLapClass / lapTypeAt / isRetired removed — client-side suppression
+    // helpers. chooseLapForDisplay also gone earlier. Retired/finished/slow-lap
+    // blanking is a server decision, TBD. ybTVoVep)
 
     function lastLapCell(num) {
-        if (isRetired(num)) {
-            return `<span class="lap-time lap-last lap-empty">--:--.---</span>`;
-        }
+        // (Retired + eliminated blanking removed — client renders the server's
+        // last-lap as-is; suppression moves server-side. ybTVoVep)
         // Spec depends on session type:
         //   - PRACTICE / QUALIFYING: show the actual lap time including
         //     in-pit and out laps (card 81); cool-down (SLOW) falls back to
@@ -710,160 +665,71 @@
         //   - RACE: ALWAYS show the latest lap data including IN/OUT,
         //     because every lap matters for race position + gap, and
         //     IN/OUT laps still produce times the engineer cares about.
+        // Render the CURRENT last-lap directly — no prev-fast which-value
+        // selection, no STOP suppression (those move server-side). Race keeps the
+        // server-provided pace colour; quali/practice colour will come from the
+        // server too (atcmh1cL). (ybTVoVep / atcmh1cL)
         const cur = state.timing[num];
-        const prevFast = state.prevFastLap[num];
-        const prevAny = state.prevLap[num];
-        const cleared = state.sectorsCleared[num];   // S1 of current lap seen
-        const slow = isSlowLapClass(num);             // COOL/ABORT/OUT
-
-        let source;
-        if (IS_RACE) {
-            // Race: prefer the current lap's lap-time once it lands,
-            // otherwise fall back to the most recent previous lap so
-            // the row doesn't blank out mid-lap.
-            if (cur && cur.lapTime) source = cur;
-            else source = prevAny || cur;
-        } else {
-            // P/Q: in-pit and out laps now show their actual time (card 81);
-            // cool-down (SLOW) still falls back to the previous fast lap, and
-            // the !cleared fallback avoids a ~30s blank between laps.
-            if (slow) {
-                source = prevFast;
-            } else if (!cleared) {
-                source = prevFast;
-            } else if (cur && cur.lapTime) {
-                source = cur;
-            } else {
-                source = prevFast;
-            }
+        const last = (cur && cur.lapTime) || '';
+        // Server-emitted pace class (race_pace for race, pq_pace for P/Q): vs the
+        // leader's lap in race, vs the fastest overall in P/Q; in/out white.
+        const pc = (state.driverData[num] || {}).paceColour;
+        // "blank" = server suppression (retired/finished/eliminated, P/Q out/in/slow).
+        if (pc === 'blank') {
+            return `<span class="lap-time lap-last c-empty">--:--.---</span>`;
         }
-
-        // An out lap / stopped "lap" isn't a representative timed lap —
-        // suppress its time even though F1 reports one. (In-pit laps in race
-        // are intentionally kept per the source-selection above.)
-        // A stopped car has no representative time. (OUT laps are now shown —
-        // card 81 — so only STOP is blanked here.)
-        const st = source ? lapTypeAt(num, source.lap) : undefined;
-        if (st === 'STOP') {
-            return `<span class="lap-time lap-last lap-empty">--:--.---</span>`;
-        }
-        const last = (source && source.lapTime) || '';
-        let cls = 'lap-empty';
+        let cls = 'c-empty';
         if (last) {
-            if (IS_RACE) {
-                // Race: colour by pace vs the leader's reference lap (server-
-                // computed, replaces the PB/SB colouring). White for in/out laps
-                // and until a pace colour arrives.
-                const pc = (state.driverData[num] || {}).paceColour;
-                cls = pc ? `lap-pace-${pc}` : 'lap-pace-white';
-            } else {
-                // P/Q: overallFastest in the snapshot is frozen at the moment the
-                // lap completed — F1 doesn't re-emit demotions. Compute the purple
-                // tint live vs the running overall best so a beaten lap drops to
-                // green / yellow.
-                const lastMs = parseLapMs(last);
-                if (state.overallBestLapMs != null
-                        && lastMs != null
-                        && lastMs === state.overallBestLapMs) {
-                    cls = 'lap-purple';
-                } else if (source.personalFastest) {
-                    cls = 'lap-green';
-                } else {
-                    cls = 'lap-yellow';
-                }
-            }
+            // pace "white" (slow / out / no colour yet) → dimmed grey; else the band.
+            cls = (!pc || pc === 'white') ? 'c-dim' : `c-${pc}`;
         }
         return `<span class="lap-time lap-last ${cls}">${last || '--:--.---'}</span>`;
     }
 
-    function lastVsBestCell(num) {
-        const lap = chooseLapForDisplay(num);
-        const t = state.timing[num] || {};
-        const lastMs = parseLapMs(lap && lap.lapTime);
-        const bestMs = parseLapMs(t.bestLapTime);
-        if (lastMs == null || bestMs == null) {
-            return '<span class="delta delta-empty">+-.---</span>';
-        }
-        const diff = lastMs - bestMs;
-        let cls = 'delta-yellow';
-        if (state.overallBestLapMs != null && lastMs === state.overallBestLapMs) cls = 'delta-purple';
-        else if (diff <= 0) cls = 'delta-green';
-        return `<span class="delta ${cls}">${formatGap(diff)}</span>`;
-    }
+    // (lastVsBestCell removed — unused dead code; its last-vs-best delta colour
+    // was client-derived. atcmh1cL)
 
     function sectorCells(num) {
-        if (isRetired(num)) return emptySectorCells();
-        // Race: always show the most recent sectors, including IN/OUT
-        // laps (= every lap matters for race-engineer view). P/Q: only
-        // show prev FAST sectors, hide PIT/OUT/IN/COOL.
-        const cur = state.timing[num];
-        const prevFast = state.prevFastLap[num];
-        const prevAny = state.prevLap[num];
-        const cleared = state.sectorsCleared[num];
-        const slow = isSlowLapClass(num);
-
-        let lap;
-        if (IS_RACE) {
-            // Always show the current lap's sectors in race. No
-            // gating on `cleared` (= the "S1 of new lap seen" flag),
-            // which can be stale across the race-start reset; F1's
-            // own data for the current lap is authoritative.
-            lap = cur;
-        } else {
-            // In-pit and out laps now show their sectors (card 81); cool-down
-            // (SLOW) still falls back to the previous fast lap.
-            if (slow) lap = prevFast;
-            else if (cleared) lap = cur;
-            else lap = prevFast;
-        }
-
-        // Race-mode sector display rules:
-        //   Pre-S1-of-new-lap (= !cleared): show the PREVIOUS lap's
-        //     full S1/S2/S3 so the row never blanks across the new-lap
-        //     reset that wipes state.timing[num].sectors.
-        //   Post-S1 (= cleared): show CURRENT lap's sectors only.
-        //     S2/S3 of the previous lap get cleared as S1 of the new
-        //     lap arrives (= per SME 2026-06-07).
-        let sectors = (lap && lap.sectors) || [{}, {}, {}];
-        if (IS_RACE && !cleared && prevAny && prevAny.sectors) {
-            sectors = prevAny.sectors;
-        }
+        // Render the CURRENT lap's sectors + apply the server-emitted per-sector
+        // colour (driverSectorColour): vs best-overall in P/Q, vs the leader's
+        // same-lap in race; in/out white. (atcmh1cL)
+        const lap = state.timing[num];
+        const sectors = (lap && lap.sectors) || [{}, {}, {}];
+        const colours = (state.driverData[num] || {}).sectorColour || [];
+        const bestVals = (state.driverData[num] || {}).bestSectors || [];
+        const bestCols = (state.driverData[num] || {}).bestSectorColour || [];
+        const mode = state.sectorMode || [false, false, false];
         const out = [];
         for (let i = 0; i < 3; i++) {
-            const s = sectors[i] || {};
-            const v = s.value || '';
-            let cls = 'sector-empty';
-            if (v) {
-                if (s.overallFastest) cls = 'sector-purple';
-                else if (s.personalFastest) cls = 'sector-green';
-                else cls = 'sector-yellow';
+            let v, c, white = false;
+            if (mode[i]) {
+                v = bestVals[i] || '';               // best-sector mode: driver's fastest S{i}
+                c = bestCols[i];
+            } else {
+                const s = sectors[i] || {};
+                v = s.value || '';
+                c = colours[i];
+                white = !!s.white;                   // slow / out / post-flag → dimmed
             }
+            let cls;
+            if (!v) cls = 'c-empty';
+            else if (white) cls = 'c-dim';
+            // P/Q out/in/stop sector colour is also "white" → dimmed grey.
+            else cls = c === 'white' ? 'c-dim' : (c ? `c-${c}` : '');
             out.push(`<span class="sector-time ${cls}">${v || '--.---'}</span>`);
         }
-        return out.join('');
+        return out;   // [S1, S2, S3] — gaps between them are grid spacer tracks
     }
 
     function segmentBarsCell(num) {
-        if (isRetired(num)) return emptySegmentsHtml();
-        // Driver has taken the chequered flag — they're done; mini-
-        // sector activity no longer applies. Race + Q both: once
-        // they've crossed S/F under chequered, blank the bars.
-        if (isFinished(num)) {
-            return emptySegmentsHtml();
-        }
-        // Mini-sectors render coloured only for the live fast lap. On a
-        // cool / out / abort lap (or before any data arrives) we draw all
-        // bars uncoloured so the row doesn't pretend the driver is on a
-        // push. Layout still draws the same number of bars so column
-        // widths stay aligned. Race-mode bypass: ALWAYS show colours in
-        // race (= every lap is a race lap from the engineer's view).
-        const showColours = IS_RACE || !isSlowLapClass(num);
+        // (Retired/finished blanking + slow-lap uncolour removed — client renders
+        // the server's segment data as-is; suppression moves server-side. ybTVoVep)
         const t = state.timing[num] || {};
-        let sectors = showColours ? (t.sectors || []) : [];
+        let sectors = t.sectors || [];
         // Race-mode merge: same as sectorCells — fall back to the
         // previous lap's segment list per-slot so S2/S3 mini-sector
         // bars don't blank out at every new-lap reset.
-        if (IS_RACE && showColours) {
+        if (IS_RACE) {
             const prevAny = state.prevLap[num];
             if (prevAny && prevAny.sectors) {
                 sectors = [0, 1, 2].map((i) => {
@@ -881,25 +747,28 @@
             const cnt = layout[si] || 0;
             for (let j = 0; j < cnt; j++) {
                 const seg = j < segs.length ? segs[j] : null;
-                const cls = seg ? (SEGMENT_COLOR_CLASS[seg] || 'seg-empty') : 'seg-empty';
+                const cls = seg ? (SEGMENT_COLOR_CLASS[seg] || '') : '';
                 html += `<span class="seg-bar ${cls}"></span>`;
             }
         }
         return html;
     }
 
-    function tyreCell(num, currentTyreOnly) {
+    function tyreCell(num) {
         const stints = state.tyres[num];
         if (!stints || !stints.length) return '';
         const t = state.timing[num] || {};
         const curLap = t.lap || 0;
-        // Current = last entry (or first marked .current); display first.
-        const ordered = stints.slice().reverse();
-        const slice = currentTyreOnly ? ordered.slice(0, 1) : ordered;
-        return slice.map(stint => {
+        // Newest first; render ALL stints. The .tyres column is a fixed-width window
+        // that scrolls horizontally (no scrollbar) so past sets can be reached.
+        const slice = stints.slice().reverse();
+        return slice.map((stint, i) => {
             if (!stint || !stint.compound) return '';
             const laps = tyreLaps(stint, curLap);
-            return `<span class="tyre-stint">` +
+            // Current stint (newest, index 0) vs past stints — separate classes so
+            // each can be styled independently (size / emphasis / opacity).
+            const role = i === 0 ? 'tyre-stint-current' : 'tyre-stint-past';
+            return `<span class="tyre-stint ${role}">` +
                 `<img class="tyre-stint-icon" src="${getTyreSvg(stint.compound, stint.new)}" alt="${stint.compound}">` +
                 `<span class="tyre-stint-laps">${laps}</span>` +
                 `</span>`;
@@ -907,61 +776,20 @@
     }
 
     function predictionCell(num) {
-        // The .pred span is ONE grid cell — delta + projected-position
-        // side by side, otherwise inner spans would spill across grid
-        // tracks and misalign every column to the right.
-        //
-        // Per SME 2026-06-07: only show delta on PUSH laps (= active
-        // attempts), AND only when the driver has at least one timed
-        // lap on the board THIS session (= a reference for the delta
-        // to be meaningful).
-        // lapPrediction {lap, delta (ms, negative), placesGained}. The
-        // server only emits it for an improving PUSH lap, with the position
-        // gain already computed (no client-side rank math needed).
+        // Render only — lap_prediction (server, P/Q) computes everything. Payload:
+        // { lap, projectedMs, improving, predictedPos, posColour }. On a PUSH lap shows the
+        // PROJECTED lap time (to 0.1 s) + predicted position, both coloured by the band the
+        // projected time earns when improving, WHITE when not. (card Z4PfDRry)
         const p = state.prediction[num];
-        if (!p || p.delta === undefined || p.delta === null) {
-            return '<span class="pred"></span>';
-        }
-        // Hide in the pits (status authority — lapCls can lag the transition).
-        // Applies to both the live prediction and the observed result.
-        if (state.status[num] === 'PIT') {
-            return '<span class="pred"></span>';
-        }
-        // The LIVE prediction (observed=false) renders only during a PUSH lap
-        // with a reference lap. The OBSERVED result (observed=true) is the just-
-        // completed lap's actual outcome and shows regardless of current class
-        // (cards 62/67).
-        if (!p.observed) {
-            if ((state.lapCls[num] || {}).status !== 'PUSH') {
-                return '<span class="pred"></span>';
-            }
-            const driverEntry = state.driverData[num] || {};
-            const hasReference = Boolean(driverEntry.bestLap)
-                || (state.lapTimes[num] && Object.keys(state.lapTimes[num]).length > 0);
-            if (!hasReference) {
-                return '<span class="pred"></span>';
-            }
-        }
-        // Positions gained: green up-triangle + WHITE count, right-aligned.
-        const posHtml = (p.placesGained != null && p.placesGained > 0)
-            ? `<span class="pred-pos-gain"><span class="pred-pos-arrow">&#9650;</span>`
-              + `<span class="pred-pos-num">${p.placesGained}</span></span>`
-            : '';
-        // On completion (observed) only the positions gained are shown — the delta
-        // time is dropped, but its slot is kept (empty) so the positions stay in
-        // the same fixed column position as during the live projection.
-        if (p.observed) {
-            return `<span class="pred"><span class="pred-delta"></span>${posHtml}</span>`;
-        }
-        // Live projection: delta (0.1s) on the left, positions gained on the right.
-        const deltaSec = p.delta / 1000;
-        const sign = deltaSec < 0 ? '−' : '+';
-        const deltaText = `${sign}${Math.abs(deltaSec).toFixed(1)}`;
-        const deltaCls = deltaSec < 0 ? 'pred-delta-neg' : 'pred-delta-pos';
-        return `<span class="pred">`
-            + `<span class="pred-delta ${deltaCls}">${deltaText}</span>`
-            + posHtml
-            + `</span>`;
+        // On 'lapEnd' clear the forecast (the driver's actual lap time takes over). (user 2026-07-15)
+        if (!p || p.status === 'lapEnd' || (p.projectedMs == null && p.predictedPos == null)) return '<span class="pred"></span>';
+        const col = p.posColour ? ` c-${p.posColour}` : '';
+        const projHtml = p.projectedMs != null
+            ? `<span class="pred-proj${col}">${formatLapTimeOneDecimal(p.projectedMs)}</span>`
+            : `<span class="pred-proj${col}">-:--.-</span>`;   // no reference yet → placeholder
+        const posHtml = p.predictedPos != null
+            ? `<span class="pred-pos${col}">P${p.predictedPos}</span>` : '';
+        return `<span class="pred">${projHtml}${posHtml}</span>`;
     }
 
     function formatLapTimeOneDecimal(ms) {
@@ -976,46 +804,46 @@
     function gapCell(num) {
         const e = state.driverData[num] || {};
         const txt = e.gap || '';
-        if (!txt) return '<span class="gap gap-empty">+-.---</span>';
-        const cls = e.gapIsRed ? 'gap gap-red' : 'gap';
-        return `<span class="${cls}">${txt}</span>`;
-    }
-
-    function penaltiesCell(num) {
-        const e = state.driverData[num] || {};
-        const items = [];
-        if (e.underInvestigation) items.push('<span class="pen pen-investigation">⚠</span>');
-        if (e.penalty) items.push(`<span class="pen pen-${(e.penalty.type || '').toLowerCase()}">${e.penalty.label || e.penalty}</span>`);
-        if (e.trackLimitsWarning) items.push('<span class="pen pen-tl">TL</span>');
-        if (e.blackFlag) items.push('<span class="pen pen-black">BLK</span>');
-        return `<span class="pens">${items.join('')}</span>`;
+        if (!txt) return '<span class="gap c-empty">+-.---</span>';
+        // Eliminated (quali): gap is the frozen bubble gap, shown full white.
+        if (state.eliminated && state.eliminated.has(num)) {
+            return `<span class="gap c-white">${txt}</span>`;
+        }
+        // Elimination zone → red (red is reserved for the zone only).
+        if (e.gapIsRed) return `<span class="gap c-red">${txt}</span>`;
+        // P/Q + practice: server-emitted Δ-to-P1 band (blue/green/yellow/orange;
+        // red is reserved for the elimination zone above). atcmh1cL.
+        const band = e.gapBand ? ` c-${e.gapBand}` : '';
+        return `<span class="gap${band}">${txt}</span>`;
     }
 
     function lapCountCell(num) {
         const t = state.timing[num] || {};
-        // Lap count = the authoritative NoL-based current lap
-        // (driverLaps.currentLap, stored as t.lap). NOT max(lapTimes key):
-        // in P/Q the highest TIMED lap is currentLap-1, so once the first lap
-        // time arrived the count regressed (e.g. COL 1→2→1, I10). currentLap is
-        // monotonic and already session-correct.
+        // Lap count = the authoritative NoL-based current lap (driverLaps.currentLap,
+        // stored as t.lap). (laps-down colour was client-derived → removed; the
+        // server will emit the lap-counter colour. atcmh1cL)
         const n = t.lap || 0;
         return `<span class="lap-count">${n || '0'}</span>`;
     }
 
     function gapOrLapForRaceP1(num, position) {
-        if (position === 1) {
-            return `<span class="gap p1-lap">L${state.currentLap || ''}</span>`;
-        }
         const e = state.driverData[num] || {};
-        const t = e.gapTrend === 'green' ? ' gap-trend-green'
-                : e.gapTrend === 'yellow' ? ' gap-trend-yellow' : '';
+        if (position === 1) {
+            // Leader's lap comes from the timing feed (driverGap = "LAP N") — the official
+            // source — not the raceLaps counter. (per SME 2026-07-12)
+            return `<span class="gap p1-lap">${e.gap || ''}</span>`;
+        }
+        // 7-colour lap-over-lap trend (server-computed): purple/blue/green (catching)
+        // white (flat) yellow/orange/red (dropping back). (t46cHyov)
+        const t = e.gapTrend ? ` c-${e.gapTrend}` : '';
         return `<span class="gap${t}">${e.gap || ''}</span>`;
     }
 
     function intervalCell(num) {
         const e = state.driverData[num] || {};
-        const t = e.intTrend === 'green' ? ' int-trend-green'
-                : e.intTrend === 'yellow' ? ' int-trend-yellow' : '';
+        // 7-colour battle trend (server-computed): closing green→blue→purple,
+        // opening (any band) yellow, white out of range. (t46cHyov)
+        const t = e.intTrend ? ` c-${e.intTrend}` : '';
         return `<span class="interval${t}">${e.interval || ''}</span>`;
     }
 
@@ -1031,139 +859,86 @@
         if (elim) cls.push('knocked-out');
         if (isDriverDSQ(num)) cls.push('dsq');
 
-        let cols = '';
-        cols += `<span class="rank">${idx + 1}</span>`;
-        cols += `<span class="driver-color" style="--team-color:${drv.color}"></span>`;
-        cols += `<span class="driver-tla">${drv.tla}</span>`;
-
-        // Canonical column order (all session types):
-        //   ... | mini-sectors | sectors | lap time | <session tail>
+        // Columns are joined by col-spacers whose WIDTH comes from the grid template
+        // (base unit 3px: 1u/2u/3u = 3/6/9px). Row order + per-column spacing are the
+        // grid tracks in standings.css — the two MUST stay in sync (content track,
+        // spacer track, content track, …). Start block: rank·colour·TLA·number·status.
+        const style = `style="--team-color:${drv.color}"`;
+        const stt = statusCell(num);
+        const sec = sectorCells(num);                    // [S1, S2, S3]
+        const idStart = [
+            `<span class="rank">${idx + 1}</span>`,
+            `<span class="driver-color" ${style}></span>`,
+            `<span class="driver-tla">${drv.tla}</span>`,
+            `<span class="driver-num">${num}</span>`,
+            `<span class="status ${stt.cls}">${stt.text}</span>`,
+        ];
+        // End block MIRRORED (reversed): TLA · colour · rank. No car number here.
+        const idEnd = [
+            `<span class="driver-tla driver-tla-end">${drv.tla}</span>`,
+            `<span class="driver-color driver-color-end" ${style}></span>`,
+            `<span class="rank rank-end">${idx + 1}</span>`,
+        ];
+        const mini = `<span class="segments">${segmentBarsCell(num)}</span>`;
+        const laps = lapCountCell(num);
+        let mid;
         if (IS_RACE) {
-            // (Penalties column removed — penalty / under-investigation
-            // indicator is now layered on the status badge itself.)
-            const stt = statusCell(num);
-            cols += `<span class="status ${stt.cls}">${stt.text}</span>`;
-            cols += gapOrLapForRaceP1(num, idx + 1);
-            cols += '<span class="col-spacer"></span>';
-            cols += intervalCell(num);
-            cols += `<span class="segments">${segmentBarsCell(num)}</span>`;
-            cols += sectorCells(num);
-            cols += lastLapCell(num);
-            cols += bestLapCell(num);
-            // Spacer column — visually separates best-lap from the
-            // tyre history (matches the spacing between lap-time and
-            // best-lap).
-            cols += '<span class="col-spacer"></span>';
-            cols += `<span class="tyres">${tyreCell(num, false)}</span>`;
+            mid = [gapOrLapForRaceP1(num, idx + 1), intervalCell(num), lastLapCell(num),
+                   sec[0], sec[1], sec[2], mini, bestLapCell(num),
+                   `<span class="tyres">${tyreCell(num)}</span>`, laps];
         } else if (IS_QUALI) {
-            const stt = statusCell(num);
-            cols += `<span class="status ${stt.cls}">${stt.text}</span>`;
-            cols += bestLapCell(num);
-            cols += gapCell(num);
-            cols += `<span class="segments">${segmentBarsCell(num)}</span>`;
-            cols += sectorCells(num);
-            cols += lastLapCell(num);
-            cols += predictionCell(num);
-            cols += `<span class="tyres">${tyreCell(num, true)}</span>`;
+            mid = [bestLapCell(num), gapCell(num), lastLapCell(num), predictionCell(num),
+                   sec[0], sec[1], sec[2], mini,
+                   `<span class="tyres">${tyreCell(num)}</span>`, laps];
         } else {
-            // Practice
-            const stt = statusCell(num);
-            cols += `<span class="status ${stt.cls}">${stt.text}</span>`;
-            cols += bestLapCell(num);
-            cols += gapCell(num);
-            cols += `<span class="segments">${segmentBarsCell(num)}</span>`;
-            cols += sectorCells(num);
-            cols += lastLapCell(num);
-            cols += `<span class="tyres">${tyreCell(num, false)}</span>`;
+            mid = [bestLapCell(num), gapCell(num), lastLapCell(num),
+                   sec[0], sec[1], sec[2], mini,
+                   `<span class="tyres">${tyreCell(num)}</span>`, laps];
         }
-
-        // Laps column + trailing spacer — all session types. Quali shows
-        // the current tyre in a narrower tyre column but still shows the
-        // lap count; each grid template includes the matching Laps +
-        // laps-end-spacer tracks.
-        cols += lapCountCell(num);
-        cols += '<span class="col-spacer"></span>';
-
-        // Driver colour + TLA mirrored at the END of the row so each
-        // driver is easy to identify regardless of how wide / scrolled
-        // the row is.
-        cols += `<span class="driver-color driver-color-end" style="--team-color:${drv.color}"></span>`;
-        cols += `<span class="driver-tla driver-tla-end">${drv.tla}</span>`;
-
+        // Join columns with spacer spans; each spacer's WIDTH is a gap track in the
+        // grid template (content track, gap track, …). Tune gaps in CSS; the spans
+        // are static. Row = width:max-content, so growing a gap grows the row.
+        const cols = idStart.concat(mid, idEnd).join('<span class="col-spacer"></span>');
         return `<div class="${cls.join(' ')}" data-driver="${num}">${cols}</div>`;
     }
 
     // Header — column count must match the row's grid template for that
     // session type (see standings.css). Driver-identification cells get
     // no header text (rank/colour/tla/status are self-explanatory).
-    function buildHeader() {
-        // Header order MUST match buildRow's column order.
-        // Canonical: ... | Mini | S1 | S2 | S3 | Lap time | <tail>
-        // Common left identifier-block header (= rank empty, "Driver"
-        // spanning colour+tla, status empty). Explicit grid-column on
-        // the Driver span keeps subsequent spans flowing into col 4+.
-        const idHdr =
-            '<span></span>' +                                        /* rank */
-            '<span style="grid-column: 2 / span 2">Driver</span>' +  /* color + tla */
-            '<span></span>';                                         /* status */
+    // One sector's header cell: a current↔best toggle (S{n} / BS{n}). Defaults to
+    // current; the active button is white, the other grey (shared .tile-btn style).
+    function sectorHeaderCell(i) {
+        const best = (state.sectorMode || [])[i];
+        return '<span class="sec-toggle">' +
+            `<button class="tile-btn sec-btn${best ? '' : ' active'}" data-sec="${i}" data-best="0">S${i + 1}</button>` +
+            `<button class="tile-btn sec-btn${best ? ' active' : ''}" data-sec="${i}" data-best="1">BS${i + 1}</button>` +
+            '</span>';
+    }
 
+    function buildHeader() {
+        // Mirrors buildRow's parts exactly (same order + count) — the grid interleaves
+        // a spacer track after each. Identifier cells carry no label; "Driver" sits
+        // over the TLA. Sector headers are the current↔best toggles.
+        const e = '<span></span>';
+        const idStart = [e, e, '<span>Driver</span>', e, e];   // rank·color·TLA·num·status
+        const idEnd = [e, e, e];                               // tla·color·rank
+        const sec = [sectorHeaderCell(0), sectorHeaderCell(1), sectorHeaderCell(2)];
+        const mini = '<span>Mini-sectors</span>';
+        const laps = '<span>Laps</span>';
+        let mid;
         if (IS_RACE) {
-            return (
-                '<div class="driver-header">' +
-                idHdr +
-                '<span>Gap</span>' +
-                '<span></span>' + /* gap-int-spacer */
-                '<span>Int</span>' +
-                '<span>Mini-sectors</span>' +
-                '<span>S1</span>' +
-                '<span>S2</span>' +
-                '<span>S3</span>' +
-                '<span>Lap time</span>' +
-                '<span>Best lap</span>' +
-                '<span class="col-spacer"></span>' +
-                '<span>Tyres</span>' +
-                '<span>Laps</span>' +
-                '<span></span>' + /* laps-end-spacer */
-                '<span></span><span></span>' + /* color-end + tla-end */
-                '</div>'
-            );
+            mid = ['<span>Gap</span>', '<span>Int</span>', '<span>Lap time</span>',
+                   sec[0], sec[1], sec[2], mini, '<span>Best lap</span>',
+                   '<span>Tyres</span>', laps];
+        } else if (IS_QUALI) {
+            mid = ['<span>Best lap</span>', '<span>Gap</span>', '<span>Lap time</span>', '<span>Forecast</span>',
+                   sec[0], sec[1], sec[2], mini, '<span>Tyre</span>', laps];
+        } else {
+            mid = ['<span>Best lap</span>', '<span>Gap</span>', '<span>Lap time</span>',
+                   sec[0], sec[1], sec[2], mini, '<span>Tyres</span>', laps];
         }
-        if (IS_QUALI) {
-            return (
-                '<div class="driver-header">' +
-                idHdr +
-                '<span>Best lap</span>' +
-                '<span>Gap</span>' +
-                '<span>Mini-sectors</span>' +
-                '<span>S1</span>' +
-                '<span>S2</span>' +
-                '<span>S3</span>' +
-                '<span>Lap time</span>' +
-                '<span>Delta</span>' +
-                '<span>Tyre</span>' +
-                '<span>Laps</span>' +
-                '<span></span>' + /* laps-end-spacer */
-                '<span></span><span></span>' + /* color-end + tla-end */
-                '</div>'
-            );
-        }
-        // Practice.
-        return (
-            '<div class="driver-header">' +
-            idHdr +
-            '<span>Best lap</span>' +
-            '<span>Gap</span>' +
-            '<span>Mini-sectors</span>' +
-            '<span>S1</span>' +
-            '<span>S2</span>' +
-            '<span>S3</span>' +
-            '<span>Lap time</span>' +
-            '<span>Tyres</span>' +
-            '<span>Laps</span>' +
-            '<span></span>' + /* laps-end-spacer */
-            '<span></span><span></span>' + /* color-end + tla-end */
-            '</div>'
-        );
+        const cells = idStart.concat(mid, idEnd).join('<span class="col-spacer"></span>');
+        return '<div class="driver-header">' + cells + '</div>';
     }
 
     // ─── Tooltip ───
@@ -1211,6 +986,18 @@
     function _setupTooltip(container) {
         if (container._stTooltipBound) return;
         container._stTooltipBound = true;
+        // Per-sector header toggle (S{n} ↔ BS{n}). Delegated so it survives the
+        // wholesale re-render; each sector toggles current↔best independently.
+        container.addEventListener('click', (e) => {
+            const btn = e.target.closest('.tile-btn[data-sec]');
+            if (btn) {
+                const i = parseInt(btn.dataset.sec, 10);
+                const best = btn.dataset.best === '1';
+                const mode = state.sectorMode || (state.sectorMode = [false, false, false]);
+                if (mode[i] !== best) { mode[i] = best; render(); }
+                return;
+            }
+        });
         container.addEventListener('mousemove', (e) => {
             _mouseX = e.clientX;
             _mouseY = e.clientY;

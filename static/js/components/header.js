@@ -26,6 +26,7 @@
         raceCurrentLap: null,
         raceTotalLaps: null,
         raceStarted: false,
+        scheduledStartMs: null,// scheduled session start (UTC ms) — SYNC TO Lap 1 window
         gmtOffset: null,       // parsed timedelta in ms
         gmtOffsetStr: null,    // raw string e.g. "11:00:00"
         qualifyingPart: 0,
@@ -70,6 +71,19 @@
         clockAnimId: null,
     };
 
+    // SYNC TO: per-lap start offset (ms), recorded as raceLaps arrive — the
+    // race markers seek to these. Lap starts are immutable, so keep the first
+    // (earliest) offset seen for each lap.
+    const _lapOffset = {};
+
+    // SYNC TO click → seek playback to the marker stored on the button.
+    window.syncSeek = function () {
+        const btn = document.getElementById('syncBtn');
+        if (btn && btn._syncOffset != null && typeof seekToOffset === 'function') {
+            seekToOffset(btn._syncOffset);
+        }
+    };
+
     // =========================================================================
     // Session Info
     // =========================================================================
@@ -82,6 +96,12 @@
         if (data.gmtOffset) {
             state.gmtOffsetStr = data.gmtOffset;
             state.gmtOffset = parseGmtOffset(data.gmtOffset);
+        }
+        // Scheduled session start (track-local StartDate → UTC via gmtOffset).
+        // Drives the SYNC TO "Lap 1 from scheduled-start + 1 min" window (86BYppiU).
+        if (data.startDate && state.gmtOffset != null) {
+            const t = Date.parse(data.startDate.replace(/Z$/, '') + 'Z');
+            if (!isNaN(t)) state.scheduledStartMs = t - state.gmtOffset;
         }
         // Lights out → switch the race/sprint badge to the live lap counter.
         if (data.sessionStatus === 'Started' && !state.raceStarted) {
@@ -188,6 +208,91 @@
         state.clockAnimId = requestAnimationFrame(updateClocks);
     }
 
+    // ── SYNC TO markers ──
+    // Two buttons that seek playback to the previous / next marker. Markers are
+    // context-dependent: pre/post-session → wall-clock whole minutes (hh:MM);
+    // P/Q running → session-clock whole minutes (MM:ss); race → lap starts.
+    function fmtHHMM(ms) { return new Date(ms).toUTCString().slice(17, 22); }
+    function fmtMMSS(sec) {
+        sec = Math.max(0, Math.round(sec));
+        const m = Math.floor(sec / 60), s = sec % 60;
+        return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+    function updateSyncButtons() {
+        const btn = document.getElementById('syncBtn');
+        const modeEl = document.getElementById('syncToMode');
+        if (!btn || !messageBus.clockTime || !messageBus.startTime) return;
+
+        const sType = (window.SESSION_CONFIG && window.SESSION_CONFIG.sessionType) || '';
+        const isRaceLike = (sType === 'race' || sType === 'sprint');
+        const startMs = messageBus.startTime.getTime();
+        const curOffset = messageBus.getCurrentOffset();   // seconds
+
+        // The sync marker. Normally the PREVIOUS boundary at/before the playhead;
+        // the race "Lap 1" marker is the exception — it targets lights-out and may
+        // be AHEAD of the playhead (forward sync to a TV that's ahead). (86BYppiU)
+        let mode = 'CLOCK', label = null, offset = null, allowForward = false;
+
+        // Lights-out offset = the first GREEN track-status event (= the moment
+        // SessionStatus becomes Started). It's in state.events from connect on a
+        // replay, so Lap 1 is known even before the playhead reaches it — no
+        // reliance on the pre-race LapCount keyframe.
+        let lightsOutSec = null;
+        if (isRaceLike && state.events) {
+            const green = state.events.find((ev) => typeof ev.offset_ms === 'number'
+                && String(typeof ev.data === 'string' ? ev.data
+                          : (ev.data && ev.data.event) || '').toUpperCase() === 'GREEN');
+            if (green) lightsOutSec = green.offset_ms / 1000;
+        }
+        const preRaceLap1 = isRaceLike && !state.raceStarted && state.scheduledStartMs != null
+            && messageBus.clockTime.getTime() >= state.scheduledStartMs + 60000;
+        const racingLap1 = isRaceLike && state.raceStarted
+            && (state.raceCurrentLap == null || state.raceCurrentLap <= 1);
+
+        if (preRaceLap1 || racingLap1) {
+            // Race Lap 1: jump to lights-out. Forward-seekable — it may be ahead
+            // of the playhead (the pre-race window, or a TV ahead of the data).
+            mode = 'LAP';
+            label = 'Lap 1';
+            offset = lightsOutSec;
+            allowForward = true;
+        } else if (isRaceLike && state.raceStarted && state.raceCurrentLap) {
+            mode = 'LAP';
+            const cl = state.raceCurrentLap;   // start of the current lap
+            label = `Lap ${cl}`;
+            offset = _lapOffset[cl] != null ? _lapOffset[cl] / 1000 : null;
+        } else if (state.clockStatus === 'play' && state.firstNonZeroSeen
+                   && state.sessionTimeMs != null) {
+            // P/Q running: the session-clock whole minute just crossed (the clock
+            // counts DOWN, so that's slightly MORE remaining than now).
+            mode = 'SESSION';
+            let remMs = state.sessionTimeMs;
+            if (state.sessionTimeAnchorMs != null) {
+                remMs = state.sessionTimeMs - (curOffset * 1000 - state.sessionTimeAnchorMs);
+            }
+            const remSec = Math.max(0, remMs / 1000);
+            const markSec = Math.ceil(remSec / 60) * 60;    // boundary just crossed
+            label = fmtMMSS(markSec);
+            offset = curOffset + (remSec - markSec);         // ≤ curOffset
+        } else {
+            // Pre/post session: the wall-clock whole minute just crossed.
+            mode = 'CLOCK';
+            const floorMs = Math.floor(messageBus.clockTime.getTime() / 60000) * 60000;
+            label = fmtHHMM(floorMs + (state.gmtOffset || 0));
+            offset = (floorMs - startMs) / 1000;
+        }
+
+        if (modeEl) modeEl.textContent = mode;
+        // Enabled when the marker is a valid offset. Normally it must be at/before
+        // the playhead (a past boundary); the Lap 1 marker may be AHEAD (forward
+        // sync — the seek clamps to the data edge server-side).
+        const maxOffset = allowForward ? Infinity : curOffset + 0.5;
+        const ok = label != null && offset != null && offset >= 0 && offset <= maxOffset;
+        btn.textContent = label != null ? label : '--';
+        btn.disabled = !ok;
+        btn._syncOffset = ok ? offset : null;
+    }
+
     function updateClocks() {
         // The track time and the session-time countdown are both derived
         // from the playback clock (messageBus) so they respond correctly
@@ -235,6 +340,8 @@
         // reflects buffering / seeking transitions promptly.
         updateAudioStatusLight();
 
+        updateSyncButtons();
+
         state.clockAnimId = requestAnimationFrame(updateClocks);
     }
 
@@ -247,14 +354,6 @@
     // the scrubber maps the audible timeline to roughly the same span
     // as the data scrubber. (Date.now() − startUtc was wrong for past
     // replays — gave days-long denominators and a stationary dot.)
-    function audioPlayableDuration() {
-        const audio = state.audio.element;
-        if (!audio) return 0;
-        if (isFinite(audio.duration) && audio.duration > 0) return audio.duration;
-        if (state.duration > 0) return state.duration;
-        return 0;
-    }
-
     function formatSessionTime(ms, format) {
         const totalSec = Math.floor(ms / 1000);
         const h = Math.floor(totalSec / 3600);
@@ -284,20 +383,32 @@
         finished: 'white',
     };
 
+    // Suppress the change-blink during a restore/seek re-emit (not a live
+    // transition), same pattern as _radioRestoring below. (HBAKIcye)
+    let _tsRestoring = false;
     function handleTrackStatus(data) {
         if (!data || typeof data !== 'object') return;
 
         const color = TRACK_STATUS_COLOR[data.status] || 'white';
         const text = data.message || '--';
+        const changed = (text !== state.trackStatusText || color !== state.trackStatusColor);
 
         state.trackStatusText = text;
         state.trackStatusColor = color;
 
         const el = document.getElementById('trackStatus');
         const textEl = document.getElementById('trackStatusText');
-        if (el) el.className = `track-status ${color}`;
+        if (el) el.className = `track-status ${color}`;   // resets classes (clears ts-blink)
         if (textEl) textEl.textContent = text;
+        // Blink twice on a genuine status change to draw the eye. Skip the
+        // restore/seek re-emit so a replay seek doesn't flash. (HBAKIcye)
+        if (el && changed && !_tsRestoring) {
+            void el.offsetWidth;            // reflow so re-adding restarts the animation
+            el.classList.add('ts-blink');
+        }
     }
+    messageBus.on('state:reset', () => { _tsRestoring = true; });
+    messageBus.on('state:seek-complete', () => { _tsRestoring = false; });
 
     // =========================================================================
     // Playback Controls
@@ -332,7 +443,12 @@
         //    a fixed event offset maps to a new x — the markers must be
         //    re-projected (card 79). A finished replay has a fixed duration, so
         //    this is a no-op once the build completes.
-        if (state.events && (messageBus.isLive || state.duration !== prevDuration)) {
+        // Re-render markers when the coordinate system moved (duration grew — live edge or
+        // replay build) OR a hidden event just crossed the playhead (no-spoiler reveal).
+        const visN = (state.events || []).reduce(
+            (n, ev) => n + (ev.offset_ms <= state.offset * 1000 ? 1 : 0), 0);
+        if (state.events && (state.duration !== prevDuration || visN !== state._lastVisN)) {
+            state._lastVisN = visN;
             renderEventMarkers(state.events);
         }
         startClockAnimation();
@@ -404,7 +520,7 @@
         // RED / SC / VSC / CHEQUERED). T1 = first such marker (≈ session/race
         // green), T2 = chequered (or the last marker). The middle section spans
         // T1→T2; pre-T1 and post-T2 are compressed into the side margins.
-        let chequered = null, firstVisible = null, lastVisible = null;
+        let chequered = null, firstVisible = null;
         for (const ev of state.events || []) {
             if (typeof ev.offset_ms !== 'number') continue;
             const d = typeof ev.data === 'string' ? ev.data : (ev.data?.event || '');
@@ -412,20 +528,27 @@
             if (upper === 'CHEQUERED')
                 chequered = (chequered === null) ? ev.offset_ms : Math.max(chequered, ev.offset_ms);
             if (firstVisible === null || ev.offset_ms < firstVisible) firstVisible = ev.offset_ms;
-            if (lastVisible === null || ev.offset_ms > lastVisible) lastVisible = ev.offset_ms;
         }
         const t1 = firstVisible;
-        const t2 = chequered != null ? chequered : lastVisible;
-        if (t1 == null || t2 == null || t2 <= t1) return [[0, 0], [end, 100]];
+        if (t1 == null) return [[0, 0], [end, 100]];
 
+        // Region 2 ends at the CHEQUERED flag (real session end) — only a finished session
+        // has a post-session tail to compress into region 3. No-spoiler: use the flag only
+        // once the playhead has actually REACHED it; until then (still building, live
+        // before the end, or simply not there yet) region 2 runs to the growing edge, so
+        // the scrubber keeps resizing and the end position isn't revealed early. (Previously
+        // the last discovered event capped region 2, freezing a transient replay's scrubber
+        // between events — that rule was only valid for fully-built DBs.) (user 2026-07-08)
+        const t2 = (chequered != null && chequered <= state.offset * 1000) ? chequered : null;
         const Y = Math.max(0, Math.min(t1 - FIVE_MIN_MS, end));
-        const Zraw = t2 + FIVE_MIN_MS;
-        const Z = Math.min(Zraw, end);
-        const hasR3 = Zraw < end - 1;
-        const rightPct = hasR3 ? (100 - sidePct) : 100;
         const pts = [[0, 0]];
         if (Y > 0) pts.push([Y, sidePct]);
-        if (Z > Y) pts.push([Z, rightPct]);
+        if (t2 != null && t2 > t1) {
+            const Zraw = t2 + FIVE_MIN_MS;
+            const Z = Math.min(Zraw, end);
+            const rightPct = (Zraw < end - 1) ? (100 - sidePct) : 100;
+            if (Z > Y) pts.push([Z, rightPct]);
+        }
         if (pts[pts.length - 1][0] < end) pts.push([end, 100]);
         return pts;
     }
@@ -525,12 +648,13 @@
         // user-spec'd: 0.5 px dark stroke on each SVG handles the
         // visual separation).
         for (const ev of events) {
-            // No-spoiler rule: in LIVE, never reveal an event that is ahead
-            // of the current playback point (even if the data has already
-            // arrived because playback is lagging the live edge).
-            if (messageBus.isLive && ev.offset_ms > state.offset * 1000) continue;
             const pct = offsetToPct(ev.offset_ms);
             if (pct < 0 || pct > 100) continue;
+            // No-spoiler rule (live + replay): ALWAYS inject every marker (so the scrubber's
+            // full extent + limits are stable), but hide the ones ahead of the playhead with a
+            // CSS class. They reveal progressively as the playhead crosses them (handleClockUpdate
+            // re-renders on that). (user 2026-07-13)
+            const sp = ev.offset_ms > state.offset * 1000 ? ' evt-spoiler' : '';
 
             const d = typeof ev.data === 'string' ? ev.data : (ev.data?.event || ev.data || '');
             const upper = String(d).toUpperCase();
@@ -553,15 +677,15 @@
                           + `<path d="M1 3 Q4 1 8 3 T15 3 V13 Q12 15 8 13 T1 13 Z"/>`
                           + `</svg>`;
             if (upper === 'CHEQUERED') {
-                marker = `<div class="scrubber-flag chequered" style="left:${pct}%" title="${title}" ${dataAttrs}>&#127937;</div>`;
+                marker = `<div class="scrubber-flag chequered${sp}" style="left:${pct}%" title="${title}" ${dataAttrs}>&#127937;</div>`;
             } else if (upper === 'RED' || upper === 'RED FLAG') {
-                marker = `<div class="scrubber-flag red" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
+                marker = `<div class="scrubber-flag red${sp}" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
             } else if (upper.includes('SC') || upper.includes('VSC') || upper.includes('SAFETY')) {
-                marker = `<div class="scrubber-flag yellow" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
+                marker = `<div class="scrubber-flag yellow${sp}" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
             } else if (upper === 'GREEN') {
-                marker = `<div class="scrubber-flag green" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
+                marker = `<div class="scrubber-flag green${sp}" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
             } else {
-                marker = `<div class="scrubber-event" style="left:${pct}%;background:#888" title="${title}" ${dataAttrs}></div>`;
+                marker = `<div class="scrubber-event${sp}" style="left:${pct}%;background:#888" title="${title}" ${dataAttrs}></div>`;
             }
 
             html += marker;
@@ -615,6 +739,23 @@
         const sessionName = new URLSearchParams(window.location.search).get('session');
         if (!sessionName) {
             if (controls) controls.classList.add('disabled');
+            return;
+        }
+
+        // Reconnect (server/capture restart): the audio element and its byte-level
+        // fetch survive — the concat file extends seamlessly and the MSE poll loop
+        // retries through the outage. Only the SEGMENT MAP changes, so refresh it
+        // in place (a new segment lands at its own PDT anchor) and keep playing.
+        // Preserve the user's manual delay (offsetSeconds) + the live muxer length.
+        // Single vs multi is the same code path — the map is authoritative. (hwu52Zqy)
+        if (state.audio.element) {
+            if (audioInfo.start_utc) {
+                state.audio.startUtc = new Date(audioInfo.start_utc.replace('Z', '+00:00'));
+            }
+            state.audio.segments = (audioInfo.segments || [])
+                .filter(s => s.start_utc && s.duration > 0)
+                .map(s => ({ startMs: new Date(s.start_utc.replace('Z', '+00:00')).getTime(),
+                             duration: s.duration }));
             return;
         }
 
@@ -828,7 +969,7 @@
             }
             cum += dur;
         }
-        return cum - off;                                  // past the last segment → clamp to end
+        return null;                                       // past the last segment → no audio here
     }
 
     // Reload audio at the offset that matches the current data clock.
@@ -919,6 +1060,15 @@
         return audio.currentTime - (targetSec - fileOffset);
     }
     window.f1audioSyncDrift = audioSyncDrift;
+
+    // Status footer (card 4N7VgVlf): is there audio CONTENT at the current
+    // playhead? clockToAudioSec returns null in inter-segment gaps and outside
+    // the capture window, so the footer can show the real bitrate vs 0.
+    window.f1audioAvailableNow = function () {
+        if (!state.audio.element || !state.audio.isReady || !state.audio.startUtc
+                || !messageBus.clockTime) return false;
+        return clockToAudioSec(messageBus.clockTime.getTime()) !== null;
+    };
 
     function reloadAudioAtOffset(targetSec) {
         const audio = state.audio.element;
@@ -1104,38 +1254,35 @@
     // updateClocks. Green = audio actually playing AND has data ready;
     // yellow = seeking or buffering; red = outside the audio window
     // (no startUtc, target before audio start, or past audio end).
+    // Audio status light (card HCx1JC3f), user-defined semantics:
+    //   GREEN   — audio exists, playing, AND in sync (|drift| ≤ SYNC_DRIFT_S).
+    //   YELLOW  — audio exists, playing/loading, but NOT in sync yet
+    //             (drifted, or buffering/seeking/starting).
+    //   RED     — audio should be playing but is unavailable / out of range / corrupt.
+    //   (off)   — playback is deliberately paused (user or data) — not a failure.
+    const SYNC_DRIFT_S = 5;   // |audio − data clock| within this = in sync
     function updateAudioStatusLight() {
         const light = document.getElementById('audioStatusLight');
         if (!light) return;
         const audio = state.audio.element;
         let cls = '';
-        if (!audio || !state.audio.isReady || !state.audio.startUtc) {
-            cls = 'red';
-        } else if (messageBus.clockTime) {
-            const canSeekL = audio.seekable && audio.seekable.length > 0
-                && audio.seekable.end(audio.seekable.length - 1) > 0;
-            const targetSec = (messageBus.clockTime.getTime()
-                               - state.audio.startUtc.getTime()) / 1000
-                              - (state.audio.offsetSeconds || 0);
-            const dur = isFinite(audio.duration) && audio.duration > 0
-                ? audio.duration : audioPlayableDuration();
-            // Past-end-of-file red only applies to SEEKABLE replay
-            // streams where audio.duration = full file length. For
-            // non-seekable (= live chunked), audio.duration is the
-            // CURRENT fetch's length (= much smaller than session
-            // targetSec), so the comparison would always trip red.
-            // Live is "in range" by definition until the session ends.
-            if (targetSec < 0 || (canSeekL && dur > 0 && targetSec > dur)) {
-                cls = 'red';
-            } else if (audio.seeking || audio.readyState < 3 /*HAVE_FUTURE_DATA*/) {
-                cls = 'yellow';
-            } else if (audioShouldPlay() && !audio.paused) {
-                cls = 'green';
-            } else if (audioShouldPlay() && audio.paused) {
-                cls = 'yellow';  // wants to play but isn't yet
-            } else {
-                cls = '';  // user-paused: no light
-            }
+
+        if (!audioShouldPlay()) {
+            cls = '';   // paused on purpose (user or data) → no light
+        } else if (!audio || !state.audio.isReady || !state.audio.startUtc
+                   || !messageBus.clockTime) {
+            cls = 'red';   // should be playing but the audio stream is missing / not ready
+        } else if (clockToAudioSec(messageBus.clockTime.getTime()) === null) {
+            // No audio CONTENT at this position — before the audio window, an
+            // inter-segment gap, or past the end of the file. Benign (not a
+            // failure) → no light (HCx1JC3f + end-of-file refinement).
+            cls = '';
+        } else if (audio.paused || audio.seeking || audio.readyState < 3 /*HAVE_FUTURE_DATA*/) {
+            cls = 'yellow';   // wants to play, loading/seeking/not started → not synced yet
+        } else {
+            const drift = audioSyncDrift();
+            const inSync = drift !== null && Math.abs(drift) <= SYNC_DRIFT_S;
+            cls = inSync ? 'green' : 'yellow';   // playing: green if synced, else drifted
         }
         if (light.dataset.cls !== cls) {
             light.classList.remove('green', 'yellow', 'red');
@@ -1155,27 +1302,6 @@
         // syncAudio will be called on the next clock:update / playback
         // status; force one now so the audio element flips immediately.
         syncAudio();
-    };
-
-    // Audio-only play/pause (key: P). Toggles between 'playing' and
-    // 'paused' states; first invocation from 'sync' switches to the
-    // OPPOSITE of audio's current state.
-    window.toggleAudioPlay = function() {
-        const audio = state.audio.element;
-        if (!audio) return;
-        const wasPlaying = !audio.paused;
-        state.audio.playState = wasPlaying ? 'paused' : 'playing';
-        if (wasPlaying) {
-            audio.pause();
-        } else {
-            // If audio wasn't initialised yet, alignAudioToClock will
-            // set src + start streaming; otherwise just resume.
-            if (state.audio.startUtc) {
-                audio.play().catch(() => {});
-            }
-        }
-        updateAudioPlayButton();
-        updateAudioStatusLight();
     };
 
     // Audio-only ±N s skip (called by arrow keys when audio is playing).
@@ -1256,6 +1382,7 @@
         if (data.duration) {
             state.duration = data.duration;
             renderEventMarkers(state.events);
+            updateScrubberPosition();   // dot pct depends on the (grown) coordinate system
         }
     }
 
@@ -1266,9 +1393,20 @@
     messageBus.on('sessionInfo', handleSessionInfo);
     messageBus.on('meetingName', handleMeetingName);
     messageBus.on('sessionBadge', handleSessionBadge);
-    messageBus.on('raceLaps', (data) => {
+    messageBus.on('raceLaps', (data, offset_ms) => {
         if (!data) return;
-        if (data.currentLap != null) state.raceCurrentLap = data.currentLap;
+        if (data.currentLap != null) {
+            state.raceCurrentLap = data.currentLap;
+            // Record each lap's start offset (SYNC TO). Skip Lap 1: it has no
+            // real LapCount delta — the feed emits currentLap=1 as a pre-race
+            // keyframe ~an hour early (offset ~0), which would wrongly pin Lap 1
+            // to the session start. Lap 1's start = lights-out, set in
+            // handleSessionInfo. (86BYppiU)
+            if (offset_ms != null && data.currentLap >= 2
+                    && _lapOffset[data.currentLap] == null) {
+                _lapOffset[data.currentLap] = offset_ms;
+            }
+        }
         if (data.totalLaps != null) state.raceTotalLaps = data.totalLaps;
         renderSessionBadge();
     });

@@ -1,45 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- Background -->
-  <rect width="64" height="64" rx="8" fill="#15151e"/>
-
-  <!-- F1 Car - Top-down view -->
-
-  <!-- Rear wing -->
-  <rect x="6" y="10" width="52" height="4" rx="1" fill="#333333"/>
-
-  <!-- Rear body -->
-  <path d="M24 14 L40 14 L42 20 L22 20 Z" fill="#1a1a1a"/>
-
-  <!-- Engine cover / rear bodywork -->
-  <path d="M22 20 L42 20 L44 30 L20 30 Z" fill="#1a1a1a"/>
-
-  <!-- Sidepods - ORANGE -->
-  <path d="M10 24 L20 22 L20 38 L12 36 Z" fill="#FF8000"/>
-  <path d="M54 24 L44 22 L44 38 L52 36 Z" fill="#FF8000"/>
-
-  <!-- Cockpit opening -->
-  <ellipse cx="32" cy="32" rx="6" ry="8" fill="#15151e"/>
-
-  <!-- Halo -->
-  <path d="M28 26 L36 26 L36 28 L28 28 Z" fill="#333333"/>
-
-  <!-- Nose cone - ORANGE -->
-  <path d="M20 30 L44 30 L40 42 L24 42 Z" fill="#FF8000"/>
-  <path d="M24 42 L40 42 L36 50 L28 50 Z" fill="#FF8000"/>
-
-  <!-- Front wing - DARK GRAY -->
-  <rect x="4" y="50" width="56" height="4" rx="1" fill="#333333"/>
-  <path d="M28 50 L36 50 L36 54 L28 54 Z" fill="#FF8000"/>
-
-  <!-- Front wing endplates -->
-  <rect x="4" y="48" width="4" height="8" rx="1" fill="#333333"/>
-  <rect x="56" y="48" width="4" height="8" rx="1" fill="#333333"/>
-
-  <!-- Rear wheels -->
-  <ellipse cx="14" cy="18" rx="6" ry="3" fill="#1a1a1a"/>
-  <ellipse cx="50" cy="18" rx="6" ry="3" fill="#1a1a1a"/>
-
-  <!-- Front wheels -->
-  <ellipse cx="12" cy="46" rx="5" ry="3" fill="#1a1a1a"/>
-  <ellipse cx="52" cy="46" rx="5" ry="3" fill="#1a1a1a"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- F1Unleashed badge: solid black disc with a red ring and a light-grey "U" (for Unleashed). Transparent background. -->
+  <circle cx="12" cy="12" r="11.5" fill="#000"/>
+  <circle cx="12" cy="12" r="9.5" fill="none" stroke="#e0e0e0" stroke-width="1.5"/>
+  <text x="12" y="12" text-anchor="middle" dominant-baseline="central" font-family="Monospace" font-size="12" font-weight="bold" fill="#e0e0e0">U</text>
 </svg>

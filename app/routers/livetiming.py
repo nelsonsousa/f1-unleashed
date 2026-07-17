@@ -435,6 +435,26 @@ async def get_team_radio(session_name: str, filename: str):
     return FileResponse(str(clip), media_type="audio/mpeg", filename=filename)
 
 
+def _probe_total_duration(segments) -> float:
+    """Sum the true media duration (seconds) of the AAC segments via ffprobe.
+    Blocking (subprocess per segment) — call via asyncio.to_thread (H4)."""
+    import subprocess
+    total = 0.0
+    for seg in segments:
+        try:
+            out = subprocess.run(
+                ["ffprobe", "-v", "error",
+                 "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1",
+                 str(seg)],
+                capture_output=True, text=True, timeout=10,
+            )
+            total += float(out.stdout.strip() or 0)
+        except Exception:
+            pass
+    return total
+
+
 def _serve_audio_range(path, request: Request) -> Response:
     """Byte-range serve a (possibly growing) AAC file for the MSE client.
 
@@ -566,9 +586,11 @@ async def get_audio(session_name: str, request: Request):
     # (capture restarts) no longer break (client maps all segments, server now
     # serves all of them).
     if request.query_params.get("seekable"):
+        # Range reads pull bytes off disk (growing live files) — offload so the
+        # read doesn't stall the event loop (H4).
         if len(segments) == 1:
-            return _serve_audio_range(segments[0], request)
-        return _serve_concat_range(segments, request)
+            return await asyncio.to_thread(_serve_audio_range, segments[0], request)
+        return await asyncio.to_thread(_serve_concat_range, segments, request)
 
     # Legacy non-MSE path only: live serves just the current segment (chunked).
     # (The seekable MSE path above already handled live with all segments.)
@@ -596,7 +618,7 @@ async def get_audio(session_name: str, request: Request):
     # the avg-bitrate ?t= estimate mis-positions audio (skewed by near-silent
     # bookend segments). Falls through to the chunked path if the build fails.
     if not is_live and len(segments) > 1 and start_t == 0:
-        combined = _build_concat_aac(session_path, segments)
+        combined = await asyncio.to_thread(_build_concat_aac, session_path, segments)
         if combined:
             return FileResponse(
                 path=str(combined),
@@ -633,24 +655,10 @@ async def get_audio(session_name: str, request: Request):
                 except Exception:
                     pass
         else:
-            # Sum each segment's media duration. ffprobe is cheap (~30 ms
-            # per AAC file) and gives us the true play length, immune to
-            # the wall-clock-since-recording trap.
-            import subprocess
-            total_secs = 0.0
-            for seg in segments:
-                try:
-                    out = subprocess.run(
-                        ["ffprobe", "-v", "error",
-                         "-show_entries", "format=duration",
-                         "-of", "default=noprint_wrappers=1:nokey=1",
-                         str(seg)],
-                        capture_output=True, text=True, timeout=10,
-                    )
-                    total_secs += float(out.stdout.strip() or 0)
-                except Exception:
-                    pass
-            if total_secs <= 0:
+            # Sum each segment's true media duration via ffprobe — offloaded so the
+            # subprocesses don't stall the event loop (H4).
+            total_secs = await asyncio.to_thread(_probe_total_duration, segments)
+            if not total_secs or total_secs <= 0:
                 total_secs = None
         if total_secs and total_secs > 0 and total_bytes > 0:
             byterate = total_bytes / total_secs
@@ -748,6 +756,26 @@ async def get_pecking_order(session_name: str):
         if po:
             return po
     raise HTTPException(status_code=404, detail="No pecking order available")
+
+
+@router.get("/analysis/pit_loss_estimate/{session_name:path}")
+async def get_pit_loss_estimate(session_name: str):
+    """Return the geometric pit-stop time-loss PREDICTION for this session (the prior
+    session's accumulated FP→Q estimate — so playing the Race surfaces the quali-final
+    prediction). Low-confidence pre-race; the in-race measurement supersedes it."""
+    from app.processing import analysis_store
+    from app.analysis.pit_loss_estimate import find_prior_session
+
+    session_path = session_manager._find_session_path(session_name)
+    if not session_path or not session_path.exists():
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    prior = find_prior_session(session_path)
+    if prior:
+        est = analysis_store.load(prior, "pit_loss_estimate")
+        if est:
+            return est
+    raise HTTPException(status_code=404, detail="No pit-loss estimate available")
 
 
 @router.delete("/cached/{session_name:path}")

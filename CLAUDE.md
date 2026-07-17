@@ -11,8 +11,10 @@ Trello board (the "F1 Unleashed" board).
 
 ## Critical rules
 
-1. **Handlers receive `(data, clockTime)`** — use `clockTime.getTime()` for all
-   timing. Never use `Date.now()`.
+1. **Handlers receive `(data, offsetMs)`** — the 2nd arg is `offset_ms`, a NUMBER
+   (ms from session start), NOT a Date. Read the playback clock from the global
+   `messageBus.clockTime` (a Date); never `Date.now()`. (`.getTime()` on the 2nd
+   arg throws — it's a number.)
 2. **Only payload timestamps matter** — the only timestamp that counts is the one
    INSIDE the message payload (e.g. `Utc` in CarData.z entries, `Timestamp` in
    Position.z entries). Never use the envelope/recording timestamp for ordering
@@ -25,14 +27,18 @@ Trello board (the "F1 Unleashed" board).
    finished flags, championship, etc.) is computed in the processing pipeline and
    emitted as `display:*` / per-driver topics. The frontend should render what the
    server sends, not re-derive it.
+6. **Expose surprising results, don't fix them** — the SME identifies bugs far
+   faster than you can. When a result you don't understand appears, surface it
+   plainly (data + what's odd) and stop; do not guess-fix it. If asked to collect
+   more data, follow the instructions exactly.
 
 ## Architecture
 
 ```
 F1 SignalR (live)  ─┐
-                    ├─► SessionPreProcessor ─► transient DB ─► FastAPI (SSE) ─► browser message bus ─► tiles
+                    ├─► SessionPreProcessor ─► transient DB ─► FastAPI (WS) ─► browser message bus ─► tiles
 live.jsonl (replay)─┘   (runs processors,      (scratch file in
-                         snapshots for seek)     ./tmp, per session)
+                         1 row per change)      ./tmp, per session)
 ```
 
 - **Capture/replay share the same processors.** Live capture and replay both
@@ -42,9 +48,10 @@ live.jsonl (replay)─┘   (runs processors,      (scratch file in
   connects and deleted on disconnect (kept in DEBUG mode). On connect any
   existing scratch DB is deleted and rebuilt, so replay always runs the latest
   processor code — there is no persisted `session.db` to reprocess.
-- **Seek-safety:** each processor implements `snapshot()`/`restore()`; the player
-  restores latest-state-per-topic on seek, so client tiles must not keep
-  edge-triggered state that a seek can't reconstruct.
+- **Seek-safety:** the preprocess pass persists one row per topic-change; a seek is a
+  single "latest row per topic at/before the target offset" query (`database.py`
+  `get_state_at`) — there is no per-processor `snapshot()`/`restore()`. Client tiles
+  must not keep edge-triggered state that a seek can't reconstruct from those rows.
 
 ## Directory structure
 
@@ -67,7 +74,7 @@ live.jsonl (replay)─┘   (runs processors,      (scratch file in
 ### `static/` — frontend
 | Path | Purpose |
 |------|---------|
-| `js/base.js` | Client message bus + playback engine + snapshot/seek handling |
+| `js/base.js` | Client message bus + playback engine + seek handling |
 | `js/components/header.js`, `tv_sync.js` | Header (clocks, track status, playback/audio controls); TV-sync (coming soon) |
 | `js/components/tiles/` | `standings.js` (practice/qualifying/race, driven by `SESSION_CONFIG.sessionType`), `track_map.js`, `telemetry.js`, `weather_radar.js`, `race_control.js` |
 | `js/home.js`, `browser.js`, `replay.js` | Landing page, cache browser, replay page |
@@ -97,15 +104,16 @@ credits detection — `audio_sync.py` was removed).
 ## Client message bus
 
 ```javascript
-messageBus.on('TopicName', (data, clockTime) => {
-    const messageTime = clockTime.getTime();   // use this, not Date.now()
+messageBus.on('TopicName', (data, offsetMs) => {
+    // 2nd arg is offset_ms (a number); read the clock from messageBus.clockTime:
+    const messageTime = messageBus.clockTime.getTime();   // not Date.now()
 });
 ```
 Special playback events: `state:reset`, `state:restore` (latest state per topic on
 connect/seek), `state:seek-complete`, `state:clock`, `state:status`.
 
-Playback: UTC-based clock, ~2 s display delay for interpolation, periodic
-snapshots for seeking, 1×–50× replay (1× live).
+Playback: UTC-based clock, ~2 s display delay for interpolation, instant
+DB-query seeking (`get_state_at`), 1×–10× replay (1× live).
 
 ## Commands
 

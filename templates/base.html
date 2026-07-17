@@ -8,8 +8,8 @@
     <link rel="manifest" href="/static/manifest.json">
     <link rel="stylesheet" href="{{ asset('css/base.css') }}">
     <link rel="stylesheet" href="{{ asset('css/components/header.css') }}">
-    <link rel="stylesheet" href="{{ asset('css/components/video_sync.css') }}">
     <link rel="stylesheet" href="{{ asset('css/components/status_footer.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/components/player_help.css') }}">
     {% block styles %}{% endblock %}
     <meta name="theme-color" content="#0a0a0a">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -29,9 +29,12 @@
         <span class="sf-item"><span class="sf-label">Messages</span><span class="sf-val" id="sfMsgs">0</span></span>
         <span class="sf-item" title="Total on-disk size of this session's cache (live.jsonl + commentary audio + team radio)"><span class="sf-label">Cache</span><span class="sf-val" id="sfCache">—</span></span>
         <span class="sf-item"><span class="sf-light" id="sfAudioLight"></span><span class="sf-label">Audio</span><span class="sf-val" id="sfAudio">—</span></span>
+        <span class="sf-item" title="Data buffered ahead of the current playback (processed edge − playhead)"><span class="sf-label">Data buf</span><span class="sf-val" id="sfDataBuf">—</span></span>
+        <span class="sf-item" title="Audio available ahead of the current playback (audio edge/end − playhead)"><span class="sf-label">Audio buf</span><span class="sf-val" id="sfAudioBuf">—</span></span>
         <span class="sf-item sf-health"><span class="sf-label">Data</span><span class="sf-hbox h-green" id="sfhTiming">TIMING</span><span class="sf-hbox h-green" id="sfhTel">TELEMETRY</span><span class="sf-hbox h-green" id="sfhPos">POSITION</span></span>
         <span class="sf-item sf-live-only hidden"><span class="sf-label">&#8595; Data</span><span class="sf-val" id="sfDlDataVal">—</span></span>
         <span class="sf-item sf-live-only hidden"><span class="sf-label">&#8595; Audio</span><span class="sf-val" id="sfDlAudioVal">—</span></span>
+        <span class="sf-item sf-help"><a class="sf-help-link open-player-help" href="#" title="How the player works — readable while playback continues">Help</a></span>
     </footer>
 
 
@@ -49,13 +52,10 @@
     <script src="{{ asset('js/lib/aac_fmp4.js') }}"></script>
     <script src="{{ asset('js/components/header.js') }}"></script>
     <script src="{{ asset('js/components/status_footer.js') }}"></script>
+    <script src="{{ asset('js/components/player_help.js') }}"></script>
     <!-- Settings dialog lives on the home page only; here we load it solely to
          prime window.F1_SETTINGS (read once at load, e.g. team-radio auto-play). -->
     <script src="{{ asset('js/settings.js') }}"></script>
-    <!-- Tesseract.js for the video-sync OCR (3-video-sync). CDN for now;
-         vendor locally before release so the app stays self-contained. -->
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-    <script src="{{ asset('js/components/video_sync.js') }}"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>
