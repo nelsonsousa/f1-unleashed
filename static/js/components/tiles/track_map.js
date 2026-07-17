@@ -14,7 +14,10 @@
         trackSvg: null,
         carMarkersGroup: null,
         markerOverlay: null,   // transparent overlay SVG holding the markers (card z9L5gqpj)
-        overlayRO: null,       // ResizeObserver keeping the overlay box on the track SVG's rect
+        rainOverlay: null,     // transparent overlay SVG holding the rain contours (card zdXIoU5O)
+        rainGroup: null,       // <g> (track-root matrix) the server contour body is injected into
+        pendingRain: null,     // contour body buffered until the overlays are built
+        overlayRO: null,       // ResizeObserver keeping the overlay boxes on the track SVG's rect
         carMarkers: {},
         driverInfo: {},      // num -> {tla, color}
         driverStatus: {},    // num -> "RET"|"STOP"|... (card 55: hide RET/STOP markers)
@@ -62,6 +65,7 @@
             const trackMap = document.getElementById('trackMap');
             if (trackMap) {
                 trackMap.innerHTML = '';
+                svgElement.classList.add('track-base-layer');   // z-index anchor for the overlays
                 trackMap.appendChild(svgElement);
                 state.trackSvg = svgElement;
 
@@ -83,7 +87,7 @@
                     });
                 }
 
-                buildMarkerOverlay(trackMap, svgElement);   // markers live on their own layer
+                buildTrackOverlays(trackMap, svgElement);   // rain + markers on their own layers
 
                 const calibrating = document.getElementById('trackCalibrating');
                 if (calibrating) calibrating.style.display = 'none';
@@ -114,49 +118,69 @@
         }
     }
 
-    // Markers used to live inside the track SVG (#car-markers), so moving one each frame repainted
-    // that SVG — including the dense rain-radar contours it overlaps. Put them on a SEPARATE
-    // transparent overlay SVG instead: it shares the track's viewBox + track-root (F1→user) matrix,
-    // so markers land at identical pixels, but moving them only repaints the overlay. (card z9L5gqpj)
-    function buildMarkerOverlay(container, trackSvg) {
-        const vb = trackSvg.getAttribute('viewBox') || '0 0 100 100';
-        const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        overlay.setAttribute('viewBox', vb);
-        overlay.setAttribute('class', 'track-marker-layer');
+    // The track SVG used to hold BOTH the rain contours (#weather-contours) and the car markers
+    // (#car-markers) inline, so a marker move — or a rain update — repainted the whole SVG,
+    // contours included. Split them onto their own transparent overlay SVGs, each sharing the
+    // track's viewBox + track-root (F1→user) matrix so their content lands at identical pixels.
+    // Stacking (z-index in CSS): rain (behind the track lines) < track < markers.
+    // (cards z9L5gqpj markers, zdXIoU5O rain)
+    const _SVGNS = 'http://www.w3.org/2000/svg';
+
+    function makeAlignedLayer(trackSvg, className, groupId) {
+        const svg = document.createElementNS(_SVGNS, 'svg');
+        svg.setAttribute('viewBox', trackSvg.getAttribute('viewBox') || '0 0 100 100');
+        svg.setAttribute('class', className);
         const root = trackSvg.querySelector('#track-root');
         const m = (root && root.transform.baseVal.numberOfItems)
             ? root.transform.baseVal.consolidate().matrix : null;
-        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        group.setAttribute('id', 'car-markers-overlay');
+        const group = document.createElementNS(_SVGNS, 'g');
+        group.setAttribute('id', groupId);
         if (m) group.setAttribute('transform',
             `matrix(${m.a} ${m.b} ${m.c} ${m.d} ${m.e} ${m.f})`);
-        overlay.appendChild(group);
-        container.appendChild(overlay);
-        state.markerOverlay = overlay;
-        state.carMarkers = {};        // markers are re-created into the fresh group on next frame
-        state.carMarkersGroup = group;
+        svg.appendChild(group);
+        return { svg, group };
+    }
+
+    function buildTrackOverlays(container, trackSvg) {
+        const rain = makeAlignedLayer(trackSvg, 'track-rain-layer', 'weather-contours');
+        const mark = makeAlignedLayer(trackSvg, 'track-marker-layer', 'car-markers-overlay');
+        container.appendChild(rain.svg);          // rain first; CSS z-index keeps it behind the track
+        container.appendChild(mark.svg);
+        state.rainOverlay = rain.svg; state.rainGroup = rain.group;
+        state.markerOverlay = mark.svg; state.carMarkersGroup = mark.group;
+        state.carMarkers = {};                    // markers re-created into the fresh group next frame
         // Click a car → focus that driver (+ neighbours in a race) on the dashboard.
-        group.addEventListener('click', (e) => {
+        mark.group.addEventListener('click', (e) => {
             const mk = e.target.closest('.car-marker');
             if (mk && window.F1Dashboard) window.F1Dashboard.focus(mk.dataset.driver);
         });
-        syncMarkerOverlayBox();
+        if (state.pendingRain != null) { rain.group.innerHTML = state.pendingRain; state.pendingRain = null; }
+        syncOverlayBoxes();
         if (state.overlayRO) state.overlayRO.disconnect();
-        state.overlayRO = new ResizeObserver(syncMarkerOverlayBox);
+        state.overlayRO = new ResizeObserver(syncOverlayBoxes);
         state.overlayRO.observe(container);
     }
 
-    // Keep the overlay box exactly on the (aspect-fitted, centred) track SVG's rendered rect, so
-    // the two share a pixel mapping. Re-run whenever the tile resizes.
-    function syncMarkerOverlayBox() {
-        const ov = state.markerOverlay, trk = state.trackSvg;
-        const cont = document.getElementById('trackMap');
-        if (!ov || !trk || !cont) return;
+    // Keep both overlay boxes exactly on the (aspect-fitted, centred) track SVG's rendered rect,
+    // so they share its pixel mapping. Re-run whenever the tile resizes.
+    function syncOverlayBoxes() {
+        const trk = state.trackSvg, cont = document.getElementById('trackMap');
+        if (!trk || !cont) return;
         const cr = cont.getBoundingClientRect(), tr = trk.getBoundingClientRect();
-        ov.style.setProperty('--ov-left', (tr.left - cr.left).toFixed(1) + 'px');
-        ov.style.setProperty('--ov-top', (tr.top - cr.top).toFixed(1) + 'px');
-        ov.style.setProperty('--ov-w', tr.width.toFixed(1) + 'px');
-        ov.style.setProperty('--ov-h', tr.height.toFixed(1) + 'px');
+        for (const ov of [state.rainOverlay, state.markerOverlay]) {
+            if (!ov) continue;
+            ov.style.setProperty('--ov-left', (tr.left - cr.left).toFixed(1) + 'px');
+            ov.style.setProperty('--ov-top', (tr.top - cr.top).toFixed(1) + 'px');
+            ov.style.setProperty('--ov-w', tr.width.toFixed(1) + 'px');
+            ov.style.setProperty('--ov-h', tr.height.toFixed(1) + 'px');
+        }
+    }
+
+    // Weather module hands us the server-built contour <g> body; it goes on the rain layer, whose
+    // group already carries the track-root transform. Buffer if the track SVG hasn't mounted yet.
+    function setRainContours(svg) {
+        if (!state.rainGroup) { state.pendingRain = svg || ''; return; }
+        state.rainGroup.innerHTML = svg || '';
     }
 
     function updateCarMarker(num, x, y) {
@@ -658,6 +682,6 @@
     });
 
     // Race dashboard drives a zoomed mini-map instance through this interface (card J3V1CFdS).
-    window.F1TrackMap = { mountMini, setMiniFocus, unmountMini };
+    window.F1TrackMap = { mountMini, setMiniFocus, unmountMini, setRainContours };
 
 })();
