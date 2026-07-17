@@ -4,7 +4,7 @@
 
 A Formula 1 live-timing and replay application with synchronised audio commentary and per-session deep analysis.
 
-> **Unofficial project — not affiliated with Formula 1 or the FIA.** F1Unleashed is a personal, non-commercial viewer and is not associated with, endorsed by, or affiliated with Formula 1, Formula One Licensing B.V., Formula One Management, or the FIA. See [Trademarks & disclaimer](#trademarks--disclaimer).
+> **This is an unofficial project, not affiliated with Formula 1 or the FIA.** F1Unleashed is a personal, non-commercial viewer and is not associated with, endorsed by, or affiliated with Formula 1, Formula One Licensing B.V., Formula One Management, or the FIA. See [Trademarks & disclaimer](#trademarks--disclaimer).
 
 **Release 1.0.0** — 7 June 2026, the day of the 2026 Monaco Grand Prix: McLaren's 1000th Grand Prix start. McLaren's first-ever race was also a Monaco Grand Prix, in 1966 — so the day marked both 1000 races and 60 years of McLaren in Formula 1.
 
@@ -14,9 +14,6 @@ For what it does and how it works, see [DOCUMENTATION.md](DOCUMENTATION.md). For
 interface, the in-app **user guide** (the **Help (?)** icon on the home page) is split into the
 main window and one page per session type.
 
-<!-- SCREENSHOT (new): the live Dashboard view in a race — two cars under a second apart with
-     the zoomed mini track-map — as the hero image once captured. -->
-![F1Unleashed — Dashboard view](static/images/screenshots/race.png)
 
 ---
 
@@ -94,9 +91,8 @@ The application covers Practice / Qualifying / Race in usable form today. Active
 ### Recently shipped (v2.0)
 
 - **Live Dashboard view** — a focused two-driver view on the telemetry tile. In practice /
-  qualifying: live gauges with a **lap-time forecast** (a projected lap time, updated as the
-  driver runs). In the race: a **battle panel** (positions, interval, tyres, pit/close-gap
-  indicators) with a **zoomed, self-centring mini track-map** that follows the chasing car.
+  qualifying: live gauges with current lap telemetry trace and a **lap-time forecast** (a projected lap time, updated every ~1s). In the race: a **battle panel** (positions, interval, tyres, pit
+  indicator, updated every ~1s) with a **zoomed, self-centring mini track-map** that follows the chasing car.
 - **Auto-select** — the app picks the two most interesting drivers for you, per session type
   (closest to finishing a push lap; the at-risk drivers in Q1/Q2; the fight for pole in Q3;
   the best on-track battle in the race), and re-picks as the session evolves.
@@ -178,3 +174,12 @@ F1Unleashed does not redistribute Formula 1 timing data, broadcast audio, or vid
 [PolyForm Noncommercial 1.0.0](LICENSE). Use for personal, hobby, educational, or research purposes is welcome. Commercial use is not granted under this license. Attribution required.
 
 Copyright © 2026 Nelson Sousa. Co-authored with Claude Code.
+
+---
+
+## Support the project
+
+F1 Unleashed is a free, personal project built to make watching Formula 1 better. If it
+improves your race weekends, you can support it: [buy me a coffee](https://buymeacoffee.com/f1unleashed).
+
+<p align="center"><img src="static/images/screenshots/checkered_flag.png" width="45"></p>

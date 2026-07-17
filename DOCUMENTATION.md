@@ -1,8 +1,8 @@
-# F1Unleashed — Documentation
+# F1 Unleashed — Documentation
 
 A Formula 1 live-timing and replay application with synchronised audio commentary, multi-source analysis, and per-session deep dives.
 
-**Release 1.0.0** — 7 June 2026, the day of the 2026 Monaco Grand Prix: McLaren's 1000th Grand Prix start. McLaren's first-ever race was also a Monaco Grand Prix, in 1966 — so the day marked both 1000 races and 60 years of McLaren in Formula 1.
+**First Release**: 1.0.0 "Monaco", 7 June 2026 — it marks the day of the 2026 Monaco Grand Prix; McLaren's 1000th Grand Prix start; and the 60th anniversary of Mclaren's first-ever Formula 1 race, the 1966 Monaco Grand Prix.
 
 **Current release**: 2.0.0 "Spa-Francorchamps", 2026-07-16 — on the eve of the Belgian Grand Prix weekend. See [Release history](#release-history).
 
@@ -13,9 +13,9 @@ instructions see [README.md](README.md). For an end-user walkthrough, the in-app
 guide** (served at `/help`, split into the main window + one page per session type) is the
 place to start.
 
-**Disclaimer**: F1Unleashed is an unofficial, non-commercial project. It is not associated with, endorsed by, or affiliated with Formula 1, Formula One Licensing B.V., Formula One Management, or the FIA. It is a personal project, to improve my own experience while watching Formula 1, and is not intended to infringe on any organisation's copyright or trademarks.
+> **Disclaimer**: F1Unleashed is an unofficial, non-commercial project. It is not associated with, endorsed by, or affiliated with Formula 1, Formula One Licensing B.V., Formula One Management, or the FIA. It is a personal project, to improve my own experience while watching Formula 1, and is not intended to infringe on any organisation's copyright or trademarks.
 
-F1, FORMULA 1, FORMULA ONE, GRAND PRIX and related marks are trademarks of Formula One Licensing B.V. Team, driver, sponsor, and tyre-supplier (e.g. Pirelli) names and marks belong to their respective owners; they are used here only descriptively.
+>F1, FORMULA 1, FORMULA ONE, GRAND PRIX and related marks are trademarks of Formula One Licensing B.V. Team, driver, sponsor, and tyre-supplier (e.g. Pirelli) names and marks belong to their respective owners; they are used here only descriptively.
 
 This project is intended for personal and educational use only, and solely by persons legally allowed to stream and download live timing data and Formula 1 TV coverage.
 
@@ -105,7 +105,7 @@ A tour of what each part of the UI shows and does.
 
 ### Main page
 
-![Main page](static/images/screenshots/main_page.png)
+<p align="center"><img src="static/images/screenshots/main_page.png" width="1200"></p>
 
 The landing page lists every Grand Prix weekend in the current season and the prior weekend's cached sessions, plus controls for login and live-capture status.
 
@@ -118,7 +118,8 @@ The landing page lists every Grand Prix weekend in the current season and the pr
 
 ### Practice view
 
-![Practice view](static/images/screenshots/practice.png)
+<p align="center"><img src="static/images/screenshots/practice.png" width="1200"></p>
+
 
 Optimised for free practice: lots of timed-lap context, pace classification, tyre history, telemetry comparison.
 
@@ -128,9 +129,13 @@ Optimised for free practice: lots of timed-lap context, pace classification, tyr
 - **Telemetry** — opens in the two-driver **Dashboard** view (see [Dashboard view](#dashboard-view)); a **Telemetry** toggle switches to multi-driver SPD / RPM / GEAR / THR-BRK traces with a per-driver lap list. The trace view can show the live trace, last lap, best lap, and a selection of laps for comparison; in qualifying, part tabs (Q1/Q2/Q3) show one part's laps at a time. Corner labels along the x-axis match the circuit map.
 - **Race control** — RC message stream (with team-radio clips interleaved by time) plus a **Team Radio** tab listing every clip. Each clip has Play / Stop buttons; playing a clip ducks the commentary for its duration and then restores it.
 
+<p align="center"><img src="static/images/screenshots/telemetry.png" width="750"></p>
+
+
 ### Qualifying view
 
-![Qualifying view](static/images/screenshots/qualifying.png)
+<p align="center"><img src="static/images/screenshots/qualifying.png" width="1200"></p>
+
 
 Practice-like layout plus Q-specific features: knockout-zone indicator, lap-time prediction, and predicted qualifying pace per team.
 
@@ -139,14 +144,23 @@ Practice-like layout plus Q-specific features: knockout-zone indicator, lap-time
 
 ### Race view
 
-![Race view](static/images/screenshots/race.png)
+<p align="center"><img src="static/images/screenshots/qualifying.png" width="1200"></p>
+
 
 Optimised for the race: gaps to leader and to the car ahead, tyre history, penalties, and championship standings.
 
 - **Standings** — like the Practice view but showing gaps to leader and to the car ahead. Also shows blue flags, penalties (under investigation and imposed), and black-and-white flags.
 - **Race control** — tabs, in order: **Race control** (live RC message stream with team-radio clips interleaved by time); **Team Radio** (every captured clip, each with Play / Stop; playing a clip ducks the commentary); **Pecking order** (pre-race predicted team rank and pace); **Championship** (provisional driver + constructor standings updated from the current order); **Pit stops** (every in-race stop with stationary time, total time lost, SC/VSC context, position change and rejoin traffic).
 
+
+<p align="center"><img src="static/images/screenshots/pitstops.png" width="500"></p>
+
+
 ### Common controls
+
+
+<p align="center"><img src="static/images/screenshots/scrubber.png" width="500"></p>
+
 
 - **Scrubber** — drag to seek to any point in the session. Click an event marker to jump to ~60 s before that event. Marked events: session start; session finished; safety car / virtual safety car; green flags; red flags.
 - **LIVE button** (live sessions only) — replaces the speed button; red when at the live edge, black when behind. Click to snap to the latest available state.
@@ -155,6 +169,9 @@ Optimised for the race: gaps to leader and to the car ahead, tyre history, penal
 - **Status footer** — see [Status footer + data-health monitor](#status-footer-data-health-monitor).
 - **SYNC TO** — seek the data clock to a shared reference marker to line up with a TV broadcast; see [Sync to a TV broadcast](#sync-to-a-tv-broadcast).
 - **Player help** — a link on the right of the status footer opens a modal with the playback-control reference and keyboard shortcuts; it is a client-only overlay, so it does not pause playback.
+
+<p align="center"><img src="static/images/screenshots/audio_sync.png" width="400"></p>
+
 
 ### Dashboard view
 
@@ -165,9 +182,14 @@ session type:
 - **Practice / Qualifying** — live gauges per driver plus a mini telemetry (speed-trace) viewer.
   The stopwatch shows a **lap-time forecast** (label `FORECAST`) while a lap is
   running, switching to `LAP TIME` once the lap is confirmed.
+
+<p align="center"><img src="static/images/screenshots/qualifying_dashboard.png" width="600"></p>
+
 - **Race** — a battle panel per driver (TLA, position, the interval between the pair, a pit
   indicator, tyre compound/age, and a close-gap highlight) plus a **zoomed, self-centring mini
   track-map** (`track_map.js` secondary SVG instance) that follows the chasing car.
+
+<p align="center"><img src="static/images/screenshots/race_dashboard.png" width="600"></p>
 
 **Auto-select** (`DashboardAutoSelectProcessor`, `dashAutoSelect` topic; on by default) picks
 the two drivers most worth watching and re-picks as the session evolves: closest to finishing
@@ -234,11 +256,15 @@ F1 `TeamRadio` messages carry `Captures` of `{Utc, RacingNumber, Path}`, where `
 
 Transcription is not implemented (deferred).
 
+<p align="center"><img src="static/images/screenshots/team_radio.png" width="500"></p>
+
 ---
 
 ## Status footer + data-health monitor
 
 A slim status bar (= about half the header height) sits at the bottom of the session/player window. It shows the live/replay indicator, stream throughput (msg/s) with a traffic light, total messages, on-disk cache size, the commentary audio bitrate, the data and audio buffered ahead of the playhead (Data buf / Audio buf), and — for live sessions only — the data and audio download speeds.
+
+<p align="center"><img src="static/images/screenshots/status_bar.png" width="800"></p>
 
 It also hosts the **data-health monitor**: three coloured boxes — TIMING, TELEMETRY, POSITION — driven by the server-side `DataHealthProcessor` (`dataHealth` topic). Only drivers currently **on track** count (status TRACK / OUT; RET / STOP / PIT / FINISHED / DSQ are excluded, since a parked or retired car legitimately stops sending data).
 
@@ -259,6 +285,9 @@ The weather tile header is **Current Conditions**. The data is drawn from three 
 A **Weather Forecast** widget overlays the top-right of the radar/weather tile, showing the In 15' / 30' / 60' forecast condition icons and a rain probability (%) for wet slots.
 
 The forecast is **captured live**: `ForecastCapture` (`app/services/weather_forecast.py`) fetches the Open-Meteo `minutely_15` forecast (`weather_code` + `precipitation_probability`) every 10 minutes during a live session and appends snapshots to `{session}/weather_forecast.jsonl`. Because Open-Meteo does not archive past forecasts, capturing live is the only way to replay what was predicted. Replay reads the snapshots via `GET /api/v1/weather/forecast?session=…` and indexes them by the playback clock.
+
+<p align="center"><img src="static/images/screenshots/rain_radar.png" width="500"></p>
+
 
 ---
 
@@ -286,7 +315,8 @@ playhead**, with a small label showing the mode and target. Markers are context-
 - **`←` / `→`** — skip 10 s back / forward (works playing or paused).
 - **`+` / `=`** — the TV is ahead: nudge the data forward ~0.5 s.
 - **`−`** — the TV is behind: pause ~0.1 s so the picture catches up.
-- **Space** — play / pause both streams; **M** — mute.
+- **Space** — play / pause both streams. 
+- **M** — mute/unmute.
 
 **How to sync**
 
@@ -606,7 +636,7 @@ upgrade package to a race weekend. Weekend dates are the 2026 F1 calendar.
 ### v1.0.0 — "Monte Carlo" · 2026-06-07
 *Monaco Grand Prix (round 6, Monte Carlo — race day).*
 
-> Our first official race of the season, after a long winter of pre-season testing.
+> Our first official race of the season, after a long winter (and spring!) of pre-season testing.
 
 The first public release: live capture + replay of F1 timing in the browser, the per-session
 UI (Practice / Qualifying / Race), synchronised commentary audio, the track map, standings
@@ -652,7 +682,7 @@ Prix (round 9, race 5 July).*
   captured segment (the Delay box becomes a fallback).
 - **Robust live-edge cap** — data clock capped to the captured-file audio edge, with a
   soft-couple stall-release.
-- **Video-sync race anchoring** — ENTER snaps to the scheduled start / lights-out. *(This
+- **Video-sync race anchoring** — ENTER snaps to the scheduled start / lights-out. *(The
   OCR-based video sync was replaced in v2.0 by [SYNC TO](#sync-to-a-tv-broadcast).)*
 
 ### v2.0.0 — "Spa-Francorchamps" · 2026-07-16
@@ -662,8 +692,8 @@ Prix (round 9, race 5 July).*
 
 The big one:
 
-- **Live Dashboard view** — two-driver gauges + lap-time forecast (P/Q) and a race battle
-  panel + zoomed self-centring mini-map.
+- **Live Dashboard view** — two-driver gauges + lap-time forecast and live telemetry trace (P/Q), and a race battle
+  panel + zoomed self-centring mini-map (Races).
 - **Auto-select** — server-picked watch pair per session type.
 - **Qualifying** lap-time forecast + predicted-position rework.
 - **Pecking-order predictor**; **pit-stop time-loss** (prediction + in-race measurement).
@@ -703,3 +733,4 @@ F1 Unleashed is a free, personal project built to make watching Formula 1 better
 improves your race weekends, you can support it: [buy me a coffee](https://buymeacoffee.com/f1unleashed).
 
 
+<p align="center"><img src="static/images/screenshots/checkered_flag.png" width="45"></p>

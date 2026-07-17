@@ -40,7 +40,8 @@ order:
 
 ## The home page
 
-![The home page — season calendar and cached sessions](/static/images/screenshots/main_page.png)
+
+<p align="center"><img src="/static/images/screenshots/main_page.png" width="1200"></p>
 
 The landing page lists every Grand Prix weekend of the current season, plus the sessions
 you already have cached.
@@ -58,8 +59,8 @@ you already have cached.
 - **Footer** — the app name and version sit in the centre; a **Help (?)** icon on the left
   opens this guide, and a **settings gear** on the right opens the settings dialog.
 
-<!-- SCREENSHOT (new): the session popover expanded under an event card, showing the
-     Download / Open / Delete rows. -->
+
+<p align="center"><img src="/static/images/screenshots/session_popover.png" width="600"></p>
 
 ---
 
@@ -94,10 +95,9 @@ in the middle, and a slim **status bar** along the bottom.
 
 ### Header — clocks, track status, controls
 
-![Session header](/static/images/screenshots/practice.png)
+<p align="center"><img src="/static/images/screenshots/header_bar.png" width="1200"></p>
 
-<!-- SCREENSHOT (new): a tight crop of just the header bar — clocks, track-status light,
-     playback controls, audio controls. -->
+
 
 - **Clocks** — your local time and the session clock.
 - **Track status** — the current flag state (green / yellow / SC / VSC / red / chequered).
@@ -136,22 +136,20 @@ across seeks and speed changes.
 
 ## Weather
 
-![Weather tile with current conditions and forecast](/static/images/screenshots/qualifying.png)
-
 The **Current Conditions** tile combines three sources:
 
 - a **sky-condition icon** (Open-Meteo), indexed by the playback clock;
 - **live measurements** — air and track temperature, humidity, pressure and wind, from F1's
   own weather feed;
-- a **rain-radar overlay** showing precipitation moving across the circuit.
+- a **rain-radar overlay** showing precipitation drifting across the circuit — heavier rain
+  reads as **denser drops** that streak the way the cloud is moving, and a **rain alert**
+  flags precipitation as it approaches (with its direction) or arrives overhead.
 
 A **Weather Forecast** widget in the corner shows the **In 15' / 30' / 60'** outlook with a
 rain probability for wet slots. Forecasts are captured live so a replay shows exactly what
 was predicted at the time.
 
-<!-- SCREENSHOT (new — rain radar): capture a few radar frames from a region where it is
-     actually raining and the precipitation is visibly MOVING, then overlay them onto a past
-     (dry) circuit so the animation of rain sweeping across the track is visible. -->
+<p align="center"><img src="/static/images/screenshots/rain_radar.png" width="600"></p>
 
 ---
 
@@ -187,10 +185,7 @@ then fine-tune. Audio stays locked to the data clock throughout, so you only eve
 
 ## The status bar
 
-![Status bar](/static/images/screenshots/race.png)
-
-<!-- SCREENSHOT (new): a tight crop of the bottom status bar, ideally during a live session
-     so the download-speed items and the data-health boxes are visible. -->
+<p align="center"><img src="/static/images/screenshots/status_bar.png" width="600"></p>
 
 The slim bar along the bottom reports the health of the stream:
 
@@ -207,7 +202,8 @@ The slim bar along the bottom reports the health of the stream:
 
 ## Settings
 
-![Settings dialog](/static/images/screenshots/settings.png)
+
+<p align="center"><img src="/static/images/screenshots/settings.png" width="600"></p>
 
 The settings gear on the **home-page footer** opens the settings dialog. Everything has a
 sensible default, so the app runs out of the box — change these when you want to:
@@ -250,14 +246,8 @@ session from the home page removes it from disk.
 
 ---
 
-## Support the project
-
-F1 Unleashed is a free, personal project built to make watching Formula 1 better. If it
-improves your race weekends, you can
-[buy me a coffee](https://buymeacoffee.com/f1unleashed).
-
----
-
 *F1 Unleashed is an unofficial project and is not affiliated with, or endorsed by, Formula 1 or
 the FIA. F1, FORMULA 1 and related marks are trademarks of Formula One Licensing B.V.; team,
 driver, and tyre-supplier marks belong to their respective owners.*
+
+<p align="center"><img src="/static/images/screenshots/checkered_flag.png" width="45"></p>
