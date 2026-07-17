@@ -302,12 +302,13 @@ def contours_to_track_svg(payload: dict, pivot: tuple[float, float],
             f'<path d="{streak}" fill="{RAIN_DROP_FILL}" fill-opacity="0.9" '
             f'stroke="{RAIN_DROP_STROKE}" stroke-width="{sw}"/></g>'
             for f in fractions)
+        # No SMIL <animateTransform>: it runs on WALL-CLOCK, so at slow-mo replay the drops would
+        # fall at real speed (and ~10x too fast in a sped-up capture). The client drives the fall
+        # off the PLAYBACK clock instead, so it scales with replay speed. data-rot carries the wind
+        # rotation so the client can rebuild `rotate(rot) translate(0, fall)`. (card ru7Zv0G9)
         return (f'<pattern id="rain-{name}" width="{tile:.0f}" height="{tile:.0f}" '
-                f'patternUnits="userSpaceOnUse" patternTransform="rotate({drop_rot:.0f})">'
-                f'{drops}'
-                f'<animateTransform attributeName="patternTransform" type="translate" '
-                f'additive="sum" calcMode="discrete" values="0 0;0 {tile/3:.0f};0 {2*tile/3:.0f}" '
-                f'dur="0.6s" repeatCount="indefinite"/></pattern>')
+                f'patternUnits="userSpaceOnUse" data-rot="{drop_rot:.0f}" '
+                f'patternTransform="rotate({drop_rot:.0f})">{drops}</pattern>')
 
     defs = "".join(pattern(n, BAND_DROPS[n]) for n, _ in BANDS)
     body = ""
