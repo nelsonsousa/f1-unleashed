@@ -39,7 +39,9 @@ async def fetch_forecast(meeting_name: str) -> Optional[dict]:
     lat, lng = coord
     params = {
         "latitude": lat, "longitude": lng,
-        "minutely_15": "weather_code,precipitation_probability",
+        # is_day drives the day/night icon variant; captured alongside so the forecast stream
+        # carries everything the current-condition ("Now") display needs (card Bx8ki87i).
+        "minutely_15": "weather_code,precipitation_probability,is_day",
         "forecast_minutely_15": 8,        # 8 × 15 min = 2 h ahead
         "timezone": "UTC",
     }
@@ -60,6 +62,7 @@ async def fetch_forecast(meeting_name: str) -> Optional[dict]:
         "time": m.get("time", []),
         "weather_code": m.get("weather_code", []),
         "precipitation_probability": m.get("precipitation_probability", []),
+        "is_day": m.get("is_day", []),
     }
 
 
