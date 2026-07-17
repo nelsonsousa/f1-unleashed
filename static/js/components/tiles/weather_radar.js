@@ -539,6 +539,27 @@
         }
     }
 
+    // Drive the rain-drop fall off the PLAYBACK clock, not wall-clock — so it slows with slow-mo
+    // replay and stays correct in a sped-up capture. The server no longer ships a SMIL animation;
+    // each frame we scroll every rain <pattern> by one tile per RAIN_FALL_MS of CONTENT time,
+    // preserving its wind rotation (data-rot). (card ru7Zv0G9)
+    const RAIN_FALL_MS = 600;   // one tile-drop cycle per 0.6 s of playback time
+    function animateRain() {
+        const patterns = document.querySelectorAll('#trackMap .track-rain-layer pattern');
+        if (patterns.length && messageBus.clockTime) {
+            const t = messageBus.clockTime.getTime();
+            const phase = (t % RAIN_FALL_MS) / RAIN_FALL_MS;
+            for (const p of patterns) {
+                const rot = p.getAttribute('data-rot') || '0';
+                const tile = parseFloat(p.getAttribute('width')) || 0;
+                const off = (phase * tile).toFixed(1);
+                p.setAttribute('patternTransform', `rotate(${rot}) translate(0, ${off})`);
+            }
+        }
+        requestAnimationFrame(animateRain);
+    }
+    requestAnimationFrame(animateRain);
+
     messageBus.on('state:reset', () => {
         state.weather = {};
         state.lastRadarClockMs = null;
