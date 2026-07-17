@@ -141,6 +141,18 @@
   height: auto;
 }
 
+/* Car-marker overlay: a transparent SVG stacked on the track SVG, its box synced (via JS vars)
+   to the track SVG's rendered rect so their viewBoxes map to identical pixels. Markers repaint
+   here only, never the track/rain layer. (card z9L5gqpj) */
+.track-map svg.track-marker-layer {
+  position: absolute;
+  left: var(--ov-left, 0); top: var(--ov-top, 0);
+  width: var(--ov-w, 100%); height: var(--ov-h, 100%);
+  max-width: none; max-height: none;
+  pointer-events: none;   /* transparent areas pass clicks through; markers re-enable below */
+}
+.track-map svg.track-marker-layer .car-marker { pointer-events: auto; cursor: pointer; }
+
 .track-map .calibrating {
   position: absolute;
   top: 50%;
