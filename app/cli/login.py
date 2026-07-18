@@ -11,6 +11,7 @@ The token can then be used by the server for ~72 hours.
 """
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -18,6 +19,21 @@ from pathlib import Path
 # Auth file location (same as FastF1)
 AUTH_DATA_DIR = Path.home() / "Library/Application Support/fastf1"
 AUTH_DATA_FILE = AUTH_DATA_DIR / "f1auth.json"
+
+
+def _write_secure(path: Path, data: dict) -> None:
+    """Write `data` as JSON to `path`, owner-readable only (0600). The file holds
+    the F1 subscription JWT / raw login cookie, so O_CREAT with 0600 makes new files
+    owner-only from creation (no world-readable window); the chmod also tightens a
+    pre-existing looser file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, indent=2)
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
 
 
 class F1LoginHandler:
@@ -39,7 +55,7 @@ class F1LoginHandler:
             self.window.destroy()
 
     def save_token(self, token: str):
-        """Save the token to the auth file."""
+        """Save the token to the auth file (owner-only — it holds a subscription JWT)."""
         try:
             # Parse the cookie JSON to extract the subscription token
             import urllib.parse
@@ -50,21 +66,17 @@ class F1LoginHandler:
             subscription_token = cookie_data.get("data", {}).get("subscriptionToken")
 
             if subscription_token:
-                AUTH_DATA_DIR.mkdir(parents=True, exist_ok=True)
-                data = {"subscription_token": subscription_token}
-                AUTH_DATA_FILE.write_text(json.dumps(data, indent=2))
+                _write_secure(AUTH_DATA_FILE, {"subscription_token": subscription_token})
                 print(f"Token saved to: {AUTH_DATA_FILE}")
                 print("You can now use the F1 Archive app with authentication!")
             else:
                 print("Warning: No subscription token found in cookie")
                 print("Raw cookie saved for debugging")
-                AUTH_DATA_DIR.mkdir(parents=True, exist_ok=True)
-                AUTH_DATA_FILE.write_text(json.dumps({"raw_cookie": token}, indent=2))
+                _write_secure(AUTH_DATA_FILE, {"raw_cookie": token})
         except json.JSONDecodeError as e:
             print(f"Error parsing cookie JSON: {e}")
             # Save raw cookie anyway
-            AUTH_DATA_DIR.mkdir(parents=True, exist_ok=True)
-            AUTH_DATA_FILE.write_text(json.dumps({"raw_cookie": token}, indent=2))
+            _write_secure(AUTH_DATA_FILE, {"raw_cookie": token})
         except Exception as e:
             print(f"Error saving token: {e}")
 
