@@ -1,0 +1,368 @@
+{
+  "circuits": [
+    {
+      "country": "Bahrain",
+      "event_name": "Bahrain Grand Prix",
+      "location": "Sakhir",
+      "circuit": "Bahrain International Circuit",
+      "latitude": 26.0325,
+      "longitude": 50.5106,
+      "variants": {
+        "country": [],
+        "event_name": ["Bahrain GP", "Gulf Air Bahrain Grand Prix"],
+        "location": ["Bahrain"],
+        "circuit": ["Sakhir"]
+      }
+    },
+    {
+      "country": "Saudi Arabia",
+      "event_name": "Saudi Arabian Grand Prix",
+      "location": "Jeddah",
+      "circuit": "Jeddah Corniche Circuit",
+      "latitude": 21.6319,
+      "longitude": 39.1044,
+      "variants": {
+        "country": ["KSA"],
+        "event_name": ["Saudi Arabia GP", "Saudi GP"],
+        "location": [],
+        "circuit": ["Jeddah Street Circuit", "Jeddah"]
+      }
+    },
+    {
+      "country": "Australia",
+      "event_name": "Australian Grand Prix",
+      "location": "Melbourne",
+      "circuit": "Albert Park Circuit",
+      "latitude": -37.8497,
+      "longitude": 144.9680,
+      "variants": {
+        "country": [],
+        "event_name": ["Australia GP", "Australian GP"],
+        "location": ["Albert Park"],
+        "circuit": ["Melbourne Grand Prix Circuit", "Albert Park Grand Prix Circuit"]
+      }
+    },
+    {
+      "country": "Japan",
+      "event_name": "Japanese Grand Prix",
+      "location": "Suzuka",
+      "circuit": "Suzuka International Racing Course",
+      "latitude": 34.8431,
+      "longitude": 136.5407,
+      "variants": {
+        "country": [],
+        "event_name": ["Japan GP", "Japanese GP"],
+        "location": [],
+        "circuit": ["Suzuka Circuit"]
+      }
+    },
+    {
+      "country": "China",
+      "event_name": "Chinese Grand Prix",
+      "location": "Shanghai",
+      "circuit": "Shanghai International Circuit",
+      "latitude": 31.3389,
+      "longitude": 121.2197,
+      "variants": {
+        "country": [],
+        "event_name": ["China GP", "Chinese GP"],
+        "location": [],
+        "circuit": []
+      }
+    },
+    {
+      "country": "United States",
+      "event_name": "Miami Grand Prix",
+      "location": "Miami Gardens",
+      "circuit": "Miami International Autodrome",
+      "latitude": 25.9581,
+      "longitude": -80.2389,
+      "variants": {
+        "country": ["USA"],
+        "event_name": ["Miami GP"],
+        "location": ["Miami"],
+        "circuit": ["Hard Rock Stadium Circuit"]
+      }
+    },
+    {
+      "country": "Italy",
+      "event_name": "Emilia Romagna Grand Prix",
+      "location": "Imola",
+      "circuit": "Autodromo Enzo e Dino Ferrari",
+      "latitude": 44.3439,
+      "longitude": 11.7167,
+      "variants": {
+        "country": [],
+        "event_name": ["Emilia-Romagna GP", "Imola GP"],
+        "location": [],
+        "circuit": ["Imola Circuit", "Autodromo Internazionale Enzo e Dino Ferrari"]
+      }
+    },
+    {
+      "country": "Monaco",
+      "event_name": "Monaco Grand Prix",
+      "location": "Monte Carlo",
+      "circuit": "Circuit de Monaco",
+      "latitude": 43.7347,
+      "longitude": 7.4206,
+      "variants": {
+        "country": [],
+        "event_name": ["Monaco GP"],
+        "location": ["Monaco", "Monte-Carlo"],
+        "circuit": ["Monaco Street Circuit"]
+      }
+    },
+    {
+      "country": "Canada",
+      "event_name": "Canadian Grand Prix",
+      "location": "Montreal",
+      "circuit": "Circuit Gilles Villeneuve",
+      "latitude": 45.5000,
+      "longitude": -73.5228,
+      "variants": {
+        "country": [],
+        "event_name": ["Canada GP", "Canadian GP"],
+        "location": ["Montréal"],
+        "circuit": ["Circuit Gilles-Villeneuve", "Île Notre-Dame Circuit"]
+      }
+    },
+    {
+      "country": "Spain",
+      "event_name": "Barcelona-Catalunya Grand Prix",
+      "location": "Barcelona",
+      "circuit": "Circuit de Barcelona-Catalunya",
+      "latitude": 41.5700,
+      "longitude": 2.2611,
+      "variants": {
+        "country": [],
+        "event_name": ["Spanish Grand Prix", "Barcelona Grand Prix", "Barcelona GP", "Gran Premio de Barcelona-Catalunya"],
+        "location": ["Montmeló", "Catalunya"],
+        "circuit": ["Circuit de Catalunya", "Catalunya"]
+      }
+    },
+    {
+      "country": "Austria",
+      "event_name": "Austrian Grand Prix",
+      "location": "Spielberg",
+      "circuit": "Red Bull Ring",
+      "latitude": 47.2197,
+      "longitude": 14.7647,
+      "variants": {
+        "country": [],
+        "event_name": ["Austria GP", "Austrian GP"],
+        "location": [],
+        "circuit": ["A1-Ring", "Österreichring"]
+      }
+    },
+    {
+      "country": "United Kingdom",
+      "event_name": "British Grand Prix",
+      "location": "Silverstone",
+      "circuit": "Silverstone Circuit",
+      "latitude": 52.0786,
+      "longitude": -1.0169,
+      "variants": {
+        "country": ["UK", "Great Britain", "GB"],
+        "event_name": ["British GP", "UK GP"],
+        "location": [],
+        "circuit": []
+      }
+    },
+    {
+      "country": "Hungary",
+      "event_name": "Hungarian Grand Prix",
+      "location": "Budapest",
+      "circuit": "Hungaroring",
+      "latitude": 47.5789,
+      "longitude": 19.2486,
+      "variants": {
+        "country": [],
+        "event_name": ["Hungary GP", "Hungarian GP"],
+        "location": ["Mogyoród"],
+        "circuit": []
+      }
+    },
+    {
+      "country": "Belgium",
+      "event_name": "Belgian Grand Prix",
+      "location": "Spa-Francorchamps",
+      "circuit": "Circuit de Spa-Francorchamps",
+      "latitude": 50.4372,
+      "longitude": 5.9714,
+      "variants": {
+        "country": [],
+        "event_name": ["Belgium GP", "Belgian GP"],
+        "location": ["Spa", "Stavelot"],
+        "circuit": ["Spa", "Spa Francorchamps", "Spa-Framcorchamps"]
+      }
+    },
+    {
+      "country": "Netherlands",
+      "event_name": "Dutch Grand Prix",
+      "location": "Zandvoort",
+      "circuit": "Circuit Zandvoort",
+      "latitude": 52.3888,
+      "longitude": 4.5409,
+      "variants": {
+        "country": ["Holland"],
+        "event_name": ["Netherlands GP", "Dutch GP"],
+        "location": [],
+        "circuit": ["Circuit Park Zandvoort"]
+      }
+    },
+    {
+      "country": "Italy",
+      "event_name": "Italian Grand Prix",
+      "location": "Monza",
+      "circuit": "Autodromo Nazionale Monza",
+      "latitude": 45.6156,
+      "longitude": 9.2811,
+      "variants": {
+        "country": [],
+        "event_name": ["Italy GP", "Italian GP"],
+        "location": [],
+        "circuit": ["Monza Circuit", "Temple of Speed"]
+      }
+    },
+    {
+      "country": "Azerbaijan",
+      "event_name": "Azerbaijan Grand Prix",
+      "location": "Baku",
+      "circuit": "Baku City Circuit",
+      "latitude": 40.3725,
+      "longitude": 49.8533,
+      "variants": {
+        "country": [],
+        "event_name": ["Azerbaijan GP", "Baku GP"],
+        "location": [],
+        "circuit": ["Baku Street Circuit"]
+      }
+    },
+    {
+      "country": "Singapore",
+      "event_name": "Singapore Grand Prix",
+      "location": "Marina Bay",
+      "circuit": "Marina Bay Street Circuit",
+      "latitude": 1.2914,
+      "longitude": 103.8640,
+      "variants": {
+        "country": [],
+        "event_name": ["Singapore GP"],
+        "location": ["Singapore"],
+        "circuit": []
+      }
+    },
+    {
+      "country": "United States",
+      "event_name": "United States Grand Prix",
+      "location": "Austin",
+      "circuit": "Circuit of the Americas",
+      "latitude": 30.1328,
+      "longitude": -97.6411,
+      "variants": {
+        "country": ["USA"],
+        "event_name": ["US GP", "USA GP", "COTA GP"],
+        "location": [],
+        "circuit": ["COTA"]
+      }
+    },
+    {
+      "country": "Mexico",
+      "event_name": "Mexico City Grand Prix",
+      "location": "Mexico City",
+      "circuit": "Autódromo Hermanos Rodríguez",
+      "latitude": 19.4042,
+      "longitude": -99.0907,
+      "variants": {
+        "country": [],
+        "event_name": ["Mexican GP", "Mexico GP"],
+        "location": ["Ciudad de México"],
+        "circuit": ["Autodromo Hermanos Rodriguez", "Foro Sol"]
+      }
+    },
+    {
+      "country": "Brazil",
+      "event_name": "São Paulo Grand Prix",
+      "location": "São Paulo",
+      "circuit": "Autódromo José Carlos Pace",
+      "latitude": -23.7014,
+      "longitude": -46.6969,
+      "variants": {
+        "country": [],
+        "event_name": ["Brazilian GP", "Brazil GP", "Sao Paulo GP"],
+        "location": ["Sao Paulo", "Interlagos"],
+        "circuit": ["Interlagos", "Autodromo Jose Carlos Pace"]
+      }
+    },
+    {
+      "country": "United States",
+      "event_name": "Las Vegas Grand Prix",
+      "location": "Las Vegas",
+      "circuit": "Las Vegas Strip Circuit",
+      "latitude": 36.1147,
+      "longitude": -115.1728,
+      "variants": {
+        "country": ["USA"],
+        "event_name": ["Las Vegas GP"],
+        "location": [],
+        "circuit": ["Las Vegas Street Circuit"]
+      }
+    },
+    {
+      "country": "Qatar",
+      "event_name": "Qatar Grand Prix",
+      "location": "Lusail",
+      "circuit": "Lusail International Circuit",
+      "latitude": 25.4900,
+      "longitude": 51.4542,
+      "variants": {
+        "country": [],
+        "event_name": ["Qatar GP"],
+        "location": ["Qatar"],
+        "circuit": []
+      }
+    },
+    {
+      "country": "United Arab Emirates",
+      "event_name": "Abu Dhabi Grand Prix",
+      "location": "Yas Marina",
+      "circuit": "Yas Marina Circuit",
+      "latitude": 24.4672,
+      "longitude": 54.6031,
+      "variants": {
+        "country": ["UAE"],
+        "event_name": ["Abu Dhabi GP"],
+        "location": ["Yas Island", "Abu Dhabi"],
+        "circuit": []
+      }
+    },
+    {
+      "country": "Spain",
+      "event_name": "Spanish Grand Prix",
+      "location": "Madrid",
+      "circuit": "IFEMA Madrid Circuit",
+      "latitude": 40.4650,
+      "longitude": -3.6167,
+      "variants": {
+        "country": [],
+        "event_name": ["Spain GP", "Spanish GP"],
+        "location": [],
+        "circuit": ["Madrid Circuit", "Madrid Street Circuit"]
+      }
+    },
+    {
+      "country": "Bahrain",
+      "event_name": "Pre-Season Testing",
+      "location": "Sakhir",
+      "circuit": "Bahrain International Circuit",
+      "latitude": 26.0325,
+      "longitude": 50.5106,
+      "variants": {
+        "country": [],
+        "event_name": ["Pre-Season Test", "Pre Season Testing", "Bahrain Testing"],
+        "location": ["Bahrain"],
+        "circuit": ["Sakhir"]
+      }
+    }
+  ]
+}
