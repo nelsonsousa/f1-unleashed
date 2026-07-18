@@ -29,7 +29,7 @@ ehthumbs.db
 # Project
 tmp/
 log/
-data/
+/data/
 *.db
 *.sqlite3
 *.pid
