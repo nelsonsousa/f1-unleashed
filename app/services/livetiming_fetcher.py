@@ -578,12 +578,17 @@ class LiveTimingFetcher:
             if sk and session["name"].replace(f"{sk}_", "", 1) == cache_key:
                 return Path(session["path"])
 
-        # Fallback: try legacy flat path — but keep it contained under the cache dir so a
-        # caller-supplied "../…" key can't escape it (path-traversal guard; the route uses a
-        # {…:path} converter that permits "/" and ".."). Resolving collapses any "..".
+        # Fallback: try legacy flat path — but keep it contained under the cache dir AND require
+        # it to be a genuine SESSION directory (one holding live.jsonl / subscribe.json), never the
+        # cache root or a year/event parent dir. Without this, a caller-supplied key like "." /
+        # "2026" / "2026/event" (the route uses a {…:path} converter that permits "/" and "..")
+        # resolves to a parent that a caller — e.g. the DELETE handler's rmtree — then wipes.
+        # Resolving collapses any "..".
         base = self.cache_dir.resolve()
         legacy_path = (self.cache_dir / cache_key).resolve()
-        if legacy_path.is_relative_to(base) and legacy_path.exists():
+        if (legacy_path != base and legacy_path.is_relative_to(base) and legacy_path.is_dir()
+                and ((legacy_path / "live.jsonl").exists()
+                     or (legacy_path / "subscribe.json").exists())):
             return legacy_path
 
         return None
