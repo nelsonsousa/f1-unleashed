@@ -228,7 +228,7 @@
         else if (msg.color === 'orange') colorClass = 'rc-orange';
         return `<div class="race-control-msg ${colorClass}">` +
             `<span class="race-control-time">${toLocalTimeStr(msg.timestamp)}</span>` +
-            `<span class="race-control-text">${msg.message}</span>` +
+            `<span class="race-control-text">${escapeHtml(msg.message)}</span>` +
             `</div>`;
     }
 
