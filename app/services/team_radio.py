@@ -45,9 +45,15 @@ def clip_url(static_path: str, capture_path: str) -> str:
     return f"{LIVETIMING_STATIC_BASE}/{(static_path or '').strip('/')}/{capture_path.lstrip('/')}"
 
 
-def clip_dest(cache_path: Path, capture_path: str) -> Path:
-    """Local cache path — keeps the "TeamRadio/<file>.mp3" sub-structure."""
-    return cache_path / capture_path.lstrip("/")
+def clip_dest(cache_path: Path, capture_path: str) -> Optional[Path]:
+    """Local cache path — keeps the "TeamRadio/<file>.mp3" sub-structure. Returns None
+    (caller skips the clip) if the feed-supplied Path escapes the session cache dir — e.g.
+    a "../.." Path — since the bytes fetched from the constructed CDN URL get written here."""
+    dest = (cache_path / capture_path.lstrip("/")).resolve()
+    if not dest.is_relative_to(cache_path.resolve()):
+        logger.warning("team radio: skipping capture with out-of-cache Path %r", capture_path)
+        return None
+    return dest
 
 
 async def download_clip(session: aiohttp.ClientSession, url: str, dest: Path) -> bool:
@@ -96,9 +102,11 @@ async def download_captures(cache_path: Path, static_path: str, captures: list[d
         path = cap.get("Path")
         if not path:
             return
+        dest = clip_dest(cache_path, path)
+        if dest is None:
+            return
         async with sem:
-            if await download_clip(session, clip_url(static_path, path),
-                                   clip_dest(cache_path, path)):
+            if await download_clip(session, clip_url(static_path, path), dest):
                 count += 1
 
     try:
