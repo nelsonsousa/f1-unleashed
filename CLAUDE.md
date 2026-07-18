@@ -31,6 +31,13 @@ Trello board (the "F1 Unleashed" board).
    faster than you can. When a result you don't understand appears, surface it
    plainly (data + what's odd) and stop; do not guess-fix it. If asked to collect
    more data, follow the instructions exactly.
+7. **Memory lies, code doesn't** — auto-memory, recalled notes, and even this file
+   are quick reference, not ground truth. They reflect what was true when written
+   and drift as routers/processors/flags/paths get renamed (CLAUDE.md and
+   DOCUMENTATION.md are known-stale — carded). Use them to orient fast, then verify
+   against the actual code before you act or answer. When memory and code disagree,
+   the code wins — and **update the memory**: fix the stale auto-memory note (or this
+   file) then and there, so the lie doesn't repeat.
 
 ## Architecture
 
