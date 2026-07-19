@@ -386,6 +386,16 @@
     // Suppress the change-blink during a restore/seek re-emit (not a live
     // transition), same pattern as _radioRestoring below. (HBAKIcye)
     let _tsRestoring = false;
+    // Single-seek policy: after an explicit seek, alignAudioToClock places the
+    // audio ONCE; syncAudio must NOT re-correct drift while the data clock is
+    // still settling toward the target, or a stale/settling clock:update yanks
+    // the audio back and forth (the skip stutter). Suppress corrections until
+    // _seekSettleUntil (armed on state:seek-complete).
+    let _seekSettleUntil = 0;
+    const SEEK_SETTLE_MS = 2000;
+    function _shouldCorrectAudioDrift(drift, nowMs, settleUntil) {
+        return Math.abs(drift) > 0.5 && nowMs >= settleUntil;
+    }
     function handleTrackStatus(data) {
         if (!data || typeof data !== 'object') return;
 
@@ -1254,13 +1264,18 @@
 
             if (canSeek) {
                 const _drift = audio.currentTime - targetSec;
-                if (Math.abs(_drift) > 0.5) {
+                if (_shouldCorrectAudioDrift(_drift, performance.now(), _seekSettleUntil)) {
                     adbg('sync: SEEK', audio.currentTime.toFixed(2), '→', targetSec.toFixed(2),
                         'clock=', messageBus.clockTime.toISOString().slice(11, 23));
                     // Forced re-seek on drift > 0.5s — a clock jump (e.g. B07 data burst)
                     // shows up here as the audible reseek/chop.
                     atel('sync:seek', { from: audio.currentTime, to: targetSec, drift: _drift, headroom: bufSnap(audio).headroom });
                     audio.currentTime = targetSec;
+                } else if (Math.abs(_drift) > 0.5) {
+                    // Within the post-seek settle window: alignAudioToClock already
+                    // placed the audio; let it play, don't yank it (single-seek).
+                    adbg('sync: settle-guard suppressed seek Δ', _drift.toFixed(2));
+                    atel('sync:settle-skip', { drift: _drift, headroom: bufSnap(audio).headroom });
                 } else {
                     adbg('sync: no-seek (Δ', (audio.currentTime - targetSec).toFixed(2), '≤ 0.5s)');
                 }
@@ -1557,6 +1572,9 @@
     // Force immediate audio resync on seek. Delegates to
     // alignAudioToClock which handles both seekable (native currentTime)
     // and non-seekable (?t= reload + seekOffset tracking) cases.
+    // Arm the settle window BEFORE aligning, so the first post-seek clock:update
+    // (possibly stale/settling) can't yank the audio right after we place it.
+    messageBus.on('state:seek-complete', () => { _seekSettleUntil = performance.now() + SEEK_SETTLE_MS; });
     messageBus.on('state:seek-complete', alignAudioToClock);
 
     messageBus.on('state:reset', () => {
