@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="{{ asset('css/components/header.css') }}">
     <link rel="stylesheet" href="{{ asset('css/components/status_footer.css') }}">
     <link rel="stylesheet" href="{{ asset('css/components/player_help.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/audio_output_picker.css') }}">
     {% block styles %}{% endblock %}
     <meta name="theme-color" content="#0a0a0a">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -50,7 +51,9 @@
     <script src="{{ asset('js/utils/circuits.js') }}"></script>
     <script src="{{ asset('js/base.js') }}"></script>
     <script src="{{ asset('js/lib/aac_fmp4.js') }}"></script>
+    <script src="{{ asset('js/audio_telemetry.js') }}"></script>
     <script src="{{ asset('js/components/header.js') }}"></script>
+    <script src="{{ asset('js/audio_output_picker.js') }}"></script>
     <script src="{{ asset('js/components/status_footer.js') }}"></script>
     <script src="{{ asset('js/components/player_help.js') }}"></script>
     <!-- Settings dialog lives on the home page only; here we load it solely to
