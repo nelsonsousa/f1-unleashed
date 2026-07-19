@@ -117,8 +117,9 @@ async def live_session_monitor():
 
     SCHEDULE_REFRESH_INTERVAL = 60 * 60       # 1h — refresh schedule
 
-    # The monitor calls this server's own API; honour the configured port.
-    api_base = f"http://localhost:{os.environ.get('PORT', '1950')}/api/v1"
+    # The monitor calls this server's own API; honour the configured port
+    # (PORT env, else the instance.env override, else 1950).
+    api_base = f"http://localhost:{settings.instance_port()}/api/v1"
 
     last_schedule_refresh = 0
     cached_next_session = None    # {event_name, session_type, session_date, is_testing}

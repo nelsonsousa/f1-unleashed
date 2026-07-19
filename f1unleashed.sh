@@ -8,6 +8,12 @@ PID_FILE="$APP_DIR/.server.pid"
 LOG_FILE="$APP_DIR/server.log"
 VENV_DIR="$APP_DIR/venv"
 
+# Local per-checkout instance overrides (gitignored): PORT, F1_DATA_HOME, etc.
+# `set -a` auto-exports sourced vars so F1_DATA_HOME reaches the app process.
+if [ -f "$APP_DIR/instance.env" ]; then
+    set -a; . "$APP_DIR/instance.env"; set +a
+fi
+
 HOST="${HOST:-0.0.0.0}"
 # Exported so the app process (live session monitor) can address its own API.
 export PORT="${PORT:-1950}"
