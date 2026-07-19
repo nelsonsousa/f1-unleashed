@@ -29,6 +29,12 @@ from app.services.live_capture import live_capture
 logger = logging.getLogger(__name__)
 
 
+def _is_number(v: Any) -> bool:
+    """True for a JSON number (int/float), excluding bool (a JSON `true`/`false`
+    is not a valid numeric arg)."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
 def _log_task_exception(task: "asyncio.Task") -> None:
     """Done-callback for fire-and-forget tasks: surface an exception instead of
     letting it vanish with the task. (M6)"""
@@ -556,6 +562,9 @@ class SessionEngine:
 
     async def handle_command(self, cmd: dict[str, Any]) -> None:
         """Handle a command from a WebSocket client."""
+        if not isinstance(cmd, dict):
+            logger.warning(f"Ignoring non-object command: {cmd!r}")
+            return
         action = cmd.get("cmd", "")
 
         if action == "play":
@@ -564,6 +573,9 @@ class SessionEngine:
             await self._pause()
         elif action == "seek":
             offset = cmd.get("offset", 0.0)
+            if not _is_number(offset):
+                logger.warning(f"Ignoring seek with non-numeric offset: {offset!r}")
+                return
             await self._seek(offset)
         elif action == "seek_live":
             # Snap to the live edge for live engines; ignored for replay.
@@ -588,16 +600,28 @@ class SessionEngine:
                 await self._play()
         elif action == "speed":
             value = cmd.get("value", 1.0)
+            if not _is_number(value):
+                logger.warning(f"Ignoring speed with non-numeric value: {value!r}")
+                return
             await self._set_speed(value)
         elif action == "getLapTelemetry":
             driver = cmd.get("driver", "")
             lap = cmd.get("lap", 0)
+            if not isinstance(driver, str) or not isinstance(lap, int) or isinstance(lap, bool):
+                logger.warning(f"Ignoring getLapTelemetry with bad args: driver={driver!r} lap={lap!r}")
+                return
             await self._send_lap_telemetry(driver, lap, cmd.get("_ws"))
         elif action == "getLastLapTelemetry":
             driver = cmd.get("driver", "")
+            if not isinstance(driver, str):
+                logger.warning(f"Ignoring getLastLapTelemetry with bad driver: {driver!r}")
+                return
             await self._send_last_lap_telemetry(driver, cmd.get("_ws"))
         elif action == "getBestLapTelemetry":
             driver = cmd.get("driver", "")
+            if not isinstance(driver, str):
+                logger.warning(f"Ignoring getBestLapTelemetry with bad driver: {driver!r}")
+                return
             await self._send_best_lap_telemetry(driver, cmd.get("_ws"))
         else:
             logger.warning(f"Unknown command: {action}")
