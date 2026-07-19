@@ -49,10 +49,14 @@ async def websocket_session(websocket: WebSocket, session_name: str, mode: str =
             try:
                 text = await websocket.receive_text()
                 cmd = json.loads(text)
-                cmd["_ws"] = websocket
-                await engine.handle_command(cmd)
             except json.JSONDecodeError:
                 logger.warning(f"Invalid JSON from client {client_id}")
+                continue
+            if not isinstance(cmd, dict):
+                logger.warning(f"Ignoring non-object command from client {client_id}: {cmd!r}")
+                continue
+            cmd["_ws"] = websocket
+            await engine.handle_command(cmd)
 
     except WebSocketDisconnect:
         pass
