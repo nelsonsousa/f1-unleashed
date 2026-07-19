@@ -262,13 +262,16 @@ class SessionEngine:
 
         first_ts = None
         last_ts = None
+        last_line = None   # most recent non-blank line; stays None for an empty file
 
         with open(live_file, "r", encoding="utf-8") as f:
-            # Read first valid timestamp
+            # Read first valid timestamp (tracking the latest non-blank line as we go,
+            # so an empty file simply leaves last_line None instead of raising).
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
+                last_line = line
                 try:
                     msg = _json.loads(line)
                     ts = _parse_timestamp(msg.get("DateTime", ""))
@@ -278,9 +281,7 @@ class SessionEngine:
                 except _json.JSONDecodeError:
                     continue
 
-            # Read last valid timestamp (seek from end)
-            # Read all remaining to find the last one
-            last_line = line
+            # Continue scanning to the end for the last non-blank line.
             for line in f:
                 stripped = line.strip()
                 if stripped:
