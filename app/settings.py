@@ -19,9 +19,53 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# Gitignored per-checkout instance overrides (run two servers side by side).
+# KEY=VALUE lines; defaults = the current single-instance values. An actual
+# environment variable of the same name always wins over the file.
+_INSTANCE_FILE = Path(__file__).resolve().parent.parent / "instance.env"
+
+
+def _parse_instance_file(text: str, key: str) -> Optional[str]:
+    """Return the value for KEY in an instance.env-style body, or None."""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        if k.strip() == key:
+            return v.strip().strip('"').strip("'") or None
+    return None
+
+
+def _instance_override(key: str) -> Optional[str]:
+    """Instance override for KEY: real env var first, else the instance.env file."""
+    env = os.environ.get(key)
+    if env:
+        return env
+    try:
+        return _parse_instance_file(_INSTANCE_FILE.read_text(), key)
+    except OSError:
+        return None
+
+
+def instance_port(default: int = 1950) -> int:
+    """Port this instance serves on (PORT override, else default)."""
+    val = _instance_override("PORT")
+    try:
+        return int(val) if val else default
+    except ValueError:
+        return default
+
 
 def _os_data_home() -> Path:
-    """OS-appropriate data dir (matches the pre-card-27 DATA_DIR default)."""
+    """OS-appropriate data dir (matches the pre-card-27 DATA_DIR default).
+
+    An F1_DATA_HOME instance override (env or instance.env) redirects the WHOLE
+    data home — settings.json, cache, tmp, analysis, telemetry — so a second
+    instance can run without sharing any data with the first."""
+    override = _instance_override("F1_DATA_HOME")
+    if override:
+        return Path(override).expanduser()
     if sys.platform == "win32":
         base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") \
             or str(Path.home() / "AppData" / "Local")
