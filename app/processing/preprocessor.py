@@ -329,6 +329,7 @@ class SessionPreProcessor:
                     total_lines = sum(1 for _ in f)
 
         lines_processed = 0
+        last_ts = None   # timestamp of the last emitted message; drives finalize
 
         try:
             def _on_caught_up():
@@ -393,6 +394,7 @@ class SessionPreProcessor:
                                     self._discover_topic(filtered.topic)
                                     self._bus.emit(filtered.topic, filtered.data, filtered.timestamp)
                                     self._message_count += 1
+                                    last_ts = filtered.timestamp
                             self._gate_buffer = []
                             # Baseline (SessionInfo + DriverList + same-ts
                             # topics) is now emitted. Flush so a reader
@@ -423,6 +425,7 @@ class SessionPreProcessor:
                     continue
 
                 self._message_count += 1
+                last_ts = filtered.timestamp
                 offset_ms = int((filtered.timestamp - self._start_time).total_seconds() * 1000)
 
                 self._discover_topic(filtered.topic)
@@ -449,7 +452,7 @@ class SessionPreProcessor:
             # and emits empty-placeholder rows up to NL_max so every
             # lap has a telem entry.
             if self._telem_proc is not None and self._start_time is not None:
-                last_dt = filtered.timestamp if filtered else self._start_time
+                last_dt = last_ts or self._start_time
                 try:
                     self._telem_proc.finalize_session(last_dt)
                 except Exception:
