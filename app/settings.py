@@ -89,6 +89,7 @@ def _per_type(default: bool) -> dict:
 # Every setting + its default. Nested groups mirror the dialog's sections.
 DEFAULTS: dict[str, Any] = {
     "debug": False,                       # keep transient/ephemeral artefacts
+    "telemetry": False,                   # opt-in diagnostic telemetry sink (audio-pause hunt)
     "cacheDir": "",                       # "" → OS default data home
     "rainbowAiApiKey": "",                # weather-radar overlay
     # Per-session-type capture toggles (practice / qualifying / race).

@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.templating import Jinja2Templates
 from app import settings
-from app.routers import livetiming, livetiming_stream, auth, races, weather, settings as settings_router
+from app.routers import livetiming, livetiming_stream, auth, races, weather, settings as settings_router, telemetry as telemetry_router
 from app.logging_config import setup_logging
 from app.version import get_version, check_latest_release
 from app.services.auth_service import auth_service
@@ -474,6 +474,7 @@ app.include_router(livetiming.router, prefix="/api/v1", tags=["livetiming"])
 app.include_router(livetiming_stream.router, prefix="/api/v1", tags=["livetiming-stream"])
 app.include_router(weather.router, prefix="/api/v1", tags=["weather"])
 app.include_router(settings_router.router, prefix="/api/v1", tags=["settings"])
+app.include_router(telemetry_router.router, prefix="/api/v1", tags=["telemetry"])
 
 
 @app.get("/")
