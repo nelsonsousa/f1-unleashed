@@ -269,6 +269,8 @@ class SessionPreProcessor:
         on_caught_up: Optional[Callable[[], None]] = None,
         on_baseline_ready: Optional[Callable[[], None]] = None,
         force: bool = False,
+        pace: bool = False,
+        speed: float = 1.0,
     ) -> None:
         self._running = True
         # Reprocess (offline --force): delete the existing DB and recreate it
@@ -342,6 +344,8 @@ class SessionPreProcessor:
                 tail_follow=tail_follow,
                 on_caught_up=_on_caught_up if tail_follow else None,
                 stop_follow=self._stop_follow if tail_follow else None,
+                pace=pace,
+                speed=speed,
             ):
                 if not self._running:
                     break
