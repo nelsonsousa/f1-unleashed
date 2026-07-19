@@ -70,4 +70,23 @@ function createAudioTelemetry(opts) {
         a.click();
         URL.revokeObjectURL(a.href);
     };
+
+    // Offload the timeline to the server telemetry subfolder (needs the server
+    // `telemetry` setting on). Beacon so it survives page hide.
+    window.f1audioTelemetryBeacon = function () {
+        try {
+            const sess = (window.SESSION_CONFIG && window.SESSION_CONFIG.sessionId) || 'unknown';
+            const url = '/api/v1/telemetry/audio-timeline?session=' + encodeURIComponent(sess);
+            const body = tel.toJSON();
+            if (navigator.sendBeacon) {
+                navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
+            } else {
+                fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: true });
+            }
+            return true;
+        } catch (e) { console.warn('[audio-telemetry] beacon failed', e); return false; }
+    };
+    window.addEventListener('pagehide', function () {
+        if (tel.isEnabled() && tel.size()) window.f1audioTelemetryBeacon();
+    });
 })();
