@@ -517,6 +517,10 @@ class LiveCaptureService:
                     "-live_start_index", "-3",
                     "-i", url,
                     "-c", "copy",
+                    # Flush the AAC output per packet so the on-disk file grows at
+                    # the ~1.8s segment cadence, not in ~32s buffer-flush bursts —
+                    # smoother live disk edge / less audio lag. (Card 9P9T3tdj)
+                    "-flush_packets", "1",
                     # No -y: ffmpeg would otherwise truncate. We've already
                     # ensured `output_path` doesn't exist via _rotate_audio_segment.
                     str(output_path),

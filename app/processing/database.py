@@ -42,6 +42,10 @@ CREATE TABLE IF NOT EXISTS messages (
     data         TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_msg_topic_offset ON messages (topic, offset_ms);
+-- offset_ms alone: the playback loop's range query runs 60x/s and _data_edge_ms'
+-- MAX(offset_ms) every second; without this they can't use the (topic,offset_ms)
+-- index (topic leads) and full-scan the table. (B04 fiodUrGN)
+CREATE INDEX IF NOT EXISTS idx_msg_offset ON messages (offset_ms);
 
 CREATE TABLE IF NOT EXISTS processing_meta (
     key         TEXT PRIMARY KEY,
@@ -182,20 +186,27 @@ class SessionDatabase:
         at or before offset, chronological — for per-driver append-style
         histories (e.g. driverLaps:*) that the client accumulates and that the
         latest-per-topic restore can't represent."""
+        # Range predicate instead of LIKE 'prefix%': LIKE can't use the
+        # (topic, offset_ms) index and full-scans the table on every seek; a
+        # half-open range [prefix, prefix+'\uffff') seeks the index. '\uffff' is
+        # greater than any byte in our ASCII topics, so it bounds exactly the
+        # prefix-matching rows. (B04 wqMnjDSk)
         rows = self._conn.execute(
-            "SELECT topic, data FROM messages WHERE topic LIKE ? AND offset_ms <= ? "
+            "SELECT topic, data FROM messages "
+            "WHERE topic >= ? AND topic < ? AND offset_ms <= ? "
             "ORDER BY offset_ms",
-            (prefix + "%", max_offset_ms),
+            (prefix, prefix + "\uffff", max_offset_ms),
         ).fetchall()
         return [(r[0], json.loads(r[1])) for r in rows]
 
     def list_lap_telemetry(self, max_offset_ms: int) -> list[tuple[str, int, int]]:
         """(driver, lap, data_length) for every telemetryLap row at or before
         offset — feeds the client's telemetry-availability map."""
+        # Range predicate (index seek) instead of LIKE (full scan). (B04 wqMnjDSk)
         rows = self._conn.execute(
             "SELECT topic, length(data) FROM messages "
-            "WHERE topic LIKE 'telemetryLap:%' AND offset_ms <= ?",
-            (max_offset_ms,),
+            "WHERE topic >= ? AND topic < ? AND offset_ms <= ?",
+            ("telemetryLap:", "telemetryLap:\uffff", max_offset_ms),
         ).fetchall()
         out = []
         for topic, dlen in rows:
