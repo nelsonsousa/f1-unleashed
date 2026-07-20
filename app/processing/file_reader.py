@@ -236,6 +236,14 @@ async def read_jsonl(
                     data=data,
                     timestamp=envelope_ts,
                 )))
+                # Advance the flush window on NON-.z messages too. Without this,
+                # a no-telemetry stretch (red flag, pre-session, cars in pits —
+                # no CarData/Position.z) never advances newest_ts, so RCM /
+                # TrackStatus / SessionStatus / Heartbeat pile in the reorder
+                # buffer un-flushed; the live edge (MAX offset_ms) freezes and
+                # the whole backlog bursts out when telemetry resumes. (B07 2FPsLcpN)
+                if newest_ts is None or envelope_ts > newest_ts:
+                    newest_ts = envelope_ts
 
             # Flush entries older than the reorder window
             if newest_ts and reorder_buffer:
