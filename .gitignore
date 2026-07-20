@@ -50,3 +50,4 @@ docs/release/
 # Internal review notes — not for the repo
 CODE_REVIEW.md
 DOCO_REVIEW.md
+PERF_BATCH.md
