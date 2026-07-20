@@ -142,5 +142,12 @@ async def set_cache_location(body: dict) -> dict:
             logger.exception("cache move failed")
             raise HTTPException(status_code=500, detail=f"move failed: {e}")
 
-    settings_store.save({"cacheDir": str(new)})
+    try:
+        settings_store.save({"cacheDir": str(new)})
+    except OSError as e:
+        logger.exception("cache pointer save failed after move")
+        raise HTTPException(
+            status_code=500,
+            detail=(f"cache files moved to {new} but saving the new location failed: {e}. "
+                    "Set the cache location again once the disk issue is resolved."))
     return {"cacheDir": str(new), "moved": moved, "restartRequired": True}

@@ -111,13 +111,15 @@ def get(path: str, default: Any = None) -> Any:
 
 
 def save(updates: dict) -> dict:
-    """Deep-merge `updates` into the current settings, persist, return the lot."""
+    """Deep-merge `updates` into the current settings, persist, return the lot.
+
+    A write failure (disk full / permissions) propagates as OSError — the router
+    maps it to a 500 — rather than being swallowed into a false 200. The in-memory
+    cache is updated only after a successful persist, so a failed save never leaves
+    a phantom value that reverts on restart."""
     global _cache
     merged = _deep_merge(load(), updates or {})
+    DATA_HOME.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(merged, indent=2))
     _cache = merged
-    try:
-        DATA_HOME.mkdir(parents=True, exist_ok=True)
-        SETTINGS_FILE.write_text(json.dumps(merged, indent=2))
-    except OSError as e:
-        logger.error(f"settings save failed: {e}")
     return merged
