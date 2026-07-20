@@ -127,22 +127,25 @@ class SessionDatabase:
 
         Returns {topic: {"data": ..., "offset_ms": ...}}.
         """
-        rows = self._conn.execute(
-            """SELECT topic, data, offset_ms FROM messages
-               WHERE rowid IN (
-                   SELECT MAX(rowid) FROM messages
-                   WHERE offset_ms <= ?
-                   GROUP BY topic
-               )""",
-            (offset_ms,),
-        ).fetchall()
+        # Per-topic index seeks instead of a full GROUP-BY scan of the whole
+        # table. The old MAX(rowid) GROUP BY plans as a full covering scan of
+        # idx_msg_topic_offset (offset-independent, ~100ms on 500k rows) and then
+        # discards the dominant excluded topics (position, telemetryLap:) in
+        # Python. Here the excludes are skipped BEFORE querying, and each topic's
+        # latest row <= offset is a fast index seek. (B04 JiRvaHNt)
         out = {}
-        for topic, data, ofs in rows:
+        for (topic,) in self._conn.execute("SELECT DISTINCT topic FROM messages"):
             if topic in _RESTORE_EXCLUDE_EXACT:
                 continue
             if any(topic.startswith(p) for p in _RESTORE_EXCLUDE_PREFIXES):
                 continue
-            out[topic] = {"data": json.loads(data), "offset_ms": ofs}
+            row = self._conn.execute(
+                "SELECT data, offset_ms FROM messages "
+                "WHERE topic = ? AND offset_ms <= ? ORDER BY offset_ms DESC LIMIT 1",
+                (topic, offset_ms),
+            ).fetchone()
+            if row is not None:
+                out[topic] = {"data": json.loads(row[0]), "offset_ms": row[1]}
         return out
 
     def get_messages_in_range(

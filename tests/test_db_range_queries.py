@@ -50,5 +50,42 @@ class DbRangeQueries(unittest.TestCase):
         self.assertIn("idx_msg_offset", names)
 
 
+class GetStateAt(unittest.TestCase):
+    """get_state_at rewrite (per-topic seeks) must match the old contract:
+    latest row per topic at/before offset, with the excluded topics dropped."""
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.db = SessionDatabase(self.dir, db_path=self.dir / "s.db")
+        self.db.open()
+        self.db.save_messages([
+            (100, "", "driverGap:44", json.dumps({"g": 1})),
+            (200, "", "driverGap:44", json.dumps({"g": 2})),   # latest <= 250
+            (300, "", "driverGap:44", json.dumps({"g": 3})),   # after 250 — excluded by offset
+            (150, "", "trackStatus", json.dumps({"s": "green"})),
+            (50, "", "position", json.dumps({"p": 1})),                 # excluded (exact)
+            (60, "", "raceControlMessage", json.dumps({"m": "x"})),     # excluded (exact)
+            (70, "", "telemetryLap:44:1", json.dumps([1, 2])),          # excluded (prefix)
+            (80, "", "liveTelemetry:44", json.dumps({"x": 1})),         # excluded (prefix)
+        ])
+
+    def tearDown(self):
+        self.db.close()
+
+    def test_latest_per_topic_with_offset_cutoff_and_excludes(self):
+        state = self.db.get_state_at(250)
+        self.assertEqual(set(state.keys()), {"driverGap:44", "trackStatus"})
+        self.assertEqual(state["driverGap:44"], {"data": {"g": 2}, "offset_ms": 200})
+        self.assertEqual(state["trackStatus"], {"data": {"s": "green"}, "offset_ms": 150})
+
+    def test_offset_before_any_row_is_empty(self):
+        self.assertEqual(self.db.get_state_at(10), {})
+
+    def test_excluded_topics_never_returned(self):
+        state = self.db.get_state_at(1000)
+        self.assertNotIn("position", state)
+        self.assertNotIn("raceControlMessage", state)
+        self.assertFalse(any(k.startswith(("telemetryLap:", "liveTelemetry:")) for k in state))
+
+
 if __name__ == "__main__":
     unittest.main()
