@@ -13,6 +13,7 @@ Two modes:
 import asyncio
 import json
 import logging
+import time
 import zlib
 import base64
 from dataclasses import dataclass
@@ -88,6 +89,10 @@ async def read_jsonl(
     poll_interval: float = 0.5,
     on_caught_up: Optional[Callable] = None,
     stop_follow: Optional[asyncio.Event] = None,
+    pace: bool = False,
+    speed: float = 1.0,
+    _now: Callable[[], float] = time.monotonic,
+    _sleep: Callable = asyncio.sleep,
 ) -> AsyncIterator[RawMessage]:
     """Read and process messages from a session's JSONL file.
 
@@ -98,6 +103,13 @@ async def read_jsonl(
         poll_interval: Seconds between tail polls (only when tail_follow=True)
         stop_follow: If set while tail-following, stop at the next EOF so the
             consumer can finalize (used when a live capture ends).
+        pace: Live-SIMULATION mode — sleep between lines so each is released at
+            its envelope (arrival) timestamp relative to the first, reproducing
+            the real arrival cadence (incl. the reorder-window burst that a fast
+            whole-file read hides). Paces the READ (input), so the reorder buffer
+            sees paced arrivals.
+        speed: wall-time multiplier for `pace` (2.0 = 2x real speed).
+        _now, _sleep: injectable monotonic clock + async sleep (deterministic tests).
 
     Yields:
         RawMessage tuples in chronological order (reordered within 1s window)
@@ -112,6 +124,21 @@ async def read_jsonl(
     session_ended = False
     yield_count = 0
     caught_up = False
+
+    # Live-sim pacing: hold each line until its envelope timestamp (relative to
+    # the first) elapses in (scaled) wall time. Injectable clock/sleep for tests.
+    _pace_start_wall = None
+    _pace_start_ts = None
+
+    async def _pace(ts):
+        nonlocal _pace_start_wall, _pace_start_ts
+        if _pace_start_ts is None:
+            _pace_start_ts = ts
+            _pace_start_wall = _now()
+            return
+        delay = (ts - _pace_start_ts).total_seconds() / speed - (_now() - _pace_start_wall)
+        if delay > 0:
+            await _sleep(delay)
 
     with open(live_file, "r", encoding="utf-8") as f:
         while True:
@@ -175,6 +202,9 @@ async def read_jsonl(
             if not envelope_ts:
                 continue
 
+            if pace:
+                await _pace(envelope_ts)
+
             # Decompress .z topics
             if topic.endswith('.z') and isinstance(data, str):
                 try:
@@ -206,6 +236,14 @@ async def read_jsonl(
                     data=data,
                     timestamp=envelope_ts,
                 )))
+                # Advance the flush window on NON-.z messages too. Without this,
+                # a no-telemetry stretch (red flag, pre-session, cars in pits —
+                # no CarData/Position.z) never advances newest_ts, so RCM /
+                # TrackStatus / SessionStatus / Heartbeat pile in the reorder
+                # buffer un-flushed; the live edge (MAX offset_ms) freezes and
+                # the whole backlog bursts out when telemetry resumes. (B07 2FPsLcpN)
+                if newest_ts is None or envelope_ts > newest_ts:
+                    newest_ts = envelope_ts
 
             # Flush entries older than the reorder window
             if newest_ts and reorder_buffer:
