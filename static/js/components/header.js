@@ -386,6 +386,16 @@
     // Suppress the change-blink during a restore/seek re-emit (not a live
     // transition), same pattern as _radioRestoring below. (HBAKIcye)
     let _tsRestoring = false;
+    // Single-seek policy: after an explicit seek, alignAudioToClock places the
+    // audio ONCE; syncAudio must NOT re-correct drift while the data clock is
+    // still settling toward the target, or a stale/settling clock:update yanks
+    // the audio back and forth (the skip stutter). Suppress corrections until
+    // _seekSettleUntil (armed on state:seek-complete).
+    let _seekSettleUntil = 0;
+    const SEEK_SETTLE_MS = 2000;
+    function _shouldCorrectAudioDrift(drift, nowMs, settleUntil) {
+        return Math.abs(drift) > 0.5 && nowMs >= settleUntil;
+    }
     function handleTrackStatus(data) {
         if (!data || typeof data !== 'object') return;
 
@@ -794,6 +804,12 @@
         // its actual playback position without depending on this IIFE's
         // private state.
         window.f1audioElement = audio;
+        // Audio telemetry probes (opt-in; no-op unless enabled). `waiting`/
+        // `stalled` are the underrun (the pause itself); `playing` is recovery.
+        ['play', 'playing', 'pause', 'waiting', 'stalled', 'seeking', 'seeked',
+         'ended', 'error', 'ratechange', 'suspend'].forEach(function (evt) {
+            audio.addEventListener(evt, function () { atel('el:' + evt, bufSnap(audio)); });
+        });
         // Manual audio delay. The PDT broadcast anchor is sometimes offset (see
         // README known issues), so let the user shift the audio against the data
         // clock. `offsetSeconds` is `off` in clockToAudioSec: positive → audio
@@ -855,6 +871,34 @@
         // Also try once we have a confirmed clock; loadedmetadata may
         // not fire reliably on chunked transfer.
         setTimeout(alignAudioToClock, 500);
+    }
+
+    // ── Audio telemetry probe helpers (opt-in; no-op unless enabled) ─────
+    // Record an audio-pipeline event with data-clock context, so an audio stall
+    // can be correlated with the data-stream (B07) + the speaker recording.
+    function atel(type, fields) {
+        const t = window.f1audioTelemetry;
+        if (!t || !t.isEnabled()) return;
+        const f = fields || {};
+        try {
+            if (typeof messageBus !== 'undefined') {
+                if (messageBus.clockTime) f.clockMs = messageBus.clockTime.getTime();
+                if (typeof messageBus.getCurrentOffset === 'function') f.offset = messageBus.getCurrentOffset();
+            }
+        } catch (e) { /* context is best-effort */ }
+        t.record(type, f);
+    }
+    // Buffered-headroom snapshot: seconds of audio ahead of the playhead (the
+    // margin before an underrun) plus element readyState/paused.
+    function bufSnap(a) {
+        const o = { curr: null, bufEnd: null, headroom: null,
+                    ready: a && a.readyState, paused: a && a.paused };
+        try {
+            o.curr = a.currentTime;
+            const b = a.buffered;
+            if (b && b.length) { o.bufEnd = b.end(b.length - 1); o.headroom = o.bufEnd - a.currentTime; }
+        } catch (e) { /* buffered can throw */ }
+        return o;
     }
 
     // ── MSE audio (Route A: client transmux) ─────────────────────────────
@@ -941,6 +985,7 @@
             // growth (a live file grows; a replay returns 416 — same code).
             async function poll() {
                 let again = 3000;
+                const t0 = performance.now();
                 try {
                     const resp = await fetch(url, { headers: { Range: 'bytes=' + fetched + '-' + (fetched + FETCH - 1) } });
                     if (resp.status === 206 || resp.status === 200) {
@@ -949,14 +994,23 @@
                         if (mux.ready()) state.audio.totalAudioSec = mux.duration();  // true length → clockToAudioSec
                         if (buf.length >= FETCH) again = 0;
                         setWindow(audio.currentTime);                        // extend with newly-indexed frames
+                        atel('fetch', { status: resp.status, bytes: buf.length, fetched: fetched, ms: Math.round(performance.now() - t0) });
+                    } else {
+                        // 416 at the live edge = no new audio yet (client starved) — worth recording.
+                        atel('fetch', { status: resp.status, bytes: 0, fetched: fetched, ms: Math.round(performance.now() - t0) });
                     }
-                } catch (e) { adbg('MSE fetch error', e); }
+                } catch (e) { adbg('MSE fetch error', e); atel('fetch:error', { fetched: fetched, err: String((e && e.message) || e) }); }
                 pollTimer = setTimeout(poll, again);
             }
 
             // Re-window on a seek (lands on the exact frame); also extend during playback.
             state.audio.mseSeek = function (targetSec) { setWindow(targetSec); };
-            audio.addEventListener('timeupdate', () => setWindow(audio.currentTime));
+            let _telTick = 0;
+            audio.addEventListener('timeupdate', function () {
+                setWindow(audio.currentTime);
+                const now = performance.now();
+                if (now - _telTick >= 1000) { _telTick = now; atel('tick', bufSnap(audio)); }   // ~1/s headroom trace
+            });
 
             poll();
         });
@@ -1209,10 +1263,19 @@
             }
 
             if (canSeek) {
-                if (Math.abs(audio.currentTime - targetSec) > 0.5) {
+                const _drift = audio.currentTime - targetSec;
+                if (_shouldCorrectAudioDrift(_drift, performance.now(), _seekSettleUntil)) {
                     adbg('sync: SEEK', audio.currentTime.toFixed(2), '→', targetSec.toFixed(2),
                         'clock=', messageBus.clockTime.toISOString().slice(11, 23));
+                    // Forced re-seek on drift > 0.5s — a clock jump (e.g. B07 data burst)
+                    // shows up here as the audible reseek/chop.
+                    atel('sync:seek', { from: audio.currentTime, to: targetSec, drift: _drift, headroom: bufSnap(audio).headroom });
                     audio.currentTime = targetSec;
+                } else if (Math.abs(_drift) > 0.5) {
+                    // Within the post-seek settle window: alignAudioToClock already
+                    // placed the audio; let it play, don't yank it (single-seek).
+                    adbg('sync: settle-guard suppressed seek Δ', _drift.toFixed(2));
+                    atel('sync:settle-skip', { drift: _drift, headroom: bufSnap(audio).headroom });
                 } else {
                     adbg('sync: no-seek (Δ', (audio.currentTime - targetSec).toFixed(2), '≤ 0.5s)');
                 }
@@ -1509,6 +1572,9 @@
     // Force immediate audio resync on seek. Delegates to
     // alignAudioToClock which handles both seekable (native currentTime)
     // and non-seekable (?t= reload + seekOffset tracking) cases.
+    // Arm the settle window BEFORE aligning, so the first post-seek clock:update
+    // (possibly stale/settling) can't yank the audio right after we place it.
+    messageBus.on('state:seek-complete', () => { _seekSettleUntil = performance.now() + SEEK_SETTLE_MS; });
     messageBus.on('state:seek-complete', alignAudioToClock);
 
     messageBus.on('state:reset', () => {

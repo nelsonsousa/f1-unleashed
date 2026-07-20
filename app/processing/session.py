@@ -25,6 +25,7 @@ from app.processing.database import SessionDatabase
 from app.processing.file_reader import read_jsonl, load_subscribe_json, _parse_timestamp
 from app.processing.preprocessor import SessionPreProcessor
 from app.services.live_capture import live_capture
+from app.services import telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -1096,13 +1097,23 @@ class SessionEngine:
 
         if data_healthy and audio_ms is not None:
             edge = min(data_ms, audio_ms)          # both healthy → lagging stream limits
+            driver = "data" if data_ms <= audio_ms else "audio"
         elif audio_ms is not None:
             edge = audio_ms                        # data stalled/absent → audio drives
+            driver = "audio-only"
         elif data_ms is not None:
             edge = data_ms                         # audio stalled/absent → data drives
+            driver = "data-only"
         else:
             return None
-        return max(0, edge - int(LIVE_EDGE_BUFFER_S * 1000))
+        capped = max(0, edge - int(LIVE_EDGE_BUFFER_S * 1000))
+        # Telemetry: the min(data,audio) cap decision — unique server-side context
+        # for an audio pause (which stream held the playhead back). No-op unless on.
+        telemetry.record(self._session_name, "cap", {
+            "dataMs": data_ms, "audioMs": audio_ms, "dataHealthy": data_healthy,
+            "driver": driver, "edgeMs": edge, "cappedMs": capped,
+        })
+        return capped
 
     # ── Duration Tracking (live mode) ──
 

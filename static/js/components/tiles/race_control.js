@@ -17,6 +17,12 @@
     let champConstructors = [];
     let radioClips = [];          // team radio (card 8): {num, tla, file, utc}
     const _radioSeen = new Set();
+    // Coalesce renders: the server replays each message individually on a
+    // restore/seek, and the RCM/radio history arrives as a burst AFTER
+    // state:seek-complete — so a per-message renderAll is O(N²). Collapse all
+    // renders within an animation frame into ONE paint (ordering-independent,
+    // same pattern as standings.js). (B05 pfH0yVo7)
+    let _renderPending = false;
 
     // SVG sizing/colour comes from CSS (no presentational attrs on the markup).
     const RADIO_PLAY_SVG = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
@@ -248,6 +254,12 @@
     }
 
     function renderAll() {
+        if (_renderPending) return;
+        _renderPending = true;
+        requestAnimationFrame(function () { _renderPending = false; renderAllNow(); });
+    }
+
+    function renderAllNow() {
         const rcm = document.getElementById('rcPaneRcm');
         const radio = document.getElementById('rcPaneRadio');
         const peck = document.getElementById('rcPanePecking');
