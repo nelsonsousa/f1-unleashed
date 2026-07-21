@@ -401,6 +401,36 @@ The data directory holds:
 * **analysis**: supplemental data produced by the backend processing
 * **tmp**: transient per-session pre-processed DBs
 
+### Storage footprint
+
+Approximate on-disk sizes per session (they scale with session length, incidents,
+and how many cars are running):
+
+| Component | Practice / Qualifying / Sprint / Sprint-Q | Race |
+|---|---|---|
+| `live.jsonl` + `subscribe.json` + weather | ~20 MB | ~50 MB |
+| `commentary.aac` (64 kbps ≈ 29 MB per broadcast-hour) | ~30 MB (~1 h) | ~60 MB (~2 h) |
+
+Per **weekend** (≈ 3 practice + qualifying + race, or the sprint equivalent):
+
+| | Data | Audio | Total |
+|---|---|---|---|
+| Everything | ~150 MB | ~150 MB | **~300 MB** |
+| Skipping audio | ~150 MB | — | **~150 MB** |
+
+The **transient pre-processed DB** under `tmp/` adds **~100–200 MB per session
+while a client is viewing it**, but it's scratch — built on demand and deleted on
+disconnect, so it never accumulates (unless `debug` is on, below).
+
+**Keep / skip guidance:**
+- **`keepFiles.{type}`** (default on) — turn off for a session type to auto-clean
+  its downloaded files (jsonl, audio, radio) after the session, saving disk.
+- **Skip audio** — the largest single component; not capturing it (or deleting
+  `commentary.aac`) roughly halves a weekend's footprint (~300 MB → ~150 MB).
+- **`debug`** (default off) — keeps the transient scratch DB and temp files
+  instead of deleting them on disconnect. For troubleshooting only; with it on the
+  per-session DBs persist and accumulate (~100–200 MB each).
+
 ---
 
 ## Replays vs live
