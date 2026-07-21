@@ -69,6 +69,12 @@
 .sf-hbox.h-red    { background: rgba(255, 59, 48, 0.22); color: #ff4d42; }
 .sf-hbox.h-off    { background: rgba(255, 255, 255, 0.06); color: #7a828c; }  /* session ended — neutral */
 
+/* Data-buf reprocess state (ZpJetLOo): the label colours by build state —
+   red = build failed, yellow = rebuilding, green = built/caught up. */
+.sf-label.sf-buf-red    { color: #ff4d42; }
+.sf-label.sf-buf-yellow { color: #ffcc00; }
+.sf-label.sf-buf-green  { color: #3ad24d; }
+
 @keyframes sf-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.35; }
