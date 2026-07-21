@@ -123,6 +123,7 @@ class SessionEngine:
         self._data_live = True  # live: raw data edge advanced recently (stream light)
         self._preprocess_done = asyncio.Event()
         self._preprocess_error: Optional[str] = None   # set if the build failed (H5)
+        self._scan_pct: float = 0.0                     # latest build progress % (for the Data-buf colour, ZpJetLOo)
         self._bg_tasks: set = set()   # keep refs to fire-and-forget tasks (M6)
         # Set once the offset-0 baseline (driverList, trackGeometry,
         # trackCircuit, sessionInfo) is committed to the DB. add_client waits
@@ -361,6 +362,7 @@ class SessionEngine:
 
     def _on_preprocess_progress(self, pct: float) -> None:
         """Callback from pre-processor."""
+        self._scan_pct = pct
         self._spawn_bg(self._broadcast({
             "topic": "state:scan-progress",
             "data": {"pct": pct},
@@ -497,6 +499,15 @@ class SessionEngine:
             await self._send_to_client(ws, {
                 "topic": "error",
                 "data": {"message": f"Session build failed: {self._preprocess_error}"},
+            })
+        else:
+            # Reprocess state for the status-footer Data-buf colour (ZpJetLOo): a
+            # reused/live-capture DB emits no scan:progress, so tell this client the
+            # current build state on connect — 100 = ready (green), else the
+            # in-progress pct (yellow). Build failures go red via the branch above.
+            await self._send_to_client(ws, {
+                "topic": "state:scan-progress",
+                "data": {"pct": 100.0 if self._preprocess_done.is_set() else self._scan_pct},
             })
 
         # For live mode: jump to the live edge ONLY on the first client
