@@ -1366,8 +1366,15 @@
     });
 
     // Live events: only add if offset is beyond all existing markers
-    function addLiveEvent(topic, data) {
-        const offset_ms = Math.round(messageBus.getCurrentOffset() * 1000);
+    function addLiveEvent(topic, data, payloadOffsetMs) {
+        // Stamp the marker with the PAYLOAD offset_ms (ms from session start),
+        // not the current playback clock — otherwise a seek/restore re-emit places
+        // the marker at the pre-seek clock position instead of the event's real
+        // one. Fall back to the clock only for a genuinely-live emission with no
+        // payload offset. (hQWTdFtn)
+        const offset_ms = (typeof payloadOffsetMs === 'number')
+            ? payloadOffsetMs
+            : Math.round(messageBus.getCurrentOffset() * 1000);
         const maxOffset = state.events.length > 0
             ? Math.max(...state.events.map(e => e.offset_ms))
             : -1;
@@ -1376,7 +1383,7 @@
         renderEventMarkers(state.events);
     }
 
-    messageBus.on('event', (data) => addLiveEvent('event', data));
+    messageBus.on('event', (data, offset_ms) => addLiveEvent('event', data, offset_ms));
 
     // Audio sync on clock updates
     messageBus.on('clock:update', syncAudio);
