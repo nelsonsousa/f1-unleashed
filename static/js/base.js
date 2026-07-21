@@ -438,8 +438,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (targetSession) {
         try {
+            let _autoplayed = false;
             messageBus.on('session:loaded', () => {
-                // Auto-play — use setTimeout to let state:restore arrive first
+                // Auto-play ONCE on the initial load (setTimeout lets state:restore
+                // arrive first). session:loaded ALSO fires on WS auto-reconnect —
+                // don't force-resume there, or a reconnect overrides a user's pause;
+                // the server's state:full already restored the correct isPlaying. (7ytMMmbG)
+                if (_autoplayed) return;
+                _autoplayed = true;
                 setTimeout(() => messageBus.send({ cmd: 'play' }), 100);
             });
             await messageBus.connect(targetSession);
