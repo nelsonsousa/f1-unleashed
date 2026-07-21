@@ -716,30 +716,35 @@ class LiveTimingFetcher:
         for messages in results:
             all_messages.extend(messages)
 
-        # Sort by timestamp
-        all_messages.sort(key=lambda m: m["timestamp"])
+        def _sort_and_write():
+            # Sort by timestamp
+            all_messages.sort(key=lambda m: m["timestamp"])
+            logger.info(f"Fetched {len(all_messages)} total messages")
 
-        logger.info(f"Fetched {len(all_messages)} total messages")
+            # Write live.jsonl
+            with open(live_file, "w", encoding="utf-8") as f:
+                for msg in all_messages:
+                    line = {
+                        "Type": msg["topic"],
+                        "Json": msg["data"],
+                        "DateTime": msg["timestamp"].isoformat(),
+                    }
+                    f.write(json.dumps(line) + "\n")
 
-        # Write live.jsonl
-        with open(live_file, "w", encoding="utf-8") as f:
-            for msg in all_messages:
-                line = {
-                    "Type": msg["topic"],
-                    "Json": msg["data"],
-                    "DateTime": msg["timestamp"].isoformat(),
-                }
-                f.write(json.dumps(line) + "\n")
+            # Write subscribe.json (initial state)
+            subscribe_data = {}
+            if session_info_json:
+                subscribe_data["SessionInfo"] = session_info_json
+            if ec_data:
+                subscribe_data["ExtrapolatedClock"] = ec_data[0]["data"]
 
-        # Write subscribe.json (initial state)
-        subscribe_data = {}
-        if session_info_json:
-            subscribe_data["SessionInfo"] = session_info_json
-        if ec_data:
-            subscribe_data["ExtrapolatedClock"] = ec_data[0]["data"]
+            with open(subscribe_file, "w", encoding="utf-8") as f:
+                json.dump(subscribe_data, f, indent=2)
 
-        with open(subscribe_file, "w", encoding="utf-8") as f:
-            json.dump(subscribe_data, f, indent=2)
+        # Offloaded — sorting up to ~1M messages and serializing/writing a
+        # live.jsonl that can approach ~1GB must not block the event loop
+        # (a download otherwise stalls playback/SSE for seconds). (B03 4WOntwkx)
+        await asyncio.to_thread(_sort_and_write)
 
         logger.info(f"Session data saved to {cache_dir}")
 

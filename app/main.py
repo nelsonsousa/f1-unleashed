@@ -178,11 +178,12 @@ async def live_session_monitor():
                             # Notify once per session (gated by settings, card 27)
                             if f"{notification_key}_started" not in _sent_notifications:
                                 if settings.get("ntfy.sessionLive", True):
-                                    send_notification(
+                                    await asyncio.to_thread(
+                                        send_notification,
                                         "F1 Session LIVE",
                                         f"{live_event} - {live_type} is now LIVE!",
                                         priority="urgent",
-                                        tags="checkered_flag,formula1"
+                                        tags="checkered_flag,formula1",
                                     )
                                 _sent_notifications.add(f"{notification_key}_started")
 
@@ -325,11 +326,12 @@ async def live_session_monitor():
                         if 0 < mins_until <= lead_min:
                             notify_key = f"{s['event_name']}_{s['session_type']}_presession"
                             if notify_key not in _sent_notifications:
-                                send_notification(
+                                await asyncio.to_thread(
+                                    send_notification,
                                     "F1 Session Starting Soon",
                                     f"{s['event_name']} - {s['session_type']} starts in {int(mins_until)} minutes",
                                     priority="high",
-                                    tags="clock,formula1"
+                                    tags="clock,formula1",
                                 )
                                 _sent_notifications.add(notify_key)
 
@@ -356,11 +358,12 @@ async def live_session_monitor():
                                     auth_status = auth_service.get_status()
 
                                     if not auth_status.is_authenticated:
-                                        send_notification(
+                                        await asyncio.to_thread(
+                                            send_notification,
                                             "F1 Login Required",
                                             f"{s['event_name']} - {s['session_type']} in {hours_until:.0f}h.\n\nNot logged in. Please log in to capture live timing.",
                                             priority="urgent" if hours_until <= 3 else "high",
-                                            tags="warning,formula1"
+                                            tags="warning,formula1",
                                         )
                                         _sent_notifications.add(notify_key)
                                     elif (auth_status.expires_in_hours is not None
@@ -369,11 +372,12 @@ async def live_session_monitor():
                                             msg = f"{s['event_name']} - {s['session_type']} in {hours_until:.0f}h.\n\nToken expires in {auth_status.expires_in_hours:.0f}h — before the session. Please re-login."
                                         else:
                                             msg = f"{s['event_name']} - {s['session_type']} in {hours_until:.0f}h.\n\nToken expires in {auth_status.expires_in_hours:.0f}h. Please re-login."
-                                        send_notification(
+                                        await asyncio.to_thread(
+                                            send_notification,
                                             "F1 Login Expiring",
                                             msg,
                                             priority="urgent" if hours_until <= 3 else "high",
-                                            tags="warning,formula1"
+                                            tags="warning,formula1",
                                         )
                                         _sent_notifications.add(notify_key)
 
