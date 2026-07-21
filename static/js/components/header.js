@@ -61,8 +61,6 @@
             isMuted: true,
             volume: parseFloat(localStorage.getItem('audioVolume') ?? '80') / 100,
             offsetSeconds: 0,        // user-tunable shift (positive → audio plays later)
-            decoupled: false,        // when true, syncAudio is suppressed; user controls audio
-            seekOffset: 0,           // server-side ?t= seek position (s); added to currentTime when computing displayed-time
             mse: false,              // true → audio is an MSE SourceBuffer (seekable; never ?t=-reload)
             mseSeek: null,           // fn(targetSec): re-window the SourceBuffer around a far seek
         },
@@ -386,16 +384,6 @@
     // Suppress the change-blink during a restore/seek re-emit (not a live
     // transition), same pattern as _radioRestoring below. (HBAKIcye)
     let _tsRestoring = false;
-    // Single-seek policy: after an explicit seek, alignAudioToClock places the
-    // audio ONCE; syncAudio must NOT re-correct drift while the data clock is
-    // still settling toward the target, or a stale/settling clock:update yanks
-    // the audio back and forth (the skip stutter). Suppress corrections until
-    // _seekSettleUntil (armed on state:seek-complete).
-    let _seekSettleUntil = 0;
-    const SEEK_SETTLE_MS = 2000;
-    function _shouldCorrectAudioDrift(drift, nowMs, settleUntil) {
-        return Math.abs(drift) > 0.5 && nowMs >= settleUntil;
-    }
     function handleTrackStatus(data) {
         if (!data || typeof data !== 'object') return;
 
@@ -818,7 +806,9 @@
             if (!state.audio.isReady || !isFinite(sec)) { updateAudioDelayInput(); return; }
             state.audio.offsetSeconds = sec;
             updateAudioDelayInput();
-            alignAudioToClock();   // re-pull audio to the corrected position now
+            // Audio-only re-seek: the delay folds into clockToAudioSec, so
+            // re-placing the audio at the current data clock applies it. (B05)
+            if (messageBus.clockTime) placeAudioAtClock(messageBus.clockTime.getTime(), true);
             syncAudio();
         }
         // Absolute (Delay input box, ss.SSS) and relative (tv_sync.js) entry points.
@@ -865,12 +855,13 @@
         if (state.audio.mse) startMseAudio(audio, audioUrl);
         else audio.src = audioUrl;
 
-        // Once we have an initial clock position, align the audio with the data
+        // Once we have an initial clock position, place the audio at the data
         // clock so they start together (native seek on the seekable buffer).
-        audio.addEventListener('loadedmetadata', alignAudioToClock, { once: true });
+        const _alignOnce = () => { if (messageBus.clockTime) placeAudioAtClock(messageBus.clockTime.getTime(), true); };
+        audio.addEventListener('loadedmetadata', _alignOnce, { once: true });
         // Also try once we have a confirmed clock; loadedmetadata may
         // not fire reliably on chunked transfer.
-        setTimeout(alignAudioToClock, 500);
+        setTimeout(_alignOnce, 500);
     }
 
     // ── Audio telemetry probe helpers (opt-in; no-op unless enabled) ─────
@@ -1050,14 +1041,6 @@
         return null;                                       // past the last segment → no audio here
     }
 
-    // Reload audio at the offset that matches the current data clock.
-    // Used on initial load and after seek to keep non-seekable streams
-    // in sync (canSeek streams set currentTime in syncAudio instead).
-    //
-    // If the data clock hasn't reached audio_start_utc yet (capture
-    // started LATER than the data feed — common on long pre-shows),
-    // pause the audio entirely so it doesn't race ahead. We'll re-fire
-    // alignAudioToClock when the data clock catches up.
     // Diagnostic: is time `t` inside any buffered range of the element?
     function targetWithinBuffered(audio, t) {
         for (let i = 0; i < audio.buffered.length; i++) {
@@ -1066,76 +1049,63 @@
         return false;
     }
 
-    function alignAudioToClock() {
+    // THE audio-seek primitive (B05). Positions the <audio> element so the
+    // audible content matches the data-clock instant `clockMs` — the manual
+    // delay folds in via clockToAudioSec's offsetSeconds, so "seek audio to Y"
+    // is exactly this call. Everything routes through here: init, explicit
+    // seek (hard=true, place exactly), and the continuous playback drift-nudge
+    // (hard=false, only correct sustained drift > AUDIO_NUDGE_S so a steady
+    // clock:update stream doesn't thrash the element). Returns:
+    //   'ok'      — positioned (or already within tolerance)
+    //   'gap'     — no audio content at this instant (pre-audio / inter-segment
+    //               gap / past end) → element paused
+    //   'unready' — element/clock/source not ready yet
+    function placeAudioAtClock(clockMs, hard) {
         const audio = state.audio.element;
-        if (!audio || !state.audio.startUtc || !messageBus.clockTime) {
-            adbg('align: bail', { audio: !!audio, startUtc: !!state.audio.startUtc, clock: !!messageBus.clockTime });
-            return;
-        }
-        let targetSec = clockToAudioSec(messageBus.clockTime.getTime());
-        adbg('align@seek-complete: clock=', messageBus.clockTime.toISOString().slice(11, 23),
-            'target=', targetSec == null ? null : targetSec.toFixed(2),
-            'cur=', audio.currentTime.toFixed(2), 'playState=', state.audio.playState, 'paused=', audio.paused);
-        // In an inter-segment gap (I15): no audio for this data-time → pause.
-        if (targetSec === null) { if (!audio.paused) audio.pause(); return; }
-        // Clamp to 0 instead of pausing — a user nudge that pushes
-        // target past the start of the audio file should land at
-        // byte 0, not be silent. (Live capture: audio resumes.)
+        if (!audio || !state.audio.startUtc) return 'unready';
+        let targetSec = clockToAudioSec(clockMs);
+        // In an inter-segment gap / before the audio window / past the end
+        // (I15): no audio for this data-time → pause.
+        if (targetSec === null) { if (!audio.paused) audio.pause(); return 'gap'; }
+        // Clamp to 0 — a delay/nudge that pushes the target before byte 0
+        // should land at the start, not fall silent.
         if (targetSec < 0) targetSec = 0;
-        const canSeek = audio.seekable && audio.seekable.length > 0
+        const seekable = audio.seekable && audio.seekable.length > 0
             && audio.seekable.end(audio.seekable.length - 1) > 0;
-        if (canSeek) {
-            // Runs on an EXPLICIT seek (state:seek-complete) + init — follow it
-            // exactly, NO deadband (small skips must not be lost). Continuous-drift
-            // thrash protection lives in syncAudio, not here. Native seek is cheap.
-            if (Math.abs(audio.currentTime - targetSec) > 0.1) {
-                adbg('align: SEEK', audio.currentTime.toFixed(2), '→', targetSec.toFixed(2));
-                audio.currentTime = targetSec;
-            }
-            // MSE window: if the target isn't buffered, re-window around it (the
-            // SourceBuffer only holds ~12 min; far seeks fall outside it).
-            if (state.audio.mse && state.audio.mseSeek && !targetWithinBuffered(audio, targetSec)) {
-                adbg('align: target unbuffered → MSE re-window', targetSec.toFixed(1));
-                state.audio.mseSeek(targetSec);
-            }
-            return;
+        // Past the true end of a completed replay file → pause (segment map
+        // already returns null past the last segment, so this only guards the
+        // single-anchor fallback).
+        if (seekable && isFinite(audio.duration) && targetSec > audio.duration) {
+            if (!audio.paused) audio.pause();
+            return 'gap';
         }
-        // Seekable static file still loading its metadata (readyState <
-        // HAVE_METADATA): don't abandon it for the ?t= reload path — it will
-        // become seekable and use native seeking above. Only a genuinely
-        // non-seekable LIVE (tail-follow) stream — readyState ready yet seekable
-        // empty — falls through to the reload. (Fix A: stop the premature reload
-        // that aborted the seekable replay file and forced slow ?t= reloads.)
-        if (audio.readyState < 1) { adbg('align: source loading (readyState 0) — wait for native seek'); return; }
-        // Non-seekable (= live chunked stream). audio.currentTime is
-        // "seconds since the most recent fetch's byte 0", NOT "seconds
-        // since the file's start". The previous reload set seekOffset =
-        // the session-time the new fetch's byte 0 represents. Account
-        // for it so drift is measured correctly against the data clock.
-        const fileOffset = state.audio.seekOffset || 0;
-        const expectedCurrentTime = targetSec - fileOffset;
-        const drift = audio.currentTime - expectedCurrentTime;
-        // This is the EXPLICIT-seek handler (state:seek-complete) + init, NOT a
-        // loop — so reload to follow even small jumps (>0.3 s). The "1-2 s then
-        // silent" reload-thrash came from CONTINUOUS correction (syncAudio), which
-        // keeps its own larger deadband; explicit seeks are infrequent (video sync
-        // is on-demand), so a reload-per-seek is fine and must not lose sync.
-        if (Math.abs(drift) > 0.3) {
-            adbg('align: reload ?t=', targetSec.toFixed(2), '(non-seekable, drift', drift.toFixed(2), ')');
-            reloadAudioAtOffset(targetSec);
+        // MSE SourceBuffer holds only a ~12-min window; re-window around a far
+        // target before seeking into it.
+        if (state.audio.mse && state.audio.mseSeek && !targetWithinBuffered(audio, targetSec)) {
+            adbg('place: target unbuffered → MSE re-window', targetSec.toFixed(1));
+            state.audio.mseSeek(targetSec);
         }
+        // Non-seekable fallback (no-MSE live tail-follow): can't reposition —
+        // let it play through. MSE is the supported seek path (client_simple).
+        if (!seekable) return audio.readyState < 1 ? 'unready' : 'ok';
+        const threshold = hard ? 0.1 : AUDIO_NUDGE_S;
+        if (Math.abs(audio.currentTime - targetSec) > threshold) {
+            adbg('place:', hard ? 'SEEK' : 'nudge', audio.currentTime.toFixed(2), '→', targetSec.toFixed(2));
+            audio.currentTime = targetSec;
+        }
+        return 'ok';
     }
+    // The seek primitive (base.js) drives audio through this hook.
+    window.f1placeAudio = placeAudioAtClock;
 
     // For the audio status traffic light: green when audio's playback
-    // position is within ±5 s of the data clock, red otherwise. Uses
-    // the same seekOffset accounting as alignAudioToClock.
+    // position is within ±5 s of the data clock, red otherwise.
     function audioSyncDrift() {
         const audio = state.audio.element;
         if (!audio || !state.audio.startUtc || !messageBus.clockTime) return null;
         const targetSec = clockToAudioSec(messageBus.clockTime.getTime());
         if (targetSec === null) return null;
-        const fileOffset = state.audio.seekOffset || 0;
-        return audio.currentTime - (targetSec - fileOffset);
+        return audio.currentTime - targetSec;
     }
     window.f1audioSyncDrift = audioSyncDrift;
 
@@ -1148,52 +1118,12 @@
         return clockToAudioSec(messageBus.clockTime.getTime()) !== null;
     };
 
-    function reloadAudioAtOffset(targetSec) {
-        const audio = state.audio.element;
-        if (!audio) return;
-        // MSE audio IS its own seekable source — replacing audio.src with a ?t=
-        // reload would detach the MediaSource and make the SourceBuffer unusable
-        // (NotSupportedError). Native currentTime seeking handles MSE; if it's
-        // not seekable yet, just wait for the buffer.
-        if (state.audio.mse) { adbg('reload skipped — MSE source'); return; }
-        const intTarget = Math.floor(targetSec);
-        // Two debounces:
-        //   (a) Skip if same offset (= < 2 s drift since last reload).
-        //   (b) THROTTLE to once per 5 s wall-clock. Multiple callers
-        //       (loadedmetadata + setTimeout + updateClocks loop) used
-        //       to fire reloads back-to-back and abort each other's
-        //       fetches mid-flight (NS_BINDING_ABORTED in Firefox);
-        //       the prior in-flight reload never delivered any bytes
-        //       and audio stayed silent. Force callers to wait so each
-        //       fetch has a chance to buffer.
-        if (state.audio.seekOffset != null
-                && Math.abs(state.audio.seekOffset - intTarget) < 2) {
-            return;
-        }
-        const now = Date.now();
-        if (state.audio.lastReloadAt
-                && now - state.audio.lastReloadAt < 5000) {
-            return;
-        }
-        state.audio.lastReloadAt = now;
-        try {
-            const url = new URL(audio.src, window.location.href);
-            url.searchParams.set('t', String(intTarget));
-            const wasPlaying = !audio.paused && messageBus.isPlaying;
-            state.audio.seekOffset = intTarget;
-            audio.src = url.toString();
-            audio.load();
-            if (wasPlaying) audio.play().catch(() => {});
-        } catch (e) {
-            // URL parse error — give up silently.
-        }
-    }
 
-    // (Drift poller removed. It was reloading every 5 s in live
-    // captures because the buffer underrun made audio.currentTime
-    // lag wall time, the poller detected "drift" and reloaded,
-    // which restarted buffering, repeat → audio never stable. The
-    // ±s nudge buttons let the user resync manually instead.)
+    // Continuous-playback drift tolerance (s). placeAudioAtClock(hard=false)
+    // only re-seeks when |audio − data clock| exceeds this, so the 60fps
+    // clock:update stream can't thrash the element. This is the light nudge
+    // that replaced the old settle-guard + ?t= drift-reload loop. (B05)
+    const AUDIO_NUDGE_S = 0.75;
 
     // Audio play-state model — independent of the data play state.
     //   'sync'    — audio follows data: plays iff data is playing
@@ -1213,9 +1143,7 @@
     function syncAudio() {
         const audio = state.audio.element;
         if (!audio || !state.audio.isReady) return;
-        adbg('sync: enter playState=', state.audio.playState, 'shouldPlay=', audioShouldPlay(),
-            'clock=', messageBus.clockTime && messageBus.clockTime.toISOString().slice(11, 23),
-            'cur=', audio.currentTime.toFixed(2));
+        adbg('sync: enter playState=', state.audio.playState, 'shouldPlay=', audioShouldPlay());
 
         if (!audioShouldPlay()) {
             if (!audio.paused) audio.pause();
@@ -1231,77 +1159,15 @@
             return;
         }
 
-        // Seek to clock-time only when the underlying response supports
-        // byte ranges. Tail-following streams (active live capture)
-        // report an empty `seekable` set; in that case just play through.
-        const canSeek = audio.seekable && audio.seekable.length > 0
-            && audio.seekable.end(audio.seekable.length - 1) > 0;
-
+        // In 'sync', keep the audio gently pinned to the data clock via the
+        // ONE seek primitive (soft mode: corrects only sustained drift, so the
+        // 60fps clock:update stream can't thrash it). 'gap' = no audio content
+        // here → the primitive paused the element; reflect that and bail.
         if (state.audio.playState === 'sync'
                 && state.audio.startUtc && messageBus.clockTime) {
-            const clockMs = messageBus.clockTime.getTime();
-            // Piecewise clock→audio (I15): null = inter-segment gap → pause
-            // until the data clock reaches the next segment's content.
-            const targetSec = clockToAudioSec(clockMs);
-            if (targetSec === null) {
-                if (!audio.paused) audio.pause();
+            if (placeAudioAtClock(messageBus.clockTime.getTime(), false) === 'gap') {
                 updateAudioPlayButton();
                 return;
-            }
-
-            // Past-end-of-file guard: only relevant for SEEKABLE replay
-            // streams where audio.duration is the file's true length.
-            // For live (= non-seekable, chunked tail-follow) audio.duration
-            // is the duration of the CURRENT fetch (= byte 0 of THIS
-            // HTTP response), which is much smaller than session-time
-            // targetSec — the comparison would always trip "past end"
-            // and pause the audio. Skip for non-seekable streams.
-            if (targetSec < 0 || (canSeek && isFinite(audio.duration) && targetSec > audio.duration)) {
-                if (!audio.paused) audio.pause();
-                updateAudioPlayButton();
-                return;
-            }
-
-            if (canSeek) {
-                const _drift = audio.currentTime - targetSec;
-                if (_shouldCorrectAudioDrift(_drift, performance.now(), _seekSettleUntil)) {
-                    adbg('sync: SEEK', audio.currentTime.toFixed(2), '→', targetSec.toFixed(2),
-                        'clock=', messageBus.clockTime.toISOString().slice(11, 23));
-                    // Forced re-seek on drift > 0.5s — a clock jump (e.g. B07 data burst)
-                    // shows up here as the audible reseek/chop.
-                    atel('sync:seek', { from: audio.currentTime, to: targetSec, drift: _drift, headroom: bufSnap(audio).headroom });
-                    audio.currentTime = targetSec;
-                } else if (Math.abs(_drift) > 0.5) {
-                    // Within the post-seek settle window: alignAudioToClock already
-                    // placed the audio; let it play, don't yank it (single-seek).
-                    adbg('sync: settle-guard suppressed seek Δ', _drift.toFixed(2));
-                    atel('sync:settle-skip', { drift: _drift, headroom: bufSnap(audio).headroom });
-                } else {
-                    adbg('sync: no-seek (Δ', (audio.currentTime - targetSec).toFixed(2), '≤ 0.5s)');
-                }
-            } else if (audio.readyState < 1) {
-                // Seekable static file still loading metadata — don't reload via
-                // ?t= (that aborts it and locks onto the slow non-seekable path).
-                // Wait; it becomes seekable and uses native seeking above (Fix A).
-                adbg('sync: source loading (readyState 0) — wait for native seek');
-            } else {
-                // Genuinely non-seekable (= live chunked). Reload via ?t= when
-                // the audible position has drifted > 5 s from the data
-                // clock. The OLD gate of "only when actually playing"
-                // caused a stuck-paused state during buffer underrun
-                // (= F1 Monaco 2026 live): audio paused → no reload →
-                // no fresh bytes → still paused, forever. Allow reload
-                // when paused too, but throttle to once per 10 s so
-                // we don't spam fetches if the server is genuinely
-                // slow to produce bytes.
-                const playPos = (state.audio.seekOffset || 0) + (audio.currentTime || 0);
-                const now = Date.now();
-                const sinceLast = now - (state.audio.lastReloadAt || 0);
-                if (Math.abs(playPos - targetSec) > 5 && sinceLast > 10000) {
-                    adbg('sync: reload ?t=', targetSec.toFixed(2), '(non-seekable live)');
-                    state.audio.lastReloadAt = now;
-                    reloadAudioAtOffset(targetSec);
-                }
             }
         }
 
@@ -1391,22 +1257,9 @@
         syncAudio();
     };
 
-    // Audio-only ±N s skip (called by arrow keys when audio is playing).
-    // Doesn't change playState — just shifts the audible position.
-    window.skipAudioRelative = function(deltaSeconds) {
-        const audio = state.audio.element;
-        if (!audio || !state.audio.startUtc) return;
-        if (audio.paused && state.audio.playState !== 'playing') return;
-        const canSeek = audio.seekable && audio.seekable.length > 0
-            && audio.seekable.end(audio.seekable.length - 1) > 0;
-        if (canSeek) {
-            audio.currentTime = Math.max(0, (audio.currentTime || 0) + deltaSeconds);
-        } else {
-            const cur = (state.audio.seekOffset || 0) + (audio.currentTime || 0);
-            state.audio.seekOffset = null;
-            reloadAudioAtOffset(Math.max(0, cur + deltaSeconds));
-        }
-    };
+    // (skipAudioRelative removed — a data seek now drags the audio along
+    // atomically via placeAudioAtClock on state:seek-complete, so the arrow /
+    // + fine-tune keys no longer need a separate audio-only skip. B05)
 
     window.toggleMute = function() {
         state.audio.isMuted = !state.audio.isMuted;
@@ -1569,13 +1422,20 @@
         if (data.isPlaying) tryUnlockAudio();
     });
 
-    // Force immediate audio resync on seek. Delegates to
-    // alignAudioToClock which handles both seekable (native currentTime)
-    // and non-seekable (?t= reload + seekOffset tracking) cases.
-    // Arm the settle window BEFORE aligning, so the first post-seek clock:update
-    // (possibly stale/settling) can't yank the audio right after we place it.
-    messageBus.on('state:seek-complete', () => { _seekSettleUntil = performance.now() + SEEK_SETTLE_MS; });
-    messageBus.on('state:seek-complete', alignAudioToClock);
+    // The sole post-seek audio move (B05). The clock is already advanced to
+    // the target (base.js sets it before emitting), so place the audio there
+    // in ONE hard seek via the primitive, then reconcile play/pause. Report the
+    // outcome: seek:finished when audio landed (or the session has no audio),
+    // seek:failed when the target has no audio content (pre-session / gap /
+    // past end). This replaces alignAudioToClock + the settle-guard.
+    messageBus.on('state:seek-complete', () => {
+        let placed = 'unready';
+        if (state.audio.isReady && messageBus.clockTime) {
+            placed = placeAudioAtClock(messageBus.clockTime.getTime(), true);
+        }
+        syncAudio();
+        messageBus.emit(placed === 'gap' ? 'seek:failed' : 'seek:finished', {});
+    });
 
     messageBus.on('state:reset', () => {
         // Badge lap-counter state is rebuilt from the restored sessionInfo /
