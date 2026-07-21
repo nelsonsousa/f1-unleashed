@@ -691,6 +691,10 @@
         // backward seek before a RET/STOP correctly re-shows that car (card 55).
         state.driverStatus = {};
         for (const k in posBuf) delete posBuf[k];
+        // The mini-map keeps a per-car low-pass smoothed point; clear it too, or
+        // a seek GLIDES the markers from their pre-seek spot to the new position
+        // instead of snapping. First post-seek frame then re-seeds it directly.
+        _mini.sm = {};
         if (state.trackSvg) {
             state.trackSvg.querySelectorAll('[data-sector]').forEach(p => {
                 p.classList.remove('sector-yellow', 'sector-double-yellow');
