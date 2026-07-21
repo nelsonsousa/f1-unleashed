@@ -482,7 +482,9 @@ class SessionPreProcessor:
             # pecking_order.json and publishes this session's running prediction.
             try:
                 from app.analysis.pecking_order import compute_and_save as _po_save
-                _po_save(self._session_path)
+                # Offloaded — the analysis reads the finalized DB + prior session
+                # and must not block the event loop at end-of-build. (B03 lBuRgUm9)
+                await asyncio.to_thread(_po_save, self._session_path)
             except Exception:
                 logger.exception("Pecking-order analysis failed")
 
@@ -491,7 +493,7 @@ class SessionPreProcessor:
             # dormant pace chain, like pecking-order above.
             try:
                 from app.analysis.pit_loss_estimate import compute_and_save as _ple_save
-                _ple_save(self._session_path)
+                await asyncio.to_thread(_ple_save, self._session_path)
             except Exception:
                 logger.exception("Pit-loss estimate analysis failed")
 

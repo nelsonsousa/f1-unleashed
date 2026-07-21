@@ -320,7 +320,7 @@ class LiveCaptureService:
                                 and message["data"].get("Status") == "Ends"):
                             self._ends_seen = True
                             logger.info("SessionStatus=Ends — stopping audio capture")
-                            self._stop_audio(cache_path)
+                            await asyncio.to_thread(self._stop_audio, cache_path)
 
                         # Start the DB preprocessor once live.jsonl exists
                         # (the SignalR client writes it on first data).
@@ -383,11 +383,14 @@ class LiveCaptureService:
                 signalr_stall_watchdog.cancel()
             except NameError:
                 pass
-            self._stop_audio(cache_path)
+            # Offloaded: _stop_audio joins the PdtTracker + SIGINT/SIGKILL-waits
+            # ffmpeg (up to ~13s), and signalr stop joins its thread (5s) — neither
+            # must block the event loop (B03 Pxc8JFHM / Recsiykv).
+            await asyncio.to_thread(self._stop_audio, cache_path)
             # Audio is anchored solely by PdtTracker (byte-0 PROGRAM-DATE-TIME);
             # no end-of-capture re-anchor.
             if signalr_client:
-                signalr_client.stop()
+                await asyncio.to_thread(signalr_client.stop)
 
             # Finalize the DB build. SignalR is stopped first (above), so
             # all data is on disk; a graceful stop lets the preprocessor
@@ -411,7 +414,8 @@ class LiveCaptureService:
             if stype and not settings.get(f"keepFiles.{stype}", True):
                 import shutil
                 try:
-                    shutil.rmtree(cache_path)
+                    # rmtree of a multi-GB session dir must not block the loop (B03).
+                    await asyncio.to_thread(shutil.rmtree, cache_path)
                     logger.info(f"keepFiles off — removed session cache {cache_path}")
                 except OSError as e:
                     logger.warning(f"keepFiles cleanup failed: {e}")
@@ -684,7 +688,7 @@ class LiveCaptureService:
                 logger.info(
                     f"Stopping audio for {cache_path.name}: max-duration backstop "
                     f"({self._AUDIO_MAX_S // 3600} h, no SessionStatus=Ends seen)")
-                self._stop_audio(cache_path)
+                await asyncio.to_thread(self._stop_audio, cache_path)
                 return
 
     async def _audio_stale_watchdog(self, cache_path: Path) -> None:
