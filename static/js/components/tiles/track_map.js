@@ -691,6 +691,11 @@
         // backward seek before a RET/STOP correctly re-shows that car (card 55).
         state.driverStatus = {};
         for (const k in posBuf) delete posBuf[k];
+        // Cancel any in-flight track-status flash + clear a held-solid colour, so a
+        // seek to before the first status doesn't leave the map stuck solid red/
+        // yellow (restore re-emits the correct trackStatus at the target). (MXck3xpg)
+        _flashGen++;
+        clearTrackColour();
         // The mini-map keeps a per-car low-pass smoothed point; clear it too, or
         // a seek GLIDES the markers from their pre-seek spot to the new position
         // instead of snapping. First post-seek frame then re-seeds it directly.
