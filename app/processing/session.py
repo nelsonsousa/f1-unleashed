@@ -22,7 +22,7 @@ from fastapi import WebSocket
 from app.config import REPLAY_DEBUG, CACHE_DIR
 from app.processing.clock import PlaybackClock, ClockState
 from app.processing.database import SessionDatabase
-from app.processing.file_reader import read_jsonl, load_subscribe_json, _parse_timestamp
+from app.processing.file_reader import load_subscribe_json, _parse_timestamp
 from app.processing.preprocessor import SessionPreProcessor
 from app.services.live_capture import live_capture
 from app.services import telemetry
@@ -141,7 +141,6 @@ class SessionEngine:
         # Lifecycle
         self._preprocess_task: Optional[asyncio.Task] = None
         self._playback_task: Optional[asyncio.Task] = None
-        self._raw_stream_task: Optional[asyncio.Task] = None
         self._duration_task: Optional[asyncio.Task] = None
         self._rates_task: Optional[asyncio.Task] = None
         self._running = False
@@ -392,8 +391,6 @@ class SessionEngine:
             except asyncio.CancelledError:
                 pass
 
-        await self._stop_raw_stream()
-
         if self._preprocess_task and not self._preprocess_task.done():
             if self._preprocessor:
                 await self._preprocessor.stop()
@@ -637,7 +634,6 @@ class SessionEngine:
         self._clock.play()
         if not self._playback_task or self._playback_task.done():
             self._playback_task = asyncio.create_task(self._playback_loop())
-        await self._start_raw_stream(int(self._clock.offset_seconds * 1000))
         await self._broadcast_status()
 
     async def _pause(self) -> None:
@@ -651,7 +647,6 @@ class SessionEngine:
                 await self._playback_task
             except asyncio.CancelledError:
                 pass
-        await self._stop_raw_stream()
         await self._broadcast_status()
 
     async def _seek(self, offset_seconds: float) -> None:
@@ -668,7 +663,6 @@ class SessionEngine:
                     await self._playback_task
                 except asyncio.CancelledError:
                     pass
-        await self._stop_raw_stream()
 
         # Clamp offset
         offset_seconds = max(0.0, min(offset_seconds, self._duration))
@@ -704,7 +698,6 @@ class SessionEngine:
         if was_playing:
             self._clock.play()
             self._playback_task = asyncio.create_task(self._playback_loop())
-            await self._start_raw_stream(offset_ms)
 
         await self._broadcast_status()
 
@@ -742,6 +735,20 @@ class SessionEngine:
                 await _send({"topic": "telemetryAvailable", "data": by_driver})
         except Exception:
             logger.exception("Failed to send telemetry availability map")
+
+        # Current car positions (merged latest-per-car). `position` is persisted
+        # but EXCLUDED from the latest-per-topic restore, so the track map is
+        # blank on a paused seek. One merged message repopulates the grid — no
+        # live.jsonl re-scan (that was _raw_telemetry_stream, now removed). The
+        # live telemetry TRACE is intentionally left to rebuild on play (it was
+        # never restored on a paused seek either, and the full current-lap trace
+        # would be thousands of messages that would slow the seek). (B04)
+        try:
+            pos = self._db.latest_position_per_car(offset_ms)
+            if pos:
+                await _send({"topic": "position", "data": pos, "offset_ms": offset_ms})
+        except Exception:
+            logger.exception("Failed to restore positions")
 
         # Race-control message history — append-only, so replay all up to the
         # offset (latest-per-topic restore would only carry the last one).
@@ -892,74 +899,6 @@ class SessionEngine:
             await self._send_to_client(ws, msg)
         else:
             await self._broadcast(msg)
-
-    # Raw topics replayed at playback speed for tiles (like the race
-    # telemetry tile) that consume the raw F1 stream directly rather
-    # than the lowercase processed equivalents. Everything in here is
-    # also in `RAW_F1_TOPICS` (preprocessor.py), so it's NOT in the DB
-    # — the only way to get it on replay is to re-read live.jsonl.
-    _REPLAY_RAW_TOPICS = frozenset({
-        "CarData.z", "Position.z",
-        "DriverList", "TimingData", "TimingAppData",
-        "TrackStatus", "RaceControlMessages",
-    })
-
-    async def _raw_telemetry_stream(self, from_offset_ms: int) -> None:
-        """Stream raw F1 topics from jsonl, paced by the playback clock.
-
-        Originally only CarData.z + Position.z (telemetry samples). Now
-        also DriverList / TimingData / TimingAppData / TrackStatus /
-        RaceControlMessages because the race telemetry tile subscribes
-        to those raw topic names directly — without them the tile has
-        no drivers, no timing, no track status and renders empty on
-        replay. Runs for the lifetime of a play window; cancelled on
-        seek and restarted at the new offset.
-        """
-        if not self._start_time or not self._clock:
-            return
-        try:
-            async for msg in read_jsonl(
-                self._session_path,
-                fast=True,
-                tail_follow=self._live,
-            ):
-                if not self._running or self._clock.state != ClockState.PLAYING:
-                    return
-                if msg.topic not in self._REPLAY_RAW_TOPICS:
-                    continue
-                off_ms = int((msg.timestamp - self._start_time).total_seconds() * 1000)
-                if off_ms < from_offset_ms:
-                    continue
-                # Wait for the playback clock to catch up
-                while self._running and self._clock.state == ClockState.PLAYING:
-                    cur_ms = int(self._clock.offset_seconds * 1000)
-                    if cur_ms >= off_ms:
-                        break
-                    delta = (off_ms - cur_ms) / 1000.0 / max(self._clock.speed, 0.1)
-                    await asyncio.sleep(min(0.1, delta))
-                if not self._running or self._clock.state != ClockState.PLAYING:
-                    return
-                await self._broadcast({"topic": msg.topic, "data": msg.data})
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Raw telemetry stream error")
-
-    async def _start_raw_stream(self, from_offset_ms: int) -> None:
-        """(Re)start the raw telemetry streamer at the given offset."""
-        await self._stop_raw_stream()
-        self._raw_stream_task = asyncio.create_task(
-            self._raw_telemetry_stream(from_offset_ms)
-        )
-
-    async def _stop_raw_stream(self) -> None:
-        if self._raw_stream_task and not self._raw_stream_task.done():
-            self._raw_stream_task.cancel()
-            try:
-                await self._raw_stream_task
-            except asyncio.CancelledError:
-                pass
-        self._raw_stream_task = None
 
     async def _set_speed(self, speed: float) -> None:
         """Change playback speed. Range 0.1x-10x: 1x-10x is the normal UI cycle; sub-1x is a

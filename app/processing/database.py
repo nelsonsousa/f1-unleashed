@@ -221,6 +221,22 @@ class SessionDatabase:
                     pass
         return out
 
+    def latest_position_per_car(self, offset_ms: int, window_rows: int = 400) -> dict:
+        """Merge the latest [x, y, distPct] per car at/before offset. Each
+        `position` row carries only the cars in that Position.z entry (partial
+        during outages), so walk newest-first and keep the first seen per car.
+        Bounded to the most recent `window_rows` rows — all running cars update
+        within ~1 s, so a few hundred rows covers the whole grid. (B04)"""
+        out: dict = {}
+        for (data,) in self._conn.execute(
+            "SELECT data FROM messages WHERE topic = 'position' AND offset_ms <= ? "
+            "ORDER BY offset_ms DESC LIMIT ?",
+            (offset_ms, window_rows),
+        ):
+            for num, coords in json.loads(data).items():
+                out.setdefault(num, coords)
+        return out
+
     # ── Processing Metadata ──
 
     def set_meta(self, key: str, value: str) -> None:
