@@ -238,7 +238,7 @@ const messageBus = {
                     this.emit(m.topic, m.data, m.offset_ms);
                 }
                 // Advance the display clock to the seek target BEFORE emitting
-                // seek-complete, so consumers (audio's alignAudioToClock, tiles)
+                // seek-complete, so consumers (audio's placeAudioAtClock, tiles)
                 // align to the NEW position — `state:clock` arrives a beat later,
                 // so without this they'd align to the stale pre-seek clock. (Fix B)
                 if (this.startTime && msg.offset_ms != null) {
@@ -361,7 +361,12 @@ function togglePlayPause() {
     }
 }
 
+// The seek primitive (B05). Repositions the DATA stream via the server; the
+// AUDIO follows atomically — header.js places it at the resulting data clock
+// (delay folded in) on state:seek-complete. Emits seek:start now; header.js
+// emits seek:finished / seek:failed (target has no audio) once audio lands.
 function seekToOffset(offset) {
+    messageBus.emit('seek:start', { offset });
     messageBus.send({ cmd: 'seek', offset: offset });
 }
 
@@ -392,23 +397,17 @@ document.addEventListener('keydown', (e) => {
             messageBus.send({ cmd: 'play' });
         }
     // Arrow keys: ±10 s skip. Works whether playing OR paused — a paused
-    // seek just repositions the playhead. Data uses the global seek; audio
-    // piggy-backs through skipAudioRelative.
+    // seek just repositions the playhead. The seek moves data AND audio
+    // together (audio follows on state:seek-complete). (B05)
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
         const delta = e.key === 'ArrowLeft' ? -10 : 10;
         seekToOffset(Math.max(0, messageBus.getCurrentOffset() + delta));
-        if (typeof window.skipAudioRelative === 'function') {
-            window.skipAudioRelative(delta);
-        }
     // + / = : nudge forward 0.5 s (manual sync fine-tune). Modifier-free only,
     // so Cmd/Ctrl + still zooms the browser.
     } else if ((e.key === '+' || e.key === '=') && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         seekToOffset(messageBus.getCurrentOffset() + 0.5);
-        if (typeof window.skipAudioRelative === 'function') {
-            window.skipAudioRelative(0.5);
-        }
     // - : pause 0.1 s then resume — nudges the stream 0.1 s later vs real time
     // (fine-tune). Modifier-free only, so Cmd/Ctrl - still zooms out.
     } else if (e.key === '-' && !e.metaKey && !e.ctrlKey) {
