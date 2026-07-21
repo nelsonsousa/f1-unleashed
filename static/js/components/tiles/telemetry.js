@@ -2012,6 +2012,15 @@
         state.eliminated = new Set();   // rebuilt from the restored qualifyingSegment
         state.lapNoData = {};
         state.telemetryLaps = {};
+        // Race-dashboard info-tile state + stopwatch S/F offsets are edge-
+        // accumulated; clear them so a backward seek doesn't leave a stale
+        // dashInfo panel or a stopwatch running from a "future" lap. (pJLP0F6W)
+        state.dashInfo = {};
+        state.lapStartMs = {};
+        // Marshal-sector yellow bands are edge-accumulated from yellowFlag; clear
+        // so a seek to before the first status doesn't leave a stale yellow band
+        // (the restore re-emits the correct yellowFlag at the target). (MXck3xpg)
+        state.yellowSectors = [];
         // Last/Best are view snapshots — clear on reset. Selection is the
         // user's set and SURVIVES seek/restore; "future" laps are pruned on
         // state:seek-complete below (backward seek only).
