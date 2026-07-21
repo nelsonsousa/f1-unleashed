@@ -365,7 +365,10 @@
     });
 
     messageBus.on('state:reset', () => {
-        peckingHtml = '';
+        // peckingHtml is the PRIOR session's static prediction (client-fetched
+        // from pecking_order.json, NOT replayed by the server on restore). Don't
+        // clear it on seek, or the pane blanks until the user clicks the tab — it
+        // doesn't vary with playback position. Fetched once at init. (Rap4r9O9)
         rcMessages = [];
         champDrivers = [];
         champConstructors = [];
