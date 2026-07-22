@@ -598,7 +598,12 @@
         // stopwatch: ticks during the forecast (predicting); on lap end (server → observed, label
         // "LAP TIME") it FREEZES at the lap's final value rather than resetting to 0. (SME 2026-07-15)
         const forecasting = di.lapTimeLabel === 'FORECAST';
-        const eNow = (di.running && state.lapStartMs[num] != null) ? (telRenderNowMs() - state.lapStartMs[num]) : null;
+        // telRenderNowMs() is null before the clock is set; guard it so the
+        // stopwatch shows its placeholder, not 0:00.0 from null-coerced-to-0
+        // arithmetic. (NHB0WQA6)
+        const nowMs = telRenderNowMs();
+        const eNow = (di.running && state.lapStartMs[num] != null && nowMs != null)
+            ? (nowMs - state.lapStartMs[num]) : null;
         if (forecasting && eNow != null) {
             if (!info._fc) info._run = null;   // new forecast session → start fresh
             info._fc = true;
