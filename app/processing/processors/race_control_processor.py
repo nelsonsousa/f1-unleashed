@@ -7,7 +7,6 @@ Emits:
                          (single message, not an accumulating list — the client
                          appends; each is one DB row)
   - yellowFlag           (list of sectors currently under yellow — current state)
-  - driverFlag           (driver number, flag colour)
 
 Tracks last seen message index to avoid re-processing accumulated history.
 """
@@ -164,10 +163,6 @@ class RaceControlProcessor(Processor):
                     self._yellow_sectors.clear()
                     self._bus.emit("yellowFlag", [], clock_time)
 
-            elif scope == "DRIVER":
-                racing_number = msg.get("RacingNumber", "")
-                if racing_number:
-                    self._bus.emit("driverFlag", {
-                        "driverNumber": racing_number,
-                        "flag": _flag_to_color(flag),
-                    }, clock_time)
+            # (DRIVER-scope flags used to emit a `driverFlag` topic that had ZERO
+            # consumers — no client tile and no server processor — yet it was
+            # persisted to the DB and streamed to every client. Removed. hE3bdGqZ)
