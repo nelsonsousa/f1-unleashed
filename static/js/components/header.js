@@ -1494,7 +1494,11 @@
     // during a seek-restore (those are history replays, not live airings) and at
     // non-1x speeds. Default OFF until the settings dialog provides the toggle.
     let _radioRestoring = false;
-    messageBus.on('state:reset', () => { _radioRestoring = true; });
+    // On a seek, suppress replayed autoplay AND silence any clip that was already
+    // airing — it belongs to the pre-seek position and is holding commentary muted
+    // until it ends. stopTeamRadio restores the commentary volume; it's a no-op
+    // when nothing is playing (initial connect). (H2YvpH5X)
+    messageBus.on('state:reset', () => { _radioRestoring = true; stopTeamRadio(); });
     // Clear on state:restore-done (AFTER the teamRadio history replay), not
     // seek-complete which fires before it — else a seek autoplays a historical
     // clip. Relies on SOJffVd3's terminal marker. (H2YvpH5X)
