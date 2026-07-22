@@ -483,7 +483,7 @@ app.include_router(telemetry_router.router, prefix="/api/v1", tags=["telemetry"]
 
 @app.get("/")
 def root(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 # The in-app user guide (release v2.0.0) is split into four context pages: the
@@ -513,7 +513,7 @@ def help_page(request: Request, part: str = "main"):
         content = "<p>Documentation not found.</p>"
     nav = [(k, label, k == part) for k, label in GUIDE_PARTS]
     return templates.TemplateResponse(
-        "help.html", {"request": request, "content": content, "nav": nav})
+        request, "help.html", {"content": content, "nav": nav})
 
 
 @app.get("/api/v1/version")
@@ -533,9 +533,9 @@ def browser():
 def _session_page(request: Request, session: str, session_type: str):
     """Render the unified session page; session_type drives conditional includes."""
     return templates.TemplateResponse(
+        request,
         "pages/session.html",
         {
-            "request": request,
             "session_id": session,
             "session_type": session_type,
         },

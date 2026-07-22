@@ -43,14 +43,8 @@ class SessionMessageBus:
             except ValueError:
                 pass
 
-    def emit(self, topic: str, data: Any, clock_time: datetime,
-             persist: bool = True) -> None:
-        """Emit a message to all handlers for the topic.
-
-        persist=False emits to subscribers as normal but skips the DB persist
-        sink — for high-rate, live-only topics (e.g. liveTelemetry) that the
-        client consumes live and never needs to replay/rebuild on seek.
-        """
+    def emit(self, topic: str, data: Any, clock_time: datetime) -> None:
+        """Emit a message to all handlers for the topic, then the persist sink."""
         # A re-entrant emit (we're inside a handler) is an OUTPUT produced by the
         # current input topic's processing — record it for the topic catalog.
         if self._cur_input is not None and topic != self._cur_input:
@@ -75,7 +69,7 @@ class SessionMessageBus:
                 except Exception:
                     logger.exception(f"Error in wildcard handler for topic '{topic}'")
 
-        if persist and self._persist_sink is not None:
+        if self._persist_sink is not None:
             self._persist_sink(topic, data, clock_time)
 
     def has_subscriber(self, topic: str) -> bool:
