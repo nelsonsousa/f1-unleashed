@@ -918,3 +918,7 @@ header {
         font-size: 2rem;
     }
 }
+
+/* Inline-style replacements moved out of home.js innerHTML (external-CSS-only). (Gu6PqekX) */
+.auth-product { color: var(--green); }
+.login-error-text { color: var(--accent); }

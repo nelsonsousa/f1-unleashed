@@ -97,7 +97,7 @@ function updateAuthUI(status) {
 
     if (status.is_authenticated) {
         indicator.className = 'auth-indicator logged-in';
-        text.innerHTML = `Logged in${status.subscribed_product ? ` <span style="color: var(--green);">(${status.subscribed_product})</span>` : ''}`;
+        text.innerHTML = `Logged in${status.subscribed_product ? ` <span class="auth-product">(${status.subscribed_product})</span>` : ''}`;
         loginBtn.textContent = 'Logout';
         loginBtn.className = 'btn-login logged-in';
     } else {
@@ -155,7 +155,7 @@ function showLoginError(error) {
     const body = document.getElementById('loginModalBody');
 
     body.innerHTML = `
-        <p style="color: var(--accent);">Login failed: ${error}</p>
+        <p class="login-error-text">Login failed: ${error}</p>
         <div class="modal-actions">
             <button onclick="closeLoginModal()" class="btn-secondary">Close</button>
         </div>
