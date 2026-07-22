@@ -808,8 +808,12 @@ class LiveTimingFetcher:
                 response.raise_for_status()
                 raw_data = await response.text()
         except aiohttp.ClientError as e:
+            # Surface a real fetch error (network / 5xx / 403 WAF block) instead of
+            # swallowing it as an empty topic — otherwise the download reports the
+            # topic as "done (0 messages)" and it goes silently missing. A legit 404
+            # already returned [] above; the caller (fetch_topic) marks this failed. (vIRYhvAg)
             logger.warning(f"Failed to fetch {topic}: {e}")
-            return []
+            raise
 
         # Handle BOM if present
         if raw_data.startswith('\ufeff'):
