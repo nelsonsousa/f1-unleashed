@@ -481,8 +481,14 @@ class LapTimingProcessor(Processor):
             self._best[num] = {"lap": lap, "time": v, "ms": ms,
                                "part": self._lap_part.get(num, {}).get(lap, self._part)}
         elif ms > cur["ms"]:
-            # Demotion to a surviving slower lap after a deletion.
-            self._best[num] = {"lap": bt.get("Lap"), "time": v, "ms": ms, "part": self._part}
+            # Demotion to a surviving slower lap after a deletion. BestLapTime
+            # frequently OMITS "Lap" here, which stored lap=None and silently
+            # stopped best-lap telemetry — fall back to matching the value to a
+            # lap the driver actually drove (same helper as restore). (LBvgjYEP)
+            lap = bt.get("Lap")
+            if lap is None:
+                lap = self._lap_of_value(num, v)
+            self._best[num] = {"lap": lap, "time": v, "ms": ms, "part": self._part}
         else:
             return False                              # faster than stored → PersonalFastest path
         self._reprice(clock_time)
