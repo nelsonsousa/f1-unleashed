@@ -72,76 +72,9 @@ class CachedSessionResponse(BaseModel):
     weather_status: Optional[str] = None
 
 
-@router.get("/meetings/{year}", response_model=list[MeetingResponse])
-async def get_meetings(year: int):
-    """Get all meetings (Grand Prix weekends) for a year."""
-    try:
-        meetings = await livetiming_fetcher.get_meetings(year)
-        logger.info(f"Fetched {len(meetings)} meetings for {year}")
-        return [
-            MeetingResponse(
-                key=m.key,
-                number=m.number,
-                name=m.name,
-                official_name=m.official_name,
-                location=m.location,
-                country=m.country,
-                circuit=m.circuit,
-                sessions=[
-                    {
-                        "key": s.key,
-                        "name": s.name,
-                        "type": s.type,
-                        "path": s.path,
-                        "start_date": s.start_date.isoformat() if s.start_date else None,
-                        "end_date": s.end_date.isoformat() if s.end_date else None,
-                        "has_data": s.path is not None,
-                    }
-                    for s in m.sessions
-                ],
-            )
-            for m in meetings
-        ]
-    except aiohttp.ClientResponseError as e:
-        logger.error(f"HTTP error fetching meetings for {year}: {e.status} {e.message}")
-        if e.status == 404:
-            raise HTTPException(status_code=404, detail=f"No F1 data available for {year}")
-        raise HTTPException(status_code=e.status, detail=str(e))
-    except aiohttp.ClientError as e:
-        logger.error(f"Network error fetching meetings for {year}: {e}")
-        raise HTTPException(status_code=503, detail=f"Failed to connect to F1 Live Timing servers: {e}")
-    except Exception as e:
-        logger.error(f"Failed to get meetings for {year}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/meetings/{year}/debug")
-async def get_meetings_debug(year: int):
-    """Debug endpoint to see raw API response for meetings."""
-    import aiohttp as aio
-    import json
-    url = f"https://livetiming.formula1.com/static/{year}/Index.json"
-    async with aio.ClientSession() as session:
-        async with session.get(url) as response:
-            text = await response.text()
-            if text.startswith('\ufeff'):
-                text = text[1:]
-            try:
-                data = json.loads(text)
-                meetings = data.get("Meetings", [])
-                return {
-                    "url": url,
-                    "status": response.status,
-                    "total_meetings": len(meetings),
-                    "meeting_names": [m.get("Name", "unknown") for m in meetings],
-                }
-            except json.JSONDecodeError:
-                return {
-                    "url": url,
-                    "status": response.status,
-                    "error": "Invalid JSON response from F1 API",
-                    "raw_response_preview": text[:500] if text else "(empty)",
-                }
+# (Removed the client-unused /meetings/{year} + /meetings/{year}/debug routes \u2014
+# meeting/session listing is served via the schedule + /cached paths now. The
+# livetiming_fetcher.get_meetings() method is kept; it's used internally. orKIRz1V)
 
 
 @router.get("/cached", response_model=list[CachedSessionResponse])
