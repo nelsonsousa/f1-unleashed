@@ -95,8 +95,8 @@
         setBox($('sfhTel'), health && health.telemetry, 'Telemetry invalid/missing');
         setBox($('sfhPos'), health && health.position, 'Position stale');
     }
-    messageBus.on('dataHealth', (d) => { health = d; renderHealth(); });
-    messageBus.on('state:reset', () => { health = null; lastHeartbeatMs = null; finished = false; renderHealth(); });
+    messageBus.on('dataHealth', (d) => { health = d; messageBus.scheduleRender('statusFooter', renderHealth); });
+    messageBus.on('state:reset', () => { health = null; lastHeartbeatMs = null; finished = false; messageBus.scheduleRender('statusFooter', renderHealth); });
     messageBus.on('heartbeat', () => { lastHeartbeatMs = performance.now(); });
     // Server-authoritative live feed liveness (raw data edge, not the audio-capped
     // playhead) — drives the stream light for LIVE sessions (card Xqw1feac).
@@ -131,7 +131,7 @@
     messageBus.on('playback:status', (d) => {
         const was = finished;
         finished = !!(d && d.finished);
-        if (finished !== was) renderHealth();
+        if (finished !== was) messageBus.scheduleRender('statusFooter', renderHealth);
     });
 
     messageBus.on('status:rates', (d) => {

@@ -61,6 +61,15 @@ const messageBus = {
     streamComplete: false,
     isLive: false,
 
+    // Restore gate. Between state:reset and state:restore-done every discrete
+    // renderer BUFFERS instead of painting per message; at restore-done they all
+    // paint once, so a seek looks instantaneous (no RCM/radio dribble) and no tile
+    // prunes/renders against half-arrived history. Continuous animation loops
+    // (clocks, live-telemetry, car markers, rain) ignore this — they draw per frame.
+    restoring: false,
+    _pendingRenders: null,   // Map(id -> renderFn); lazily created
+    _renderRaf: null,
+
     // WebSocket
     _ws: null,
 
@@ -109,6 +118,33 @@ const messageBus = {
         // Wildcard
         if (this.listeners['*']) {
             this.listeners['*'].forEach(cb => cb(topic, data, offset_ms));
+        }
+    },
+
+    // Coalesced, restore-aware render scheduler. Every tile routes its full-state
+    // repaint through this instead of painting per message. While `restoring`, the
+    // render is HELD and flushed together on state:restore-done (one paint per id);
+    // otherwise it coalesces into the next animation frame. `id` dedups a tile's
+    // repeated calls down to a single latest render.
+    scheduleRender(id, fn) {
+        if (!this._pendingRenders) this._pendingRenders = new Map();
+        this._pendingRenders.set(id, fn);
+        if (this.restoring) return;                 // held until restore-done
+        if (this._renderRaf != null) return;        // already scheduled this frame
+        this._renderRaf = requestAnimationFrame(() => {
+            this._renderRaf = null;
+            this._flushRenders();
+        });
+    },
+
+    // Run every buffered render once, then clear. Called on each animation frame
+    // (live) and once when the restore gate lifts (state:restore-done).
+    _flushRenders() {
+        if (!this._pendingRenders || this._pendingRenders.size === 0) return;
+        const fns = this._pendingRenders;
+        this._pendingRenders = new Map();
+        for (const fn of fns.values()) {
+            try { fn(); } catch (e) { console.error('scheduled render failed', e); }
         }
     },
 
@@ -233,6 +269,7 @@ const messageBus = {
 
             } else if (topic === 'state:restore') {
                 // Full state restore: array of {topic, data, offset_ms}
+                this.restoring = true;   // gate: tiles buffer until state:restore-done
                 this.emit('state:reset', {});
                 for (const m of data) {
                     this.emit(m.topic, m.data, m.offset_ms);
@@ -249,6 +286,10 @@ const messageBus = {
                 });
 
             } else if (topic === 'state:clock') {
+                // Backstop: if state:restore-done never arrived (older server / a
+                // dropped extras stream), lift the gate here so tiles never stay
+                // stuck unpainted — state:clock always follows a restore.
+                if (this.restoring) { this.restoring = false; this._flushRenders(); }
                 // Clock update from server
                 if (this.startTime) {
                     const displayTime = new Date(this.startTime.getTime() + data.offset * 1000);
@@ -289,6 +330,15 @@ const messageBus = {
                 // transient DB finishes building (replay streams immediately, so
                 // the connect-time events list was partial). Re-render markers.
                 this.emit('session:events', data || []);
+
+            } else if (topic === 'state:restore-done') {
+                // Terminal marker: all restore extras (RCM/radio/driverLaps/…
+                // histories) have arrived. Emit to tiles FIRST while still gated,
+                // so any render/prune they schedule is captured, THEN lift the gate
+                // and paint everything in one flush → an instantaneous-looking seek.
+                this.emit('state:restore-done', data);
+                this.restoring = false;
+                this._flushRenders();
 
             } else if (topic === 'error') {
                 this.emit('error', data);
