@@ -817,6 +817,13 @@ class SessionEngine:
         except Exception:
             logger.exception("Failed to send scrubber events")
 
+        # Terminal restore marker — the full restore (latest-per-topic + all the
+        # append-only history extras above) is now delivered. Client guards that
+        # must survive the history replay (e.g. team-radio autoplay suppression)
+        # key on THIS, not the earlier state:seek-complete which fires BEFORE these
+        # extras arrive. (SOJffVd3)
+        await _send({"topic": "state:restore-done", "offset_ms": offset_ms})
+
     async def _send_lap_telemetry(self, driver: str, lap: int, ws=None) -> None:
         """Query lap telemetry from DB and send to requesting client."""
         if not self._db or not driver or not lap:

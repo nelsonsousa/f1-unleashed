@@ -1492,7 +1492,10 @@
     // non-1x speeds. Default OFF until the settings dialog provides the toggle.
     let _radioRestoring = false;
     messageBus.on('state:reset', () => { _radioRestoring = true; });
-    messageBus.on('state:seek-complete', () => { _radioRestoring = false; });
+    // Clear on state:restore-done (AFTER the teamRadio history replay), not
+    // seek-complete which fires before it — else a seek autoplays a historical
+    // clip. Relies on SOJffVd3's terminal marker. (H2YvpH5X)
+    messageBus.on('state:restore-done', () => { _radioRestoring = false; });
     messageBus.on('teamRadio', (data) => {
         if (_radioRestoring || !data || !data.file) return;
         if (!messageBus.isPlaying || (messageBus.speed && messageBus.speed !== 1)) return;

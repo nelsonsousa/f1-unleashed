@@ -1765,6 +1765,18 @@
         }
     });
 
+    // Seek-safe raceStarted (gates the race lap pills): sessionStatus==='Started'
+    // is edge-triggered and not reconstructable on seek. raceLaps.currentLap IS
+    // restored latest-per-topic and stays >= 1 from lights-out through the
+    // chequered flag, so deriving from it means pills don't vanish past chequered
+    // nor show pre-race. Cleared on state:reset, re-derived here on restore. (Prit9naE)
+    messageBus.on('raceLaps', (d) => {
+        if (d && d.currentLap >= 1 && !state.raceStarted) {
+            state.raceStarted = true;
+            renderDriverSelector();
+        }
+    });
+
     // Position-data warning (above the x-axis), driven by the server's dataHealth:
     // yellow when the GPS OR telemetry feed is down; red when BOTH are down.
     function updatePosWarning(health) {
@@ -2021,6 +2033,10 @@
         // so a seek to before the first status doesn't leave a stale yellow band
         // (the restore re-emits the correct yellowFlag at the target). (MXck3xpg)
         state.yellowSectors = [];
+        // raceStarted gates the race lap pills; it's edge-set from sessionStatus,
+        // so clear it and let the restored raceLaps.currentLap re-derive it durably
+        // (correct at any offset, incl. past chequered). (Prit9naE)
+        state.raceStarted = false;
         // Last/Best are view snapshots — clear on reset. Selection is the
         // user's set and SURVIVES seek/restore; "future" laps are pruned on
         // state:seek-complete below (backward seek only).
