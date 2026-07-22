@@ -414,8 +414,9 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault();
         messageBus.send({ cmd: 'pause' });
         setTimeout(() => messageBus.send({ cmd: 'play' }), 100);
-    // M: mute toggle (handy without reaching for the mute button).
-    } else if (e.key === 'm' || e.key === 'M') {
+    // M: mute toggle (handy without reaching for the mute button). Modifier-free
+    // only, so Cmd+M (minimise) / Ctrl+M aren't hijacked. (JoyTQs7j)
+    } else if ((e.key === 'm' || e.key === 'M') && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         if (typeof window.toggleMute === 'function') window.toggleMute();
     }
