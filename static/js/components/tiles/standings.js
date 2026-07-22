@@ -1010,15 +1010,13 @@
         });
     }
 
-    // Throttle: the row data is assembled from ~12 per-driver topics, each
-    // firing for 20 cars many times a second. Rendering on every one floods
-    // the main thread (whole-table innerHTML rebuild) and freezes the UI, so
-    // coalesce all updates within a frame into a single render.
-    let _renderPending = false;
+    // The row data is assembled from ~12 per-driver topics, each firing for 20 cars
+    // many times a second — rendering on every one floods the main thread (whole-
+    // table innerHTML rebuild). The shared scheduler coalesces all updates within a
+    // frame into a single render, and during a restore/seek holds them until
+    // state:restore-done so the table paints once, not per streamed topic. (SOJffVd3)
     function render() {
-        if (_renderPending) return;
-        _renderPending = true;
-        requestAnimationFrame(() => { _renderPending = false; renderNow(); });
+        messageBus.scheduleRender('standings', renderNow);
     }
 
     function renderNow() {

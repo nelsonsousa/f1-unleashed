@@ -1315,7 +1315,10 @@
         if (!Array.isArray(events)) return;
         state.events = events;
         state.eventOffsets = new Set(events.map(e => `${e.offset_ms}:${e.topic}:${JSON.stringify(e.data)}`));
-        renderEventMarkers(events);
+        // Via the shared gate: the full events list arrives as a post-restore extra
+        // (session:events), so folding it into the restore-done flush keeps the
+        // scrubber markers in the single instantaneous seek paint. (SOJffVd3)
+        messageBus.scheduleRender('eventMarkers', () => renderEventMarkers(state.events));
     }
 
     function handleStreamProgress(data) {
@@ -1380,7 +1383,7 @@
             : -1;
         if (offset_ms <= maxOffset) return;
         state.events.push({ offset_ms, topic, data });
-        renderEventMarkers(state.events);
+        messageBus.scheduleRender('eventMarkers', () => renderEventMarkers(state.events));
     }
 
     messageBus.on('event', (data, offset_ms) => addLiveEvent('event', data, offset_ms));

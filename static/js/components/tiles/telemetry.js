@@ -2044,7 +2044,8 @@
         state.raceStarted = false;
         // Last/Best are view snapshots — clear on reset. Selection is the
         // user's set and SURVIVES seek/restore; "future" laps are pruned on
-        // state:seek-complete below (backward seek only).
+        // state:restore-done below (backward seek only), once the lap history has
+        // been rebuilt.
         state.lastLaps = {};
         state.bestLaps = {};
         state.pendingSelection.clear();
@@ -2055,17 +2056,22 @@
     });
 
     // After a seek, drop Selection laps that no longer exist at the new clock
-    // (backward seek → "future" laps). lapTimes/telemetryLaps have been rebuilt
-    // by the restore replay by the time this fires; a forward seek keeps all.
-    messageBus.on('state:seek-complete', () => {
+    // (backward seek → "future" laps). This runs on state:restore-done, NOT the
+    // earlier state:seek-complete: lapTimes/telemetryLaps are wiped on state:reset
+    // and only rebuilt by the driverLaps: history + telemetryAvailable extras,
+    // which stream in AFTER seek-complete. Pruning on seek-complete therefore saw
+    // near-empty maps and wiped the user's whole selection — even on a forward
+    // seek. At restore-done the maps are complete, so valid laps survive and only
+    // genuine future laps (backward seek) drop. Paint via the shared gate so it
+    // lands in the single restore-done flush. (SOJffVd3)
+    messageBus.on('state:restore-done', () => {
         for (const k of Object.keys(state.selectionLaps)) {
             const { driver, lap } = state.selectionLaps[k];
             const known = (state.lapTimes[driver] && lap in state.lapTimes[driver])
                 || (state.telemetryLaps[driver] && state.telemetryLaps[driver].has(lap));
             if (!known) delete state.selectionLaps[k];
         }
-        renderChart();
-        updateDriverBar();
+        messageBus.scheduleRender('telemetry', () => { renderChart(); updateDriverBar(); });
     });
 
     document.addEventListener('DOMContentLoaded', init);

@@ -150,7 +150,9 @@
         el.innerHTML = html + head + rows;
     }
 
-    function renderAll() { renderStops(); }
+    // Paint via the shared restore-aware scheduler so a seek folds into the single
+    // state:restore-done flush along with every other tile. (SOJffVd3)
+    function renderAll() { messageBus.scheduleRender('pitStrategy', renderStops); }
 
     // ── data ────────────────────────────────────────────────────────────────
     async function fetchTransit() {
