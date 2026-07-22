@@ -444,10 +444,13 @@ class TelemetryProcessor(Processor):
                 dp, pos_ts, est = drv.pending_pos
                 drv.pending_pos = None
                 abs_ms = _epoch_ms(pos_ts)
-                speed = ch.get("2", 0)
-                thr = ch.get("4", 0)
-                brk = ch.get("5", 0)
-                gear = ch.get("3", 0)
+                # Absent channel -> None (client draws a dotted gap), NEVER a
+                # fake 0 — a default 0 was read as a real "speed dropped to 0"
+                # sample. A PRESENT 0 is legitimate and kept as 0. (mrHzxVmb / L9)
+                speed = ch.get("2")
+                thr = ch.get("4")
+                brk = ch.get("5")
+                gear = ch.get("3")
                 # The ECU reports REVERSE as an out-of-range gear value (>8) → map to -1 = R. (SME 2026-07-15)
                 if isinstance(gear, (int, float)) and gear > 8:
                     gear = -1
@@ -466,8 +469,8 @@ class TelemetryProcessor(Processor):
                     live = {"dp": dp, "speed": None, "rpm": None, "gear": g,
                             "throttle": None, "brake": None}
                 else:
-                    sample = [dp, speed, ch.get("0", 0), gear, thr, brk, abs_ms, est]
-                    live = {"dp": dp, "speed": speed, "rpm": ch.get("0", 0),
+                    sample = [dp, speed, ch.get("0"), gear, thr, brk, abs_ms, est]
+                    live = {"dp": dp, "speed": speed, "rpm": ch.get("0"),
                             "gear": gear, "throttle": thr, "brake": brk}
                 if drv.activated:
                     drv.samples.append(sample)   # store only once running — nothing to persist pre-race
