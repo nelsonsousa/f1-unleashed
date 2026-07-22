@@ -149,10 +149,17 @@ class SessionInfoProcessor(Processor):
                     continue
                 if not self._is_valid_time(_parse_utc(entry.get("Utc", ""))):
                     continue
-                qp = entry.get("QualifyingPart")
-                if qp is not None and 1 <= int(qp) <= 3 and int(qp) != self._qualifying_part:
-                    self._qualifying_part = int(qp)
-                    self._bus.emit("qualifyingPart", self._qualifying_part, clock_time)
+                # QualifyingPart is occasionally a non-numeric string; guard the
+                # int() so one bad entry doesn't raise and drop the REST of the
+                # Series in this message. (HMRnZH1V)
+                qp_raw = entry.get("QualifyingPart")
+                try:
+                    qp = int(qp_raw) if qp_raw is not None else None
+                except (TypeError, ValueError):
+                    qp = None
+                if qp is not None and 1 <= qp <= 3 and qp != self._qualifying_part:
+                    self._qualifying_part = qp
+                    self._bus.emit("qualifyingPart", qp, clock_time)
                     changed = True
 
         if changed:
