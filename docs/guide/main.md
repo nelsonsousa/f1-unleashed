@@ -252,4 +252,4 @@ session from the home page removes it from disk.
 the FIA. F1, FORMULA 1 and related marks are trademarks of Formula One Licensing B.V.; team,
 driver, and tyre-supplier marks belong to their respective owners.*
 
-<p align="center"><img src="/static/images/screenshots/checkered_flag.png" width="45"></p>
+<p align="center"><img src="/static/images/icons/logo_light.svg" width="120"></p>

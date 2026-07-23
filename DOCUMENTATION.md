@@ -769,4 +769,9 @@ improves your race weekends, you can support it by buying me a coffee:
 <p align="left"><a href="https://www.buymeacoffee.com/f1unleashed" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height: 40px !important;width: auto !important;"></a></p>
 
 
-<p align="center"><img src="static/images/screenshots/checkered_flag.png" width="45"></p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="static/images/icons/logo_light.svg">
+    <img alt="F1Unleashed" src="static/images/icons/logo_dark.svg" width="120">
+  </picture>
+</p>

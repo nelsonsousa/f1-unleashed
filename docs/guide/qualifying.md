@@ -75,4 +75,4 @@ across segments. Corner labels line up with the circuit map.
 <p align="center"><img src="/static/images/screenshots/telemetry.png" width="800"></p>
 
 
-<p align="center"><img src="/static/images/screenshots/checkered_flag.png" width="45"></p>
+<p align="center"><img src="/static/images/icons/logo_light.svg" width="120"></p>

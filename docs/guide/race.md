@@ -91,4 +91,4 @@ reliability** — the car is always placed on the map, but the positions will su
 
 
 
-<p align="center"><img src="/static/images/screenshots/checkered_flag.png" width="45"></p>
+<p align="center"><img src="/static/images/icons/logo_light.svg" width="120"></p>
