@@ -434,19 +434,11 @@
         updateScrubberPosition();
         updateGoLiveButton();
         // Re-render event markers when the scrubber's coordinate system moves
-        // under them:
-        //  - LIVE: the edge grows every tick (and the no-spoiler rule reveals
-        //    events progressively as playback reaches them).
-        //  - REPLAY still building: duration follows the growing build edge, so
-        //    a fixed event offset maps to a new x — the markers must be
-        //    re-projected (card 79). A finished replay has a fixed duration, so
-        //    this is a no-op once the build completes.
-        // Re-render markers when the coordinate system moved (duration grew — live edge or
-        // replay build) OR a hidden event just crossed the playhead (no-spoiler reveal).
-        const visN = (state.events || []).reduce(
-            (n, ev) => n + (ev.offset_ms <= state.offset * 1000 ? 1 : 0), 0);
-        if (state.events && (state.duration !== prevDuration || visN !== state._lastVisN)) {
-            state._lastVisN = visN;
+        // under them: LIVE the edge grows every tick; a still-building REPLAY's
+        // duration follows the growing build edge, so a fixed event offset maps
+        // to a new x and the markers must be re-projected (card 79). A finished
+        // replay has a fixed duration, so this is a no-op once the build completes.
+        if (state.events && state.duration !== prevDuration) {
             renderEventMarkers(state.events);
         }
         startClockAnimation();
@@ -554,14 +546,12 @@
         const t1 = firstVisible;
         if (t1 == null) return [[0, 0], [end, 100]];
 
-        // Region 2 ends at the CHEQUERED flag (real session end) — only a finished session
-        // has a post-session tail to compress into region 3. No-spoiler: use the flag only
-        // once the playhead has actually REACHED it; until then (still building, live
-        // before the end, or simply not there yet) region 2 runs to the growing edge, so
-        // the scrubber keeps resizing and the end position isn't revealed early. (Previously
-        // the last discovered event capped region 2, freezing a transient replay's scrubber
-        // between events — that rule was only valid for fully-built DBs.) (user 2026-07-08)
-        const t2 = (chequered != null && chequered <= state.offset * 1000) ? chequered : null;
+        // Region 2 ends at the CHEQUERED flag (real session end) — only a finished
+        // session has a post-session tail to compress into region 3. Use the flag as
+        // soon as it exists in the events (no-spoiler removed): a finished replay shows
+        // the compressed end immediately; a live / still-building session simply has no
+        // chequered yet, so region 2 runs to the growing edge until one appears.
+        const t2 = chequered;
         const Y = Math.max(0, Math.min(t1 - FIVE_MIN_MS, end));
         const pts = [[0, 0]];
         if (Y > 0) pts.push([Y, sidePct]);
@@ -672,12 +662,8 @@
         for (const ev of events) {
             const pct = offsetToPct(ev.offset_ms);
             if (pct < 0 || pct > 100) continue;
-            // No-spoiler rule (live + replay): ALWAYS inject every marker (so the scrubber's
-            // full extent + limits are stable), but hide the ones ahead of the playhead with a
-            // CSS class. They reveal progressively as the playhead crosses them (handleClockUpdate
-            // re-renders on that). (user 2026-07-13)
-            const sp = ev.offset_ms > state.offset * 1000 ? ' evt-spoiler' : '';
-
+            // Inject every marker (keeps the scrubber's extent + limits stable).
+            // No-spoiler rule removed — markers ahead of the playhead are shown too.
             const d = typeof ev.data === 'string' ? ev.data : (ev.data?.event || ev.data || '');
             const upper = String(d).toUpperCase();
 
@@ -699,15 +685,15 @@
                           + `<path d="M1 3 Q4 1 8 3 T15 3 V13 Q12 15 8 13 T1 13 Z"/>`
                           + `</svg>`;
             if (upper === 'CHEQUERED') {
-                marker = `<div class="scrubber-flag chequered${sp}" style="left:${pct}%" title="${title}" ${dataAttrs}>&#127937;</div>`;
+                marker = `<div class="scrubber-flag chequered" style="left:${pct}%" title="${title}" ${dataAttrs}>&#127937;</div>`;
             } else if (upper === 'RED' || upper === 'RED FLAG') {
-                marker = `<div class="scrubber-flag red${sp}" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
+                marker = `<div class="scrubber-flag red" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
             } else if (upper.includes('SC') || upper.includes('VSC') || upper.includes('SAFETY')) {
-                marker = `<div class="scrubber-flag yellow${sp}" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
+                marker = `<div class="scrubber-flag yellow" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
             } else if (upper === 'GREEN') {
-                marker = `<div class="scrubber-flag green${sp}" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
+                marker = `<div class="scrubber-flag green" style="left:${pct}%" title="${title}" ${dataAttrs}>${flagSvg}</div>`;
             } else {
-                marker = `<div class="scrubber-event${sp}" style="left:${pct}%;background:#888" title="${title}" ${dataAttrs}></div>`;
+                marker = `<div class="scrubber-event" style="left:${pct}%;background:#888" title="${title}" ${dataAttrs}></div>`;
             }
 
             html += marker;
