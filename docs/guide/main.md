@@ -109,9 +109,8 @@ in the middle, and a slim **status bar** along the bottom.
 - **Scrubber** — drag anywhere to seek. Seeks are **instant**: the full session state is
   rebuilt at the target moment, so you never wait for a re-play-up.
 - **Event markers** — ticks on the scrubber. Click one to jump to **~60 s before** that
-  event. Clickable event ticks: the 2-minute notice, session start, session finish, safety car /
-  VSC, green flags and red flags. (Flag states — green / red / SC / VSC / chequered — are
-  colour-highlighted; the others, like the 2-minute notice, are plain ticks.)
+  event. Clickable event ticks: green flags (including session/race start), red flags, safety
+  car / VSC, and the chequered flag — all colour-highlighted by flag state.
 - **Speed** — 1×–10× in replay (cycles 1× / 2× / 5× / 10×); 1× live.
 - **LIVE button** (live only) — red at the live edge, black when you've rewound. Click to
   snap back to the latest data.
