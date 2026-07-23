@@ -214,8 +214,7 @@ const messageBus = {
             if (topic === 'state:full') {
                 // Session metadata from server. isLive is authoritative
                 // (server decides live vs replay); the header uses it to
-                // swap the speed control for a LIVE button and to hide
-                // future events (no-spoiler).
+                // swap the speed control for a LIVE button.
                 this.isLive = !!data.isLive;
                 if (data.startTime) {
                     this.startTime = new Date(data.startTime);
@@ -464,9 +463,10 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault();
         messageBus.send({ cmd: 'pause' });
         setTimeout(() => messageBus.send({ cmd: 'play' }), 100);
-    // M: mute toggle (handy without reaching for the mute button). Modifier-free
-    // only, so Cmd+M (minimise) / Ctrl+M aren't hijacked. (JoyTQs7j)
-    } else if ((e.key === 'm' || e.key === 'M') && !e.metaKey && !e.ctrlKey) {
+    // M: mute toggle (handy without reaching for the mute button). Bare-key only
+    // — Cmd/Ctrl/Alt + M are ALL excluded, so OS/browser shortcuts (Cmd+M
+    // minimise, Ctrl+M, Alt+M menu access) aren't hijacked. (JoyTQs7j)
+    } else if ((e.key === 'm' || e.key === 'M') && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         if (typeof window.toggleMute === 'function') window.toggleMute();
     }

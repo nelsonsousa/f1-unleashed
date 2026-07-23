@@ -760,9 +760,13 @@
 .scrubber-flag.chequered { color: #ffffff; }
 .scrubber-flag:hover { transform: translate(-50%, -50%) scale(1.4); }
 
-/* No-spoiler: markers ahead of the playhead are injected but hidden until crossed. */
+/* No-spoiler rule (DISABLED — kept for reference): markers ahead of the playhead used to
+   be tagged .evt-spoiler in header.js and hidden by the rule below until the playhead
+   crossed them. Both the JS tagging and this rule are removed — every marker now shows.
+   Re-enabling needs the header.js class tagging restored as well as un-commenting this.
 .scrubber-event.evt-spoiler,
-.scrubber-flag.evt-spoiler { display: none; }
+.scrubber-flag.evt-spoiler { display: none; } */
+
 
 /* Live button */
 .scrubber-live {
