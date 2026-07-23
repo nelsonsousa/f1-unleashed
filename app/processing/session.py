@@ -107,12 +107,7 @@ class SessionEngine:
         self._gmt_offset: Optional[str] = None
         self._audio_info: Optional[dict[str, Any]] = None
         self._start_time: Optional[datetime] = None
-        self._end_time: Optional[datetime] = None
-        self._duration: float = 0.0
-        # Full session length from the time-bounds scan. During a replay build
-        # _duration follows the growing build edge (like a live edge); this
-        # holds the final length to pin once the build completes.
-        self._scanned_duration: float = 0.0
+        self._duration: float = 0.0   # follows the DB edge; pinned to the true end at build finish
 
         # Playback state
         self._last_offset_ms = 0
@@ -123,7 +118,6 @@ class SessionEngine:
         self._data_live = True  # live: raw data edge advanced recently (stream light)
         self._preprocess_done = asyncio.Event()
         self._preprocess_error: Optional[str] = None   # set if the build failed (H5)
-        self._scan_pct: float = 0.0                     # latest build progress % (for the Data-buf colour, ZpJetLOo)
         self._bg_tasks: set = set()   # keep refs to fire-and-forget tasks (M6)
         # Set once the offset-0 baseline (driverList, trackGeometry,
         # trackCircuit, sessionInfo) is committed to the DB. add_client waits
@@ -145,6 +139,10 @@ class SessionEngine:
         self._duration_task: Optional[asyncio.Task] = None
         self._rates_task: Optional[asyncio.Task] = None
         self._running = False
+        # A play command that arrives before the clock exists (auto-play on a
+        # first connect, before the build records the session start) is deferred
+        # and honoured when _ensure_clock anchors the clock (KdKK0D5G).
+        self._pending_play = False
         # True once the live-mode initial "seek to live edge" has happened.
         # Subsequent clients (reloads, additional tabs) inherit the current
         # playback position rather than yanking the clock forward.
@@ -216,9 +214,6 @@ class SessionEngine:
                     base.with_name(base.name + suffix).unlink(missing_ok=True)
         self._db.open()
 
-        # Determine session time bounds from JSONL file
-        await self._scan_time_bounds()
-
         self._running = True
 
         if capturing or reuse:
@@ -237,12 +232,16 @@ class SessionEngine:
                 self._run_preprocess()
             )
             # Stream-immediately: clients connect and play while the transient
-            # DB is still building — exactly like a live session, where the
-            # edge is the capture head. Here the edge is the build progress.
-            # _duration follows that growing edge until the build finishes,
-            # then _run_preprocess pins it to the full scanned length.
-            self._scanned_duration = self._duration
+            # DB is still building — exactly like a live session, where the edge
+            # is the capture head. Here the edge is the build progress; _duration
+            # follows that growing edge (via _track_duration) until the build
+            # finishes, then _run_preprocess pins it to the true DB end.
             self._duration = 0.0
+
+        # Anchor the playback clock from the DB's persisted session start once
+        # available (reuse: now; building/live: _track_duration retries below).
+        # Until then there is no clock — we don't yet know the session's wall time.
+        self._ensure_clock()
 
         # Track the moving edge — the live capture head OR (for replay) the
         # build progress — independently of playback so the scrubber stays
@@ -255,64 +254,29 @@ class SessionEngine:
         if self._live:
             self._rates_task = asyncio.create_task(self._live_rates_loop())
 
-    async def _scan_time_bounds(self) -> None:
-        """Find the first and last payload timestamps in the JSONL (session bounds).
-
-        Scans the file linearly (the last non-empty line gives the end); it is not O(1).
-        """
-        import json as _json
-        from app.processing.file_reader import _parse_timestamp
-
-        live_file = self._session_path / "live.jsonl"
-        if not live_file.exists():
+    def _ensure_clock(self) -> None:
+        """Create the playback clock from the DB's persisted session start
+        (processing_meta['start_time'], written by the pre-processor from the
+        first message's payload timestamp). No-op until that start is available:
+        until the first message is processed we don't know the session's wall
+        time, so there is no clock. Replaces the old full-file _scan_time_bounds
+        pre-scan (KdKK0D5G); idempotent, safe to call repeatedly."""
+        if self._clock is not None or not self._db:
             return
-
-        first_ts = None
-        last_ts = None
-        last_line = None   # most recent non-blank line; stays None for an empty file
-
-        with open(live_file, "r", encoding="utf-8") as f:
-            # Read first valid timestamp (tracking the latest non-blank line as we go,
-            # so an empty file simply leaves last_line None instead of raising).
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                last_line = line
-                try:
-                    msg = _json.loads(line)
-                    ts = _parse_timestamp(msg.get("DateTime", ""))
-                    if ts:
-                        first_ts = ts
-                        break
-                except _json.JSONDecodeError:
-                    continue
-
-            # Continue scanning to the end for the last non-blank line.
-            for line in f:
-                stripped = line.strip()
-                if stripped:
-                    last_line = stripped
-
-            if last_line:
-                try:
-                    msg = _json.loads(last_line)
-                    ts = _parse_timestamp(msg.get("DateTime", ""))
-                    if ts:
-                        last_ts = ts
-                except _json.JSONDecodeError:
-                    pass
-
-        if first_ts:
-            self._start_time = first_ts
-            self._clock = PlaybackClock(first_ts)
-            if last_ts:
-                self._end_time = last_ts
-                # Full recording length — playback runs the WHOLE session
-                # (post-chequered interviews, podium, cool-down). The scrubber
-                # compresses the post-chequered+5min tail into its narrow right
-                # region; it does NOT truncate playback.
-                self._duration = (last_ts - first_ts).total_seconds()
+        start_iso = self._db.get_meta("start_time")
+        if not start_iso:
+            return
+        try:
+            start = datetime.fromisoformat(start_iso)
+        except ValueError:
+            return
+        self._start_time = start
+        self._clock = PlaybackClock(start)
+        # Honour a play command that arrived before the clock existed (auto-play
+        # on a first connect). getattr keeps this safe for minimal test doubles.
+        if getattr(self, "_pending_play", False):
+            self._pending_play = False
+            self._spawn_bg(self._play())
 
     async def _run_preprocess(self) -> None:
         """Build the session DB — one-shot fallback used only when no
@@ -320,7 +284,6 @@ class SessionEngine:
         try:
             await self._preprocessor.run(
                 tail_follow=False,
-                on_progress=self._on_preprocess_progress,
                 on_baseline_ready=self._baseline_ready.set,
             )
         except asyncio.CancelledError:
@@ -335,10 +298,12 @@ class SessionEngine:
                 self._preprocess_error = "pre-processing failed"
             self._preprocessor.close()
             # Build finished: the scrubber now spans the whole session. Pin
-            # _duration to the full scanned length (re-applying the post-
-            # chequered cap now that the chequered row exists in the DB).
-            if self._scanned_duration:
-                self._duration = self._scanned_duration
+            # _duration to the true DB end — MAX(offset_ms), payload-based, the
+            # same data edge the growing tracker followed — now that the last
+            # message (incl. the post-chequered tail) is in the DB.
+            _edge_ms = self._data_edge_ms()
+            if _edge_ms:
+                self._duration = _edge_ms / 1000.0
             self._preprocess_done.set()
             # Safety net: if the build ended without ever signalling baseline
             # (e.g. gate timeout, no matching SessionInfo), unblock any waiting
@@ -359,14 +324,6 @@ class SessionEngine:
         self._bg_tasks.add(t)
         t.add_done_callback(self._bg_tasks.discard)
         t.add_done_callback(_log_task_exception)
-
-    def _on_preprocess_progress(self, pct: float) -> None:
-        """Callback from pre-processor."""
-        self._scan_pct = pct
-        self._spawn_bg(self._broadcast({
-            "topic": "state:scan-progress",
-            "data": {"pct": pct},
-        }))
 
     async def stop(self) -> None:
         """Stop and clean up the session engine."""
@@ -438,6 +395,32 @@ class SessionEngine:
             self._audio_info = json.load(f)
         self._audio_info["segments"] = await asyncio.to_thread(self._build_audio_segments)
 
+    def _state_full_payload(self, events: list, audio_info) -> dict:
+        """The `state:full` payload sent to a client on connect. The time bounds
+        (startTime/endTime/duration/offset) come from the clock, which is created
+        lazily from the first message now (KdKK0D5G) and may not exist yet on a
+        first connect — they are null until _ensure_clock succeeds, so add_client
+        re-sends this once the clock is anchored."""
+        return {
+            "sessionType": self._session_type,
+            "isLive": self._live,
+            "audioInfo": audio_info,
+            "startTime": self._start_time.isoformat() if self._start_time else None,
+            "endTime": (self._start_time + timedelta(seconds=self._duration)).isoformat()
+                       if self._start_time else None,
+            "duration": self._duration,
+            "isPlaying": self._clock.state == ClockState.PLAYING if self._clock else False,
+            "speed": self._clock.speed if self._clock else 1.0,
+            "offset": self._clock.offset_seconds if self._clock else 0.0,
+            "finished": self._terminal,
+            "dataEdge": (self._data_edge_ms() or 0) / 1000.0,
+            "audioEdge": self._audio_end_offset(),
+            "scanProgress": 100.0 if self._preprocess_done.is_set() else 0.0,
+            "preprocessError": self._preprocess_error,
+            "cacheBytes": self._cache_bytes(),
+            "events": events,
+        }
+
     async def add_client(self, ws: WebSocket) -> int:
         """Add a WebSocket client. Returns client ID."""
         self._client_counter += 1
@@ -460,6 +443,13 @@ class SessionEngine:
 
         # (helper used just below — total size of the on-disk session cache.)
 
+        # Anchor the playback clock from the DB's persisted session start if the
+        # build has recorded it yet (KdKK0D5G: the clock is created lazily from the
+        # first message now, so a first client can arrive before it exists). It's
+        # re-sent below after the offset-0 baseline wait, by when it's guaranteed.
+        self._ensure_clock()
+        had_clock = self._clock is not None
+
         # Get all event/playbackEvent messages for scrubber
         events = []
         if self._db:
@@ -473,24 +463,7 @@ class SessionEngine:
         # Send initial state to new client
         await self._send_to_client(ws, {
             "topic": "state:full",
-            "data": {
-                "sessionType": self._session_type,
-                "isLive": self._live,
-                "audioInfo": audio_info,
-                "startTime": self._start_time.isoformat() if self._start_time else None,
-                "endTime": self._end_time.isoformat() if self._end_time else None,
-                "duration": self._duration,
-                "isPlaying": self._clock.state == ClockState.PLAYING if self._clock else False,
-                "speed": self._clock.speed if self._clock else 1.0,
-                "offset": self._clock.offset_seconds if self._clock else 0.0,
-                "finished": self._terminal,
-                "dataEdge": (self._data_edge_ms() or 0) / 1000.0,
-                "audioEdge": self._audio_end_offset(),
-                "scanProgress": 100.0 if self._preprocess_done.is_set() else 0.0,
-                "preprocessError": self._preprocess_error,
-                "cacheBytes": self._cache_bytes(),
-                "events": events,
-            },
+            "data": self._state_full_payload(events, audio_info),
         })
 
         # If the build failed, tell this (possibly late-joining) client too — the
@@ -499,15 +472,6 @@ class SessionEngine:
             await self._send_to_client(ws, {
                 "topic": "error",
                 "data": {"message": f"Session build failed: {self._preprocess_error}"},
-            })
-        else:
-            # Reprocess state for the status-footer Data-buf colour (ZpJetLOo): a
-            # reused/live-capture DB emits no scan:progress, so tell this client the
-            # current build state on connect — 100 = ready (green), else the
-            # in-progress pct (yellow). Build failures go red via the branch above.
-            await self._send_to_client(ws, {
-                "topic": "state:scan-progress",
-                "data": {"pct": 100.0 if self._preprocess_done.is_set() else self._scan_pct},
             })
 
         # For live mode: jump to the live edge ONLY on the first client
@@ -534,6 +498,17 @@ class SessionEngine:
             logger.warning(
                 f"{self._session_name}: baseline not ready after 30s; "
                 f"restoring anyway")
+
+        # The session start is persisted at gate-open — before the offset-0
+        # baseline just awaited — so the clock is anchorable now even if it wasn't
+        # when state:full first went out. Re-send it so the scrubber and the
+        # client's auto-play (which no-ops without a clock) get the bounds (KdKK0D5G).
+        self._ensure_clock()
+        if not had_clock and self._clock is not None:
+            await self._send_to_client(ws, {
+                "topic": "state:full",
+                "data": self._state_full_payload(events, audio_info),
+            })
 
         # Send current display state at clock position (all latest messages per topic)
         if self._clock and self._db:
@@ -603,7 +578,8 @@ class SessionEngine:
             # actual live edge (the duration tracker only ticks every 1 s).
             if target > self._duration:
                 self._duration = target
-            logger.info(f"seek_live → offset {target:.1f}s (was {self._clock.offset_seconds:.1f}s)")
+            _was = self._clock.offset_seconds if self._clock else 0.0
+            logger.info(f"seek_live → offset {target:.1f}s (was {_was:.1f}s)")
             await self._seek(target)
             if self._clock and self._clock.state != ClockState.PLAYING:
                 await self._play()
@@ -640,6 +616,9 @@ class SessionEngine:
     async def _play(self) -> None:
         """Start or resume playback."""
         if not self._clock:
+            # Clock not anchored yet (still waiting on the first message) — honour
+            # this play once _ensure_clock creates it, so auto-play isn't lost.
+            self._pending_play = True
             return
         self._terminal = False
         self._clock.play()
@@ -1087,6 +1066,8 @@ class SessionEngine:
                 await asyncio.sleep(1.0)
                 if not self._db:
                     continue
+                # Anchor the clock as soon as the build records the session start.
+                self._ensure_clock()
                 edge_ms = self._capped_edge_ms()   # also refreshes self._data_live
                 if edge_ms:
                     new_dur = edge_ms / 1000.0

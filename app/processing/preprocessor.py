@@ -265,7 +265,6 @@ class SessionPreProcessor:
     async def run(
         self,
         tail_follow: bool = False,
-        on_progress: Optional[Callable[[float], None]] = None,
         on_caught_up: Optional[Callable[[], None]] = None,
         on_baseline_ready: Optional[Callable[[], None]] = None,
         force: bool = False,
@@ -286,8 +285,6 @@ class SessionPreProcessor:
         status = self._db.get_meta("status")
         if status == "complete" and not tail_follow and not force:
             logger.info(f"Session already processed: {self._session_path.name}")
-            if on_progress:
-                on_progress(100.0)
             if on_baseline_ready:
                 on_baseline_ready()
             return
@@ -323,14 +320,6 @@ class SessionPreProcessor:
         self._init_processors()
         self._bus.set_persist_sink(self._capture_output)
 
-        total_lines = 0
-        if on_progress:
-            live_file = self._session_path / "live.jsonl"
-            if live_file.exists():
-                with open(live_file, "r", encoding="utf-8") as f:
-                    total_lines = sum(1 for _ in f)
-
-        lines_processed = 0
         last_ts = None   # timestamp of the last emitted message; drives finalize
 
         try:
@@ -351,8 +340,6 @@ class SessionPreProcessor:
                 if not self._running:
                     break
 
-                lines_processed += 1
-
                 # Skip stale telemetry at file start
                 if self._start_time is None and msg.topic in ("CarData.z", "Position.z"):
                     continue
@@ -368,6 +355,10 @@ class SessionPreProcessor:
                         if msg_key is not None and msg_key == self._expected_key:
                             self._gated = False
                             self._start_time = msg.timestamp
+                            # Persist the absolute session start so the engine can
+                            # anchor its playback clock from the DB instead of a
+                            # separate pre-scan of live.jsonl (KdKK0D5G).
+                            self._db.set_meta("start_time", msg.timestamp.isoformat())
                             self._cutoff = msg.timestamp - timedelta(hours=1)
                             logger.info(f"Session gated: key={msg_key} at {msg.timestamp}")
 
@@ -440,9 +431,6 @@ class SessionPreProcessor:
                     self._flush_buffer()
                     self._last_flush_ms = offset_ms
 
-                if on_progress and total_lines > 0 and lines_processed % 1000 == 0:
-                    on_progress(min(99.0, (lines_processed / total_lines) * 100))
-
                 if self._message_count % YIELD_EVERY == 0:
                     await asyncio.sleep(0)
 
@@ -496,9 +484,6 @@ class SessionPreProcessor:
                 await asyncio.to_thread(_ple_save, self._session_path)
             except Exception:
                 logger.exception("Pit-loss estimate analysis failed")
-
-            if on_progress:
-                on_progress(100.0)
 
             logger.info(
                 f"Pre-processing complete: {self._message_count} messages, "
