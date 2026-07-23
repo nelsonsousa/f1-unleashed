@@ -83,4 +83,4 @@ team-radio clips interleaved by time) and a **Team Radio** tab listing every cap
 Each clip has Play / Stop; playing one ducks the commentary for its duration.
 
 
-<p align="center"><img src="/static/images/screenshots/checkered_flag.png" width="45"></p>
+<p align="center"><img src="/static/images/icons/logo_light.svg" width="120"></p>
