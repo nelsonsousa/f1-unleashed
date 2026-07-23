@@ -313,6 +313,9 @@ class TelemetryProcessor(Processor):
     # it)" from "still pending (defer)". Too small → a lagged report defers and
     # closes against the NEXT crossing, cascading into empty + double laps.
     _CLOSE_TOL = timedelta(seconds=60)
+    # Bracket kept before the open lap's start when pruning committed samples —
+    # enough for _synthetic_at_seam's pre-seam sample (~18 samples at 3.7/s).
+    _SAMPLE_BRACKET_MS = 5000
 
     def _try_close(self, drv: DriverData, m: int, report_ts: datetime) -> None:
         """Close completed laps up to authoritative lap m using buffered S/F
@@ -342,6 +345,10 @@ class TelemetryProcessor(Processor):
         drv.pending_report_ts = None
         # The latest crossing is the start of the next (open) lap; keep only it.
         drv.crossings = [drv.crossings[-1]]
+        # Samples before the open lap are now committed to telemetryLap rows and
+        # never read again — drop them so DriverData.samples stays bounded and the
+        # per-commit filters don't re-walk the whole session (4tgWbUfx).
+        self._prune_samples(drv)
 
     # ── Position ──────────────────────────────────────────────────────────
     def _handle_position(self, data: Any, clock_time: datetime) -> None:
@@ -498,6 +505,18 @@ class TelemetryProcessor(Processor):
         drv.committed = n
         drv.crossings = []
 
+
+    def _prune_samples(self, drv: DriverData) -> None:
+        """Drop samples older than the open lap's start (minus a small bracket for
+        _synthetic_at_seam's pre-seam sample). Everything before the current open
+        lap is already committed to telemetryLap rows and never read again, so this
+        keeps DriverData.samples memory and the per-commit filters bounded to the
+        open lap rather than the whole session (4tgWbUfx)."""
+        if not drv.crossings:
+            return
+        cutoff = _epoch_ms(drv.crossings[0]) - self._SAMPLE_BRACKET_MS
+        if drv.samples and drv.samples[0][6] < cutoff:
+            drv.samples = [s for s in drv.samples if s[6] >= cutoff]
 
     # ── Emit ──────────────────────────────────────────────────────────────
     def _emit_lap(self, drv: DriverData, n: int,
