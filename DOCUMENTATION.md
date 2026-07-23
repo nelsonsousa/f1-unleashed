@@ -2,7 +2,7 @@
 
 A Formula 1 live-timing and replay application with synchronised audio commentary, multi-source analysis, and per-session deep dives.
 
-**First Release**: 1.0.0 "Monaco", 7 June 2026 — it marks the day of the 2026 Monaco Grand Prix; McLaren's 1000th Grand Prix start; and the 60th anniversary of Mclaren's first-ever Formula 1 race, the 1966 Monaco Grand Prix.
+**First Release**: 1.0.0 "Monte Carlo", 7 June 2026 — it marks the day of the 2026 Monaco Grand Prix; McLaren's 1000th Grand Prix start; and the 60th anniversary of Mclaren's first-ever Formula 1 race, the 1966 Monaco Grand Prix.
 
 **Current release**: 2.0.0 "Spa-Francorchamps", 2026-07-16 — on the eve of the Belgian Grand Prix weekend. See [Release history](#release-history).
 
@@ -51,7 +51,7 @@ Distribution of the processed data is therefore not allowed. Streaming of the cl
 
 F1Unleashed connects to the F1 SignalR feed (live) or replays cached session data (historic), runs pre-processing on the raw timing stream, and visualises everything in a browser. It captures broadcast audio in parallel, aligns it to the data stream, and ships a session-aware UI tuned per session type (Practice / Qualifying / Race).
 
-Lap classification (Practice / Qualifying: PUSH / SLOW / OUT / PIT / STOP / CHECKERED; race laps aren't labelled) is derived from telemetry and lap-time deltas — a lap is SLOW when its elapsed-to-here is >10% over the reference lap to the same point.
+Lap classification (PUSH / SLOW / OUT / PIT / STOP / CHECKERED) is derived from telemetry and lap-time deltas — a lap is SLOW when, up to 90% of the way round the lap, its elapsed-to-here is both >10% over **and** at least 2 s slower than the reference lap to the same point. Race laps also receive PIT / OUT / STOP / CHECKERED labels; only timed (green) race laps are left unlabelled.
 
 ---
 
@@ -200,7 +200,7 @@ a push lap (practice); the at-risk drivers on a push lap (Q1/Q2); predicted/curr
 the frontmost close battle (race). A manual TLA click hands control back to the user (auto
 off); the picker holds a changed pick for a few seconds of session time so a just-completed lap
 can be read before switching. The two-driver panels are computed by `DashboardInfoProcessor`
-(`dashInfo` topic) — server-computed, client-rendered, as everywhere else.
+(`dashInfo:{num}` topic) — server-computed, client-rendered, as everywhere else.
 
 ---
 
@@ -386,7 +386,7 @@ redirected elsewhere with the `cacheDir` setting (see Settings); the rest of the
 data home is fixed.
 
 ```
-{cache-dir}/{year}/{NN_event}/{session_type}/
+{cache-dir}/{year}/{MeetingKey}_{Location}/{SessionKey}_{SessionName}/
     live.jsonl              # one JSON message per line, payload-timestamp-ordered
     subscribe.json          # initial state snapshot at SignalR connect
     commentary.aac          # transcoded audio
@@ -511,7 +511,7 @@ Each processor subscribes to raw F1 topics and emits processed messages. Per-dri
 | `ClockProcessor` | ExtrapolatedClock, SessionInfo | `clock` (utc, sessionTime, clockStatus) |
 | `DriverListProcessor` | DriverList | `driverList` |
 | `StandingsProcessor` | TimingData, DriverList, … | `standings`, `qualifyingSegment` |
-| `DriverStatusProcessor` | TimingData, DriverList | `driverStatus:{num}` (PIT/OUT/TRACK/RET/STOP) |
+| `DriverStatusProcessor` | TimingData, trackStatus, RaceControlMessages, qualifyingPart | `driverStatus:{num}` (DSQ / ELIMINATED / RET / STOP / OUT / PIT / CHECKERED / TRACK) |
 | `LapTimingProcessor` | TimingData, TimingAppData | `driverLaps:{num}`, `raceLaps`, `fastestLap`, `driverBestLapColour:{num}` |
 | `DriverGapProcessor` | TimingData | `driverGap:{num}`, `driverInt:{num}` |
 | `SectorTimingProcessor` | TimingData | `driverSectors:{num}`, `driverMiniSectors:{num}`, `driverSectorLap:{num}` |
@@ -536,8 +536,9 @@ Each processor subscribes to raw F1 topics and emits processed messages. Per-dri
 | `HeartbeatProcessor` | Heartbeat | `heartbeat` |
 
 > The table lists the active processors; each is registered in
-> `app/processing/preprocessor.py`. Post-session analysis (pecking order, pit-loss estimate &
-> measurement, tyre phases, strategy) lives under `app/analysis/`.
+> `app/processing/preprocessor.py`. Post-session analysis (pecking order, pit-loss estimate,
+> stint dataset) lives under `app/analysis/`; in-race pit-loss measurement is the
+> `PitStopLossProcessor` (a processor, not an analysis module).
 
 **Playback engine**
 
