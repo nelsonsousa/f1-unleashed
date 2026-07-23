@@ -76,6 +76,9 @@ pip install -r requirements.txt
 ./f1unleashed.sh start                 # server on http://localhost:1950
 ```
 
+On **Windows**, use `f1unleashed.bat start` (which wraps `f1unleashed.ps1` with
+`-ExecutionPolicy Bypass`, same port 1950) in place of `./f1unleashed.sh start`.
+
 There is **no `.env`** — every setting has a default, so the app runs immediately. Open
 `http://localhost:1950`.
 

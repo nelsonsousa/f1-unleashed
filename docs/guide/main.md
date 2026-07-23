@@ -25,6 +25,9 @@ pip install -r requirements.txt
 ./f1unleashed.sh start                 # then open http://localhost:1950
 ```
 
+On **Windows**, run `f1unleashed.bat start` (it wraps `f1unleashed.ps1`) instead of
+`./f1unleashed.sh start`.
+
 There's no config file to edit — everything has a default, so it runs straight away. Then, in
 order:
 

@@ -65,6 +65,9 @@ pip install -r requirements.txt
 open http://localhost:1950           # 1950 = the year of the first F1 World Championship
 ```
 
+**Windows:** use `f1unleashed.bat start` (a wrapper that runs `f1unleashed.ps1` with
+`-ExecutionPolicy Bypass`, same port 1950) in place of `./f1unleashed.sh start`.
+
 Configuration is done in-app, not via `.env` (which is gone). Open the
 **settings dialog** from the gear on the home-page footer (right side) to set:
 the precipitation-radar API key (= Rainbow.ai); a push-notification webhook
