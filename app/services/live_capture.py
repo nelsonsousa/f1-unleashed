@@ -136,6 +136,7 @@ class LiveCaptureService:
         self._radio_seen: set[str] = set()
         self._radio_pending: list[dict] = []
         self._radio_tasks: set[asyncio.Task] = set()
+        self._analysis_tasks: set[asyncio.Task] = set()   # end-of-session analysis (card 6a636a46)
         # Normalised session type (practice/qualifying/race), from SessionInfo —
         # gates the per-session-type capture toggles (card 27).
         self._capture_session_type: Optional[str] = None
@@ -327,8 +328,18 @@ class LiveCaptureService:
                                 and isinstance(message.get("data"), dict)
                                 and message["data"].get("Status") == "Ends"):
                             self._ends_seen = True
-                            logger.info("SessionStatus=Ends — stopping audio capture")
+                            logger.info("SessionStatus=Ends — stopping audio + kicking off end-of-session analysis")
                             await asyncio.to_thread(self._stop_audio, cache_path)
+                            # Option (a) (card 6a636a46): kick off the end-of-session
+                            # analysis now — the data is complete at Ends and the
+                            # tail-follow DB has it, so we don't wait for the
+                            # ArchiveStatus/backstop stop gate. Capture keeps recording
+                            # the wind-down; the preprocessor finalize refreshes the
+                            # analysis at that gate. Fire-and-forget.
+                            _atask = asyncio.create_task(run_end_of_session_analysis(cache_path))
+                            self._analysis_tasks.add(_atask)
+                            _atask.add_done_callback(self._analysis_tasks.discard)
+                            _atask.add_done_callback(_log_task_exception)
 
                         # Start the DB preprocessor once we've SPECIFICALLY seen
                         # the SessionInfo topic (not merely "live.jsonl exists"),

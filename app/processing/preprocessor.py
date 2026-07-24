@@ -252,6 +252,25 @@ def _filter_payload_timestamps(topic: str, data: Any, cutoff: datetime) -> Optio
     return data
 
 
+async def run_end_of_session_analysis(session_path: Path) -> None:
+    """Run the end-of-session analyses (FP-based pecking-order + geometric
+    pit-loss estimate) for a session, offloaded to threads so they never block
+    the event loop. Idempotent — each compute_and_save overwrites its JSON — so
+    it is safe to call at the live SessionStatus=Ends, again at capture finalize,
+    and at end-of-download. Reads the (transient) session DB, so that DB must
+    exist first. (card 6a636a46)"""
+    try:
+        from app.analysis.pecking_order import compute_and_save as _po_save
+        await asyncio.to_thread(_po_save, session_path)
+    except Exception:
+        logger.exception("Pecking-order analysis failed")
+    try:
+        from app.analysis.pit_loss_estimate import compute_and_save as _ple_save
+        await asyncio.to_thread(_ple_save, session_path)
+    except Exception:
+        logger.exception("Pit-loss estimate analysis failed")
+
+
 class SessionPreProcessor:
     """Transforms raw JSONL into pre-computed display data in SQLite."""
 
@@ -599,25 +618,11 @@ class SessionPreProcessor:
             self._db.set_meta("normalizer_counters", _json.dumps(self._normalizer.counters))
             self._db.set_meta("stream_lag_final", str(self._normalizer.stream_lag_s))
 
-            # FP-based pecking-order prediction: independent of the (dormant) pace
-            # chain above — reads the finalized session DB + the prior session's
-            # pecking_order.json and publishes this session's running prediction.
-            try:
-                from app.analysis.pecking_order import compute_and_save as _po_save
-                # Offloaded — the analysis reads the finalized DB + prior session
-                # and must not block the event loop at end-of-build. (B03 lBuRgUm9)
-                await asyncio.to_thread(_po_save, self._session_path)
-            except Exception:
-                logger.exception("Pecking-order analysis failed")
-
-            # Geometric pit-loss PREDICTION: refined across the event's FP/Q sessions
-            # (event-scoped), superseded by the in-race measurement. Independent of the
-            # dormant pace chain, like pecking-order above.
-            try:
-                from app.analysis.pit_loss_estimate import compute_and_save as _ple_save
-                await asyncio.to_thread(_ple_save, self._session_path)
-            except Exception:
-                logger.exception("Pit-loss estimate analysis failed")
+            # End-of-session analyses (FP pecking-order + geometric pit-loss),
+            # offloaded. Extracted to run_end_of_session_analysis so the live
+            # SessionStatus=Ends path and end-of-download reuse the same chain
+            # (B03 lBuRgUm9 offload; card 6a636a46 shared trigger).
+            await run_end_of_session_analysis(self._session_path)
 
             logger.info(
                 f"Pre-processing complete: {self._message_count} messages, "
