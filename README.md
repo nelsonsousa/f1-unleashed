@@ -8,7 +8,7 @@ A Formula 1 live-timing and replay application with synchronised audio commentar
 
 **Release 1.0.0** — 7 June 2026, the day of the 2026 Monaco Grand Prix: McLaren's 1000th Grand Prix start. McLaren's first-ever race was also a Monaco Grand Prix, in 1966 — so the day marked both 1000 races and 60 years of McLaren in Formula 1.
 
-**Current release**: 2.0.0 "Spa-Francorchamps", 2026-07-16 — on the eve of the Belgian Grand Prix weekend.
+**Current release**: 2.0.1 "Budapest upgrade", 2026-07-24.
 
 For what it does and how it works, see [DOCUMENTATION.md](DOCUMENTATION.md). For a tour of the
 interface, the in-app **user guide** (the **Help (?)** icon on the home page) is split into the

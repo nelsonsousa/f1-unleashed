@@ -4,7 +4,7 @@ A Formula 1 live-timing and replay application with synchronised audio commentar
 
 **First Release**: 1.0.0 "Monte Carlo", 7 June 2026 — it marks the day of the 2026 Monaco Grand Prix; McLaren's 1000th Grand Prix start; and the 60th anniversary of Mclaren's first-ever Formula 1 race, the 1966 Monaco Grand Prix.
 
-**Current release**: 2.0.0 "Spa-Francorchamps", 2026-07-16 — on the eve of the Belgian Grand Prix weekend. See [Release history](#release-history).
+**Current release**: 2.0.1 "Budapest upgrade", 2026-07-24. See [Release history](#release-history).
 
 The server listens on port **1950**, an homage to the first F1 World Championship.
 
@@ -732,6 +732,24 @@ Prix (round 9, race 5 July).*
   soft-couple stall-release.
 - **Video-sync race anchoring** — ENTER snaps to the scheduled start / lights-out. *(The
   OCR-based video sync was replaced in v2.0 by [SYNC TO](#sync-to-a-tv-broadcast).)*
+
+### v2.0.1 — "Budapest upgrade" · 2026-07-24
+*Hungarian Grand Prix weekend (round 11, Hungaroring / Budapest).*
+
+> A maintenance upgrade for Budapest: quicker, lighter, and less spoiler-y.
+
+- **Faster, seek-safe replay** — instant seeking hardened (a unified restore-render gate;
+  radio, race-start and pecking-order state now seek cleanly) and the preprocess pass is a
+  single scan — clock / start / duration come from the DB, dropping the bounds + progress
+  pre-scans.
+- **Lighter memory** — completed-lap telemetry sample buffers are pruned to the open lap.
+- **No-spoiler rule removed** — every scrubber event marker shows from the start, and the
+  scrubber end no longer withholds the compressed post-chequered tail.
+- **Mute fix** — the M-key mute is strictly bare-key; Cmd / Ctrl / Alt + M no longer mute.
+- **First-run install** — `f1unleashed.sh install` / `f1unleashed.bat install` bootstraps the
+  venv so a fresh checkout starts out-of-the-box.
+- **Docs** — README / DOCUMENTATION / in-app guide corrections, Windows-launcher docs, and
+  logo + buy-me-a-coffee polish.
 
 ### v2.0.0 — "Spa-Francorchamps" · 2026-07-16
 *Eve of the Belgian Grand Prix weekend (round 10, Spa-Francorchamps — race 19 July).*
