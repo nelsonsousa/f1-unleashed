@@ -67,20 +67,34 @@ Lap classification (PUSH / SLOW / OUT / PIT / STOP / CHECKERED) is derived from 
 - macOS is the tested platform; Linux/Windows should run but the live-sync path is less
   exercised.
 
-### Install
+### Installation
+
+#### Mac/Linux
 
 ```bash
-git clone <repo-url> f1unleashed && cd f1unleashed
-python3.13 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-./f1unleashed.sh start                 # server on http://localhost:1950
+git clone https://github.com/nelsonsousa/f1-unleashed.git f1unleashed && cd f1unleashed
+./f1unleashed.sh install
+./f1unleashed.sh start
 ```
 
-On **Windows**, use `f1unleashed.bat start` (which wraps `f1unleashed.ps1` with
-`-ExecutionPolicy Bypass`, same port 1950) in place of `./f1unleashed.sh start`.
+#### Windows
 
-There is **no `.env`** — every setting has a default, so the app runs immediately. Open
-`http://localhost:1950`.
+```bash
+git clone https://github.com/nelsonsousa/f1-unleashed.git f1unleashed 
+cd f1unleashed
+f1unleashed.bat install
+f1unleashed.bat start
+```
+
+#### Open the application
+
+In your browser go to `http://localhost:1950` 
+
+#### Environment variables
+
+Copy `instance.env.example` to `instance.env`. Edit the file to change the location of the working directory and port.
+
+By default the server listens on port 1950 and the working directory is OS dependent.
 
 ### First-run configuration
 
