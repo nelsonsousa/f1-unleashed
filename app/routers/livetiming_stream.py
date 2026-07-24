@@ -34,7 +34,6 @@ async def websocket_session(websocket: WebSocket, session_name: str, mode: str =
         { "topic": "state:messages", "data": [...] }       // batch of raw messages
         { "topic": "state:clock", "data": { ... } }        // periodic clock update
         { "topic": "state:status", "data": { ... } }       // playback status change
-        { "topic": "state:scan-progress", "data": { ... }} // background scan progress
         { "topic": "display:*", "data": { ... } }          // processed display messages
     """
     await websocket.accept()

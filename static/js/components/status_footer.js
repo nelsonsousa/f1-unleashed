@@ -108,25 +108,6 @@
         audioEdge = (d.audioEdge != null) ? d.audioEdge : null;
     });
 
-    // Data-buf reprocess state (ZpJetLOo): colour the "Data buf" label from the
-    // server's scan progress + build errors — the STATE is server-computed (the
-    // server sends the build status on connect + as it progresses); the client
-    // only renders it. red = build failed (can't create DB / corrupt / empty /
-    // missing live.jsonl), yellow = rebuilding, green = built / caught up.
-    function setDataBufState(cls) {
-        const el = $('sfDataBufLabel');
-        if (!el) return;
-        el.classList.remove('sf-buf-red', 'sf-buf-yellow', 'sf-buf-green');
-        if (cls) el.classList.add(cls);
-    }
-    messageBus.on('scan:progress', (d) => {
-        if (!d || d.pct == null) return;
-        setDataBufState(d.pct >= 100 ? 'sf-buf-green' : 'sf-buf-yellow');
-    });
-    messageBus.on('error', (d) => {
-        // Only build/session failures colour the Data buf red.
-        if (d && /build/i.test(d.message || '')) setDataBufState('sf-buf-red');
-    });
     // Server-authoritative terminal-end flag (on state:status / state:full via base.js).
     messageBus.on('playback:status', (d) => {
         const was = finished;
