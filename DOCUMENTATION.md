@@ -4,7 +4,7 @@ A Formula 1 live-timing and replay application with synchronised audio commentar
 
 **First Release**: 1.0.0 "Monte Carlo", 7 June 2026 — it marks the day of the 2026 Monaco Grand Prix; McLaren's 1000th Grand Prix start; and the 60th anniversary of Mclaren's first-ever Formula 1 race, the 1966 Monaco Grand Prix.
 
-**Current release**: 2.0.1 "Budapest upgrade", 2026-07-24. See [Release history](#release-history).
+**Current release**: 2.0.2 "Budapest hotfix", 2026-07-24. See [Release history](#release-history).
 
 The server listens on port **1950**, an homage to the first F1 World Championship.
 
@@ -732,6 +732,18 @@ Prix (round 9, race 5 July).*
   soft-couple stall-release.
 - **Video-sync race anchoring** — ENTER snaps to the scheduled start / lights-out. *(The
   OCR-based video sync was replaced in v2.0 by [SYNC TO](#sync-to-a-tv-broadcast).)*
+
+### v2.0.2 — "Budapest hotfix" · 2026-07-24
+*Hungarian Grand Prix weekend — a same-day fix during FP1.*
+
+> Fixed live: the track map (and the traces + predictions riding on it) on the Hungaroring.
+
+- **Track map on circuits where Location ≠ Circuit name** — the client fetches the circuit
+  SVG by `Circuit.ShortName` ("Hungaroring") while the asset and the server-side geometry
+  keyed on Location ("Budapest"), so the client 404'd the SVG and the map went blank —
+  taking the live telemetry traces and lap predictions (which need its corner geometry) with
+  it. Renamed `Budapest.svg → Hungaroring.svg` and mapped the server's Location lookup onto
+  it, so client and server resolve the same file.
 
 ### v2.0.1 — "Budapest upgrade" · 2026-07-24
 *Hungarian Grand Prix weekend (round 11, Hungaroring / Budapest).*

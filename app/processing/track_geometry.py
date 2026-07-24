@@ -32,6 +32,10 @@ CIRCUIT_NAME_MAP = {
     "Miami": "Miami_Gardens",
     "Yas_Island": "Yas_Marina",
     "Yas Island": "Yas_Marina",
+    # Location "Budapest" ≠ Circuit.ShortName "Hungaroring"; the client fetches
+    # the SVG by ShortName, so the asset is named Hungaroring.svg — map the
+    # server's Location lookup onto it so both sides resolve the same file.
+    "Budapest": "Hungaroring",
 }
 
 LOCAL_WINDOW = 80  # Segments forward to search locally
