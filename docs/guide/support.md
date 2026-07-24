@@ -122,6 +122,8 @@ POSITION health boxes) that looked off.
 ## Support the project
 
 F1 Unleashed is a free, personal project built to make watching Formula 1 better. If it
-improves your race weekends, you can support it: [buy me a coffee](https://buymeacoffee.com/f1unleashed).
+improves your race weekends, you can support it by buying me a coffee:
 
-<p align="center"><img src="/static/images/screenshots/checkered_flag.png" width="45"></p>
+<p align="left"><a href="https://www.buymeacoffee.com/f1unleashed" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height: 40px !important;width: auto !important;"></a></p>
+
+<p align="center"><img src="/static/images/icons/logo_light.svg" width="120"></p>
