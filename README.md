@@ -49,40 +49,35 @@ Uses [Rainbow.ai](https://rainbow.ai/) for precipitation-radar imagery (rendered
 
 ## Installation
 
+#### Mac/Linux
+
 ```bash
-# 1. Clone
-git clone <repo-url> f1unleashed && cd f1unleashed
-
-# 2. Python environment
-python3.13 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# 3. Start
+git clone https://github.com/nelsonsousa/f1-unleashed.git f1unleashed && cd f1unleashed
+./f1unleashed.sh install
 ./f1unleashed.sh start
-
-# 4. Open
-open http://localhost:1950           # 1950 = the year of the first F1 World Championship
 ```
 
-**Windows:** use `f1unleashed.bat start` (a wrapper that runs `f1unleashed.ps1` with
-`-ExecutionPolicy Bypass`, same port 1950) in place of `./f1unleashed.sh start`.
-
-Configuration is done in-app, not via `.env` (which is gone). Open the
-**settings dialog** from the gear on the home-page footer (right side) to set:
-the precipitation-radar API key (= Rainbow.ai); a push-notification webhook
-(= ntfy/Discord/Slack) and which alerts to send; per-session-type capture
-toggles (download/play commentary audio, download team radio, keep downloaded
-files); team-radio auto-play; favourite drivers/teams; and the cache location.
-Every value has a sensible default, so the app runs out of the box. The cache
-folder defaults to an OS-appropriate app-data dir; changing it offers to move
-the existing cache and requires a restart.
-
-First-time login:
+#### Windows
 
 ```bash
-python -m app.cli.login          # browser-based F1 login
+git clone https://github.com/nelsonsousa/f1-unleashed.git f1unleashed 
+cd f1unleashed
+f1unleashed.bat install
+f1unleashed.bat start
 ```
+
+#### Open the application
+
+In your browser go to `http://localhost:1950` 
+
+First run: click **Login** on the home page (or run `python -m app.cli.login`).
+
+#### Environment variables
+
+Copy `instance.env.example` to `instance.env`. Edit the file to change the location of the working directory and port.
+
+By default the server listens on port 1950 and the working directory is OS dependent.
+
 
 ---
 
