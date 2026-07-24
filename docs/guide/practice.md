@@ -14,7 +14,7 @@ views — the player, audio, weather, TV sync, status bar — is covered on the
 The standings tile is the heart of the practice view. Per driver it shows:
 
 - **Position** and **driver**;
-- **Lap type** — each lap is classified (PUSH / SLOW / OUT / PIT / STOP), derived
+- **Lap type** — each lap is classified (PUSH / SLOW / OUT / PIT / STOP / CHECKERED), derived
   from telemetry and lap-time deltas;
 - **Best lap** and **gap to leader**;
 - **Mini-sectors** and **S1 / S2 / S3** times, colour-coded (purple = session best, green =
@@ -83,4 +83,4 @@ team-radio clips interleaved by time) and a **Team Radio** tab listing every cap
 Each clip has Play / Stop; playing one ducks the commentary for its duration.
 
 
-<p align="center"><img src="/static/images/screenshots/checkered_flag.png" width="45"></p>
+<p align="center"><img src="/static/images/icons/logo_light.svg" width="120"></p>

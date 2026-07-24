@@ -25,6 +25,9 @@ pip install -r requirements.txt
 ./f1unleashed.sh start                 # then open http://localhost:1950
 ```
 
+On **Windows**, run `f1unleashed.bat start` (it wraps `f1unleashed.ps1`) instead of
+`./f1unleashed.sh start`.
+
 There's no config file to edit — everything has a default, so it runs straight away. Then, in
 order:
 
@@ -109,9 +112,8 @@ in the middle, and a slim **status bar** along the bottom.
 - **Scrubber** — drag anywhere to seek. Seeks are **instant**: the full session state is
   rebuilt at the target moment, so you never wait for a re-play-up.
 - **Event markers** — ticks on the scrubber. Click one to jump to **~60 s before** that
-  event. Clickable event ticks: the 2-minute notice, session start, session finish, safety car /
-  VSC, green flags and red flags. (Flag states — green / red / SC / VSC / chequered — are
-  colour-highlighted; the others, like the 2-minute notice, are plain ticks.)
+  event. Clickable event ticks: green flags (including session/race start), red flags, safety
+  car / VSC, and the chequered flag — all colour-highlighted by flag state.
 - **Speed** — 1×–10× in replay (cycles 1× / 2× / 5× / 10×); 1× live.
 - **LIVE button** (live only) — red at the live edge, black when you've rewound. Click to
   snap back to the latest data.
@@ -250,4 +252,4 @@ session from the home page removes it from disk.
 the FIA. F1, FORMULA 1 and related marks are trademarks of Formula One Licensing B.V.; team,
 driver, and tyre-supplier marks belong to their respective owners.*
 
-<p align="center"><img src="/static/images/screenshots/checkered_flag.png" width="45"></p>
+<p align="center"><img src="/static/images/icons/logo_light.svg" width="120"></p>

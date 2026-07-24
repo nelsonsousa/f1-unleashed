@@ -41,11 +41,11 @@ log/
 .coverage
 htmlcov/
 
-# Claude Code (local/personal config; a shared .claude/settings.json may be committed)
-.claude/settings.local.json
-
-# Release collateral drafts (blog/promo) — attached to Trello cards, not part of the code release
-docs/release/
+# Claude config kept private in real projects (per template "new project" step 0).
+# CLAUDE.md and .claude/ are tracked in the template so clones inherit them;
+# a real project re-ignores them.
+CLAUDE.md
+.claude/
 
 # Internal review notes — not for the repo
 CODE_REVIEW.md

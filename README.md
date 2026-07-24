@@ -49,37 +49,35 @@ Uses [Rainbow.ai](https://rainbow.ai/) for precipitation-radar imagery (rendered
 
 ## Installation
 
+#### Mac/Linux
+
 ```bash
-# 1. Clone
-git clone <repo-url> f1unleashed && cd f1unleashed
-
-# 2. Python environment
-python3.13 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# 3. Start
+git clone https://github.com/nelsonsousa/f1-unleashed.git f1unleashed && cd f1unleashed
+./f1unleashed.sh install
 ./f1unleashed.sh start
-
-# 4. Open
-open http://localhost:1950           # 1950 = the year of the first F1 World Championship
 ```
 
-Configuration is done in-app, not via `.env` (which is gone). Open the
-**settings dialog** from the gear on the home-page footer (right side) to set:
-the precipitation-radar API key (= Rainbow.ai); a push-notification webhook
-(= ntfy/Discord/Slack) and which alerts to send; per-session-type capture
-toggles (download/play commentary audio, download team radio, keep downloaded
-files); team-radio auto-play; favourite drivers/teams; and the cache location.
-Every value has a sensible default, so the app runs out of the box. The cache
-folder defaults to an OS-appropriate app-data dir; changing it offers to move
-the existing cache and requires a restart.
-
-First-time login:
+#### Windows
 
 ```bash
-python -m app.cli.login          # browser-based F1 login
+git clone https://github.com/nelsonsousa/f1-unleashed.git f1unleashed 
+cd f1unleashed
+f1unleashed.bat install
+f1unleashed.bat start
 ```
+
+#### Open the application
+
+In your browser go to `http://localhost:1950` 
+
+First run: click **Login** on the home page (or run `python -m app.cli.login`).
+
+#### Environment variables
+
+Copy `instance.env.example` to `instance.env`. Edit the file to change the location of the working directory and port.
+
+By default the server listens on port 1950 and the working directory is OS dependent.
+
 
 ---
 
@@ -137,15 +135,6 @@ The application covers Practice / Qualifying / Race in usable form today. Active
 
 ---
 
-## Support the project
-
-F1 Unleashed is a free, personal project built to make watching Formula 1 better. If it
-improves your race weekends, you can support it with a coffee:
-
-**[Buy me a coffee](https://buymeacoffee.com/f1unleashed)**
-
----
-
 ## Credits
 
 This project would not exist without the work others have done in this space:
@@ -165,7 +154,7 @@ F1Unleashed is an unofficial, non-commercial project for personal use. It is **n
 
 F1, FORMULA 1, FORMULA ONE, the F1 logo, FIA F1 WORLD CHAMPIONSHIP, GRAND PRIX and related marks are trademarks of Formula One Licensing B.V. Team, driver, sponsor, circuit, and tyre-supplier (e.g. Pirelli) names and marks are the property of their respective owners. They are used here only descriptively, to identify the sport and the data being displayed.
 
-F1Unleashed does not redistribute Formula 1 timing data, broadcast audio, or video. It is a viewer/analysis layer meant to be run by a single user on their own machine, for data that user is entitled to access. See the [full copyright & usage note](DOCUMENTATION.md#disclaimer).
+F1Unleashed does not redistribute Formula 1 timing data, broadcast audio, or video. It is a viewer/analysis layer meant to be run by a single user on their own machine, for data that user is entitled to access. See the [full copyright & usage note](DOCUMENTATION.md).
 
 ---
 
@@ -180,6 +169,13 @@ Copyright © 2026 Nelson Sousa. Co-authored with Claude Code.
 ## Support the project
 
 F1 Unleashed is a free, personal project built to make watching Formula 1 better. If it
-improves your race weekends, you can support it: [buy me a coffee](https://buymeacoffee.com/f1unleashed).
+improves your race weekends, you can support it by buying me a coffee:
 
-<p align="center"><img src="static/images/screenshots/checkered_flag.png" width="45"></p>
+<p align="left"><a href="https://www.buymeacoffee.com/f1unleashed" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height: 40px !important;width: auto !important;"></a></p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="static/images/icons/logo_light.svg">
+    <img alt="F1Unleashed" src="static/images/icons/logo_dark.svg" width="120">
+  </picture>
+</p>
