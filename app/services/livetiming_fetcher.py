@@ -766,13 +766,11 @@ class LiveTimingFetcher:
         try:
             # force=True so a re-download rebuilds from the new live.jsonl
             # rather than early-returning on a prior 'complete' status.
-            await pre.run(
-                force=True,
-                on_progress=(
-                    (lambda pct: progress_callback("Processing", f"{pct:.0f}%"))
-                    if progress_callback else None
-                )
-            )
+            # NB: run() has no on_progress hook — passing one raised TypeError on
+            # EVERY download, so a completed download was reported to the client
+            # as a 500 and the eager DB build never ran. Progress is reported at
+            # the "building session database" step above instead.
+            await pre.run(force=True)
             # Note: no analysis pipeline runs here. Post-session analysis
             # (pecking_order / pit_loss_estimate) runs in the preprocessor's finalize
             # path; the transient DB is deleted below once the build completes.
