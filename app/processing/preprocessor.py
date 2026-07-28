@@ -497,6 +497,10 @@ class SessionPreProcessor:
             logger.exception(f"Pre-processing error: {self._session_path.name}")
             self._db.set_meta("status", "error")
             self.failed = True   # surfaced to the client by the caller (H5)
+            # Re-raise so a caller that doesn't explicitly check `.failed`
+            # (e.g. LiveTimingFetcher.fetch_session) cannot mistake a build
+            # that failed partway through for a successful one (WB-4 / R1).
+            raise
 
     def _filter_message(self, msg: RawMessage) -> Optional[RawMessage]:
         """Apply timestamp filtering to a message. Returns None to drop it."""
