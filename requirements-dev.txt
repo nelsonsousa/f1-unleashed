@@ -1,0 +1,8 @@
+# Dev/test-only dependencies. Kept separate from requirements.txt so runtime
+# installs (production, deployment) never pull in test tooling.
+#
+# httpx (needed for FastAPI's TestClient) is already a runtime dependency in
+# requirements.txt — not repeated here.
+pytest==8.4.1
+pytest-cov==6.2.1
+diff-cover==10.4.1
