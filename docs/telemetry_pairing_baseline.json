@@ -1,0 +1,65 @@
+{
+  "_description": "Real full-pipeline CarData/Position pairing yield, measured against today's WORKING sorted-order file_reader.py + position_processor.py + UNMODIFIED telemetry_processor.py (D7-B has not yet landed). yield = liveTelemetry:* emissions / CarData entries with a valid per-driver Channels dict (same filter telemetry_processor._handle_car_data applies). Established by work block WB-3 (test-battery-plan.md, backend-synthesis.md G1).",
+  "measured_at": "2026-07-27T23:03:47Z",
+  "overall": {
+    "paired": 1001328,
+    "cardata_candidates": 3056114,
+    "yield_pct": 32.7647
+  },
+  "per_fixture": {
+    "spa-fp3-cdn": {
+      "case": "spa-fp3-cdn",
+      "session": "11329_Practice_3",
+      "cardata_candidates": 403810,
+      "paired": 232593,
+      "yield_pct": 57.5996,
+      "build_failed": false,
+      "elapsed_s": 75.6
+    },
+    "spa-fp3-live": {
+      "case": "spa-fp3-live",
+      "session": "11329_Practice_3",
+      "cardata_candidates": 399256,
+      "paired": 75082,
+      "yield_pct": 18.8055,
+      "build_failed": false,
+      "elapsed_s": 49.5
+    },
+    "spa-q-cdn": {
+      "case": "spa-q-cdn",
+      "session": "11330_Qualifying",
+      "cardata_candidates": 427966,
+      "paired": 151007,
+      "yield_pct": 35.2848,
+      "build_failed": false,
+      "elapsed_s": 74.2
+    },
+    "spa-q-live": {
+      "case": "spa-q-live",
+      "session": "11330_Qualifying",
+      "cardata_candidates": 422950,
+      "paired": 55556,
+      "yield_pct": 13.1354,
+      "build_failed": false,
+      "elapsed_s": 61.6
+    },
+    "spa-race-cdn": {
+      "case": "spa-race-cdn",
+      "session": "11334_Race",
+      "cardata_candidates": 707988,
+      "paired": 383433,
+      "yield_pct": 54.1581,
+      "build_failed": false,
+      "elapsed_s": 102.4
+    },
+    "spa-race-live": {
+      "case": "spa-race-live",
+      "session": "11334_Race",
+      "cardata_candidates": 694144,
+      "paired": 103657,
+      "yield_pct": 14.9331,
+      "build_failed": false,
+      "elapsed_s": 82.4
+    }
+  }
+}
