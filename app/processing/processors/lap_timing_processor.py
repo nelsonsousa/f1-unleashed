@@ -152,7 +152,7 @@ class LapTimingProcessor(Processor):
             # any NoL message (those arrive at lap FINISH). The client holds currentLap=1 through
             # lap 1 until the first finish bumps it to 2. Roster from driverList. (user 2026-07-13)
             if first and self._is_race:
-                for num in (self._roster or set(self._nol) | set(self._laps)):
+                for num in sorted(self._roster or set(self._nol) | set(self._laps)):
                     self._emit(num, clock_time)
 
     # ── Race lap counter ──
@@ -216,7 +216,7 @@ class LapTimingProcessor(Processor):
         for num, d in lines.items():
             if isinstance(d, dict) and self._process(num, d, clock_time):
                 changed.add(num)
-        for num in changed:
+        for num in sorted(changed):
             self._emit(num, clock_time)
         # Quali zone-red on the best lap depends on positions/KnockedOut — recolour
         # the field when they shift a driver in/out of the drop zone. Newly-knocked

@@ -198,7 +198,7 @@ class FiaStewardsProcessor(Processor):
             view = {k: ind.get(k) for k in self._VIEW}
             for num in (ind.get("driverNums") or []):
                 by_driver.setdefault(num, []).append(view)
-        for num in set(by_driver) | set(self._last_emit):
+        for num in sorted(set(by_driver) | set(self._last_emit)):
             cur = by_driver.get(num, [])
             if cur != self._last_emit.get(num):
                 self._last_emit[num] = cur
