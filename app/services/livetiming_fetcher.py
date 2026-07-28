@@ -622,7 +622,7 @@ class LiveTimingFetcher:
         live_file = cache_dir / "live.jsonl"
         subscribe_file = cache_dir / "subscribe.json"
 
-        if not force and live_file.exists():
+        if not force and is_jsonl_complete(live_file):
             logger.info(f"Session already cached: {cache_dir}")
             return cache_dir
 

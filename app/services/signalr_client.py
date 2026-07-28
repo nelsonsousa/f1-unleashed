@@ -19,6 +19,8 @@ import requests
 from signalrcore.hub_connection_builder import HubConnectionBuilder
 from signalrcore.messages.completion_message import CompletionMessage
 
+from app.services.livetiming_fetcher import is_jsonl_complete
+
 logger = logging.getLogger(__name__)
 
 
@@ -287,7 +289,13 @@ class F1SignalRClient:
         terminal _SessionEnd marker, closes the file, terminal status).
         """
         live_file = self.cache_path / "live.jsonl"
-        self._output_file = open(live_file, "a", encoding="utf-8")
+        # A file already at this deterministic path that is NOT a complete
+        # session (no terminal SessionStatus "Ends" marker — see
+        # `is_jsonl_complete`) is the corpse of a crashed/failed prior
+        # attempt, not resumable state: truncate and start fresh rather
+        # than appending onto it. An absent file also opens fresh via "a".
+        mode = "w" if live_file.exists() and not is_jsonl_complete(live_file) else "a"
+        self._output_file = open(live_file, mode, encoding="utf-8")
 
         consecutive_failures = 0
         try:
