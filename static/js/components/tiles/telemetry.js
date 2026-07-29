@@ -1104,8 +1104,11 @@
                 // so OUT/COOL/ABORT traces can be inspected.
                 const dashed = teamOrder[lap.driver] === 1;
                 drawTrace(ctx, lap.samples, lap.color, channel, margin, plotW, plotH, yMin, yMax, dashed);
-                drawMarker(ctx, lap.samples[lap.samples.length - 1], lap.color, lap.tla,
-                    channel, margin, plotW, plotH, yMin, yMax);
+                const markerSample = lastNonNullDpSample(lap.samples);
+                if (markerSample) {
+                    drawMarker(ctx, markerSample, lap.color, lap.tla,
+                        channel, margin, plotW, plotH, yMin, yMax);
+                }
             }
         } else {
             for (const [num, samples] of Object.entries(state.liveSamples)) {
@@ -1240,10 +1243,32 @@
         drawCornerMarkers(ctx, left, topGap, plotW, h - topGap);
     }
 
+    // Should-fix 6 (2026-07-29 fix-attempt 2, AC-3): the end-of-lap marker
+    // used to be anchored on the raw last sample -- at the measured
+    // 17.7-19.9% null-dp rate (AC-3's emit-unpaired persistence), a lap
+    // whose LAST sample happens to have a null dp silently skipped the
+    // marker entirely (drawMarker's null-dp guard, ~line 1270) instead of
+    // walking back to the last sample that actually has a plottable
+    // position. Only the completed-lap trace path needs this -- the live
+    // gauge path (handleLiveTelemetry) never persists a null-dp marker
+    // sample and needs no change (file-impact-map.md §3).
+    function lastNonNullDpSample(samples) {
+        if (!samples || !samples.length) return null;
+        for (let i = samples.length - 1; i >= 0; i--) {
+            if (samples[i][0] != null) return samples[i];
+        }
+        return null;   // every sample in this lap is null-dp -- nothing to anchor on
+    }
+
     function drawMarker(ctx, sample, color, tla, channel, margin, plotW, plotH, yMin, yMax) {
         // For throttle/brake, anchor marker to throttle value
         const valIdx = channel === 'throttleBrake' ? 4 : CHANNELS[channel].idx;
         const range = yMax - yMin || 1;
+        // Skip marker for a null-dp (AC-3 emit-unpaired) sample -- neither
+        // `< state.xMin` nor `> state.xMax` catches `null` (both compare
+        // false), so without this guard the driver marker would render
+        // pinned to the chart's left edge instead of being skipped.
+        if (sample[0] == null) return;
         // Skip marker if its sample falls outside the zoom window.
         if (sample[0] < state.xMin || sample[0] > state.xMax) return;
         const x = pctToX(sample[0], margin.left, plotW);
@@ -1279,12 +1304,22 @@
     //  (a) any channel is null/undefined (= the F1 feed dropped this
     //      sample but the position feed kept emitting), or
     //  (b) all 4 main channels are zero (= the F1 feed kept emitting
-    //      with zero placeholders).
+    //      with zero placeholders), or
+    //  (c) dp (s[0], track position) is null -- AC-3's emit-unpaired rows
+    //      (requirement-spec.md, Candidate A telemetry pairing-yield fix):
+    //      a CarData entry with no eligible position now persists with
+    //      dp=None instead of being dropped. Without this check, pctToX(null)
+    //      coerces to x=0 (chart left edge) and can also falsely trigger the
+    //      lap-wrap detector below (`lastPct - s[0] > 50` with s[0]
+    //      coercing to 0). handleLiveTelemetry's live-gauge path already
+    //      guards this (`if (data.dp == null) return;`) -- this is the
+    //      completed-lap trace path's equivalent.
     // Real grid-start standstill rarely lasts long enough to look like
     // an outage; we accept that edge case as a cosmetic blip rather
     // than complicating the test.
     function isOutageSample(s) {
-        return s[1] == null || s[2] == null || s[4] == null || s[5] == null
+        return s[0] == null
+            || s[1] == null || s[2] == null || s[4] == null || s[5] == null
             || (s[1] === 0 && s[2] === 0 && s[4] === 0 && s[5] === 0);
     }
 

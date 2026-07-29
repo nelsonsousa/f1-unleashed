@@ -1,0 +1,4 @@
+{"Type": "SessionInfo", "DateTime": "2026-07-18T14:03:20.100Z", "Json": {"Meeting": "Silverstone", "Session": "Race"}}
+{"Type": "TrackStatus", "DateTime": "2026-07-18T14:03:21.050Z", "Json": {"Status": "1", "Message": "AllClear"}}
+{"Type": "CarData.z", "DateTime": "2026-07-18T14:03:22.123Z", "Json": "eJyrVnJOLCpWslKoVjIEk84ZiXl5qTkQIQMgaWhoYGCgo6BkBGRb1AIBAGxSDbU="}
+{"Type": "Position.z", "DateTime": "2026-07-18T14:03:23.500Z", "Json": "eJyrVs

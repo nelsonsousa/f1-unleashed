@@ -1,0 +1,8 @@
+{"Type": "SessionInfo", "DateTime": "2026-07-18T14:03:20.100Z", "Json": {"Meeting": "Silverstone", "Session": "Race"}}
+{"Type": "TrackStatus", "DateTime": "2026-07-18T14:03:20.500Z", "Json": {"Status": "1", "Message": "AllClear"}}
+{"Type": "CarData.z", "DateTime": "2026-07-18T14:03:21.100Z", "Json": "eJyrVnJOLCpWslKoVjIEk84ZiXl5qTkQIQMgaWhgaWBQCwQADh0MaQ=="}
+{"Type": "WeatherData", "DateTime": "2026-07-18T14:03:21.600Z", "Json": {"AirTemp": "22.4"}}
+{"Type": "CarData.z", "DateTime": "2026-07-18T14:03:22.100Z", "Json": "eJyrVkrOzysBAAoOAmY=
+{"Type": "WeatherData", "DateTime": "2026-07-18T14:03:22.600Z", "Json": {"AirTemp": "22.5"}}
+{"Type": "CarData.z", "DateTime": "2026-07-18T14:03:23.100Z", "Json": "eJyrVnJOLCpWslKoVjIEk84ZiXl5qTkQIQMgaWhoYGBQCwQADeYMYQ=="}
+{"Type": "TrackStatus", "DateTime": "2026-07-18T14:03:24.000Z", "Json": {"Status": "1", "Message": "AllClear"}}

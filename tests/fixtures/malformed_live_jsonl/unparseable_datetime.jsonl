@@ -1,0 +1,6 @@
+{"Type": "SessionInfo", "DateTime": "2026-07-18T14:03:20.100Z", "Json": {"Meeting": "Silverstone", "Session": "Race"}}
+{"Type": "TrackStatus", "DateTime": "2026-07-18T14:03:21.050Z", "Json": {"Status": "1", "Message": "AllClear"}}
+{"Type": "WeatherData", "DateTime": "", "Json": {"AirTemp": "22.5"}}
+{"Type": "WeatherData", "DateTime": "not-a-timestamp", "Json": {"AirTemp": "22.6"}}
+{"Type": "WeatherData", "DateTime": "18/07/2026 14:03:22", "Json": {"AirTemp": "22.7"}}
+{"Type": "WeatherData", "DateTime": "2026-07-18T14:03:23.100Z", "Json": {"AirTemp": "22.8"}}

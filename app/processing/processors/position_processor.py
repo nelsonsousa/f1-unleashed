@@ -65,6 +65,11 @@ class PositionProcessor(Processor):
         self._miss: dict[str, int] = {}               # consecutive telemetry samples w/o a real fix
         self._cur_lap: dict[str, int] = {}            # driverLaps.currentLap (S/F-crossing anchor)
         self._sc_active: bool = False                 # SC/VSC/red → suspend apex snapping, dead-reckon only
+        # AC-4: ordered (transition_ts, new_value) pairs -- lets
+        # `_handle_car_data` look up what `_sc_active` WAS as of a `.z`
+        # sample's OWN timestamp, instead of blindly reading the current
+        # value (see `_sc_active_at`/`_handle_track_status`).
+        self._sc_transitions: list[tuple[datetime, bool]] = []
         self._r_buf: dict[str, list] = {}             # tolerated est. positions, held for backfill
         self._r_dp: dict[str, float] = {}             # reconstructed distance %
         self._wrapped: dict[str, bool] = {}           # dp wrapped naturally this lap (else force one at S/F)
@@ -342,15 +347,43 @@ class PositionProcessor(Processor):
         """SC (4) / red (5) / VSC (6,7) → suspend apex snapping (the signature doesn't hold at
         safety-car speeds; shallow straight-line brakes masquerade as apexes). On the return to
         green, re-anchor each car's next-expected apex from its current dp — which covers both an
-        SC restart (dp≈0 at S/F → first apex) and a VSC lift mid-lap (dp wherever it is)."""
+        SC restart (dp≈0 at S/F → first apex) and a VSC lift mid-lap (dp wherever it is).
+
+        AC-4 (requirement-spec.md; file-impact-map.md §1 AC-4): TrackStatus is
+        unbuffered, but the CarData.z/Position.z samples it affects are now
+        held in stream_normalizer's reorder buffer for up to W=1.0s — a
+        `.z` sample whose OWN payload timestamp precedes this transition can
+        still be PROCESSED after it (buffer-held-then-released). `_sc_active`
+        itself is still updated immediately here (kept for any caller that
+        wants "the current live state"), but `_handle_car_data`'s READ of it
+        is deferred to `_sc_active_at(clock_time)` — a point-in-time lookup
+        against `_sc_transitions`, the same self-synchronizing pattern
+        `telemetry_processor._try_close` already uses via `_CLOSE_TOL`."""
         if not isinstance(data, dict):
             return
         st = str(data.get("Status", ""))
         was = self._sc_active
         self._sc_active = st in ("4", "5", "6", "7")
+        self._sc_transitions.append((clock_time, self._sc_active))
         if was and not self._sc_active:
             for num, dp in self._r_dp.items():
                 self._apex_i[num] = self._first_apex_after(dp)
+
+    def _sc_active_at(self, ts: datetime) -> bool:
+        """AC-4: what `_sc_active` WAS as of a `.z` sample's own payload
+        timestamp `ts`, not whatever it currently is at call time — a
+        point-in-time lookup over `_sc_transitions` (ascending by
+        transition timestamp, since TrackStatus messages themselves always
+        arrive/are processed in order). Defaults to False (not active) if
+        `ts` precedes every known transition — SC/VSC is never active before
+        the session's first TrackStatus message."""
+        active = False
+        for transition_ts, value in self._sc_transitions:
+            if transition_ts <= ts:
+                active = value
+            else:
+                break
+        return active
 
     def _first_apex_after(self, dp: float) -> int:
         """Index of the first anchor ahead of dp (this lap has no wrap)."""
@@ -399,7 +432,11 @@ class PositionProcessor(Processor):
                 continue                              # scale not learned yet
             ddp = self._C * speed * dt
 
-            if self._sc_active:
+            # AC-4: deferred, point-in-time lookup — was SC/VSC active as of
+            # THIS sample's own payload timestamp, not whatever _sc_active
+            # currently reads (which may already reflect a later transition
+            # released out of order by the .z reorder buffer).
+            if self._sc_active_at(clock_time):
                 # SC/VSC: dead-reckon only, and clamp below 100 so the dp never free-wraps — the
                 # single crossing per lap is placed authoritatively at the S/F reset. No apex snap.
                 self._r_prev[num] = speed

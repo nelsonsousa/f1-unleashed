@@ -7,13 +7,24 @@ Pairs position samples (track-distance %) with CarData channel samples and:
     `telemetryLap:{num}:{lap}` (persisted as a normal message row, fetched on
     demand by topic).
 
-Pairing (strict 1:1):
-  Position and CarData arrive as per-entry messages already keyed by their
-  payload timestamp (file_reader splits the 1-msg/s batches). Each position
-  sample is held pending and assigned to the NEXT CarData sample; the pair's
-  reference timestamp is the POSITION Timestamp. A CarData with no pending
-  position is skipped; a position arriving while one is already pending
-  replaces it (the older is skipped).
+Pairing (D7-B, requirement-spec.md §9.3 — pipeline redesign 2026-07-28):
+  Position and CarData arrive as per-entry messages, each carrying its own
+  trustworthy utcTimestamp (StreamNormalizer's payload-timestamp bypass for
+  .z topics — architecture-plan.md §A.3.2). Since the redesigned pipeline
+  forwards messages in strict FILE order with no server-side sort (§2.3), the
+  two topics' entries arrive in per-message BATCHES rather than interleaved
+  (architecture-plan.md §A.7.1: a single-slot "next CarData after a
+  position" rule collapses pairing yield from ~82% to ~20-26% under batched
+  arrival — the D7-B regression this rewrite fixes).
+  Each driver keeps a small, bounded, TIMESTAMP-ORDERED buffer of recent
+  position samples. Each CarData entry is paired with the position in that
+  buffer whose utcTimestamp is the nearest one AT OR BEFORE the CarData
+  entry's own utcTimestamp — arrival order is irrelevant; only the two
+  entries' own timestamps decide the pairing. A CarData entry with no
+  eligible (preceding) position in the buffer is skipped, same as before.
+  A given position MAY pair with more than one CarData entry (when several
+  CarData samples fall between two position samples) — correct, since the
+  car's position genuinely hasn't changed between them.
 
 Position validity:
   * stale (dp unchanged from previous) → skip (parked car / garage);
@@ -119,8 +130,21 @@ def _interp1d(xs: list, ys: list, x: float) -> float:
 class DriverData:
     num: str
     activated: bool = False
-    # Pairing.
-    pending_pos: Optional[tuple] = None      # (dp, ts, est) awaiting next CarData
+    # Pairing (D7-B): a small, timestamp-ordered buffer of recent position
+    # samples — (ts_ms, dp, ts, est), ascending by ts_ms — that CarData
+    # entries pair against by nearest-preceding utcTimestamp, not arrival
+    # adjacency. Bounded (see _POS_BUFFER_MAX) so it can't grow unboundedly
+    # across a session; old entries fall off automatically as new ones push
+    # them out.
+    pos_buffer: list = field(default_factory=list)
+    # Fixed (fix-attempt 3, 2026-07-28): the ts_ms of the most recently
+    # CONSUMED (paired) position. `_nearest_unconsumed_pos` refuses to match
+    # a position at or before this watermark, restoring the "a position
+    # pairs with at most one CarData entry" invariant production has always
+    # enforced (`pending_pos = None` immediately after use) — see the
+    # comment on `_nearest_unconsumed_pos` for why the un-consumed buffer
+    # lookup alone let one stale position pair repeatedly.
+    pos_watermark_ms: Optional[int] = None
     last_dp: Optional[float] = None
     last_pos_ts: Optional[datetime] = None   # ts of the previous position sample
     # Captured samples since session start:
@@ -143,6 +167,15 @@ class DriverData:
     live_lap: int = 0                          # current driving lap (live elapsed only)
     in_pit: bool = False                       # driverStatus PIT → ignore samples until OUT
     emitted: set = field(default_factory=set)
+    # AC-4 (requirement-spec.md; file-impact-map.md §1 AC-4): the PIT
+    # message's OWN timestamp, set when a PIT latch arrives and cleared once
+    # `_maybe_close_pending_pit` actually runs the deferred close. Deferring
+    # the CALL (not just its effect) is the two-call-site fix -- `_close_in_lap`
+    # only fires once a locally observed CarData.z/Position.z sample's own
+    # timestamp has caught up to this one, so any `.z` sample the reorder
+    # buffer was still holding (up to W=1.0s) with an EARLIER own timestamp
+    # is guaranteed to have already been appended to drv.samples first.
+    pending_pit_close_ts: Optional[datetime] = None
 
 
 class TelemetryProcessor(Processor):
@@ -240,12 +273,24 @@ class TelemetryProcessor(Processor):
             num = topic.split(":", 1)[1]
             drv = self._drv(num)
             if data == "PIT":
-                # The IN lap ENDS here: close it immediately at pit entry (partial,
-                # ends <100%), numbered by cur_lap (the lap being driven). Then
-                # ignore samples until OUT (no garage capture).
+                # The IN lap ENDS here: partial (ends <100%), numbered by
+                # cur_lap (the lap being driven). AC-4: the ACTUAL close
+                # (`_close_in_lap`, which snapshots drv.samples by timestamp
+                # window) is deferred — see `pending_pit_close_ts`'s
+                # docstring — rather than run synchronously here. `in_pit`
+                # itself still flips immediately (unchanged from before;
+                # only the window-snapshotting close call is deferred, per
+                # file-impact-map.md §1 AC-4's "two call site" fix scope).
                 if not drv.in_pit:
                     drv.in_pit = True
-                    self._close_in_lap(drv, clock_time)
+                    # Deliberately NOT triggered here with PIT's own
+                    # clock_time — PIT arrives on the generic (non-.z)
+                    # clock, which is not itself a locally-observed .z
+                    # sample and can run ahead of the .z reorder buffer's
+                    # watermark by up to W. Only an ACTUAL CarData.z/
+                    # Position.z arrival (`_handle_car_data`/
+                    # `_handle_position`, below) may trigger the close.
+                    drv.pending_pit_close_ts = clock_time
             elif data == "OUT":
                 # Pit exit: the out-lap starts here — partial, starts >0%. Its
                 # NUMBER is assigned when it closes (at the next currentLap bump),
@@ -294,6 +339,24 @@ class TelemetryProcessor(Processor):
             m = cur - 1
             if m > drv.committed:
                 self._try_close(drv, m, clock_time)
+
+    def _maybe_close_pending_pit(self, drv: DriverData, observed_z_ts: datetime) -> None:
+        """AC-4: run the deferred PIT close once a locally observed
+        CarData.z/Position.z sample's own timestamp (`observed_z_ts`) has
+        caught up to the PIT message's own timestamp
+        (`drv.pending_pit_close_ts`). Called both at PIT-arrival time
+        (handles the common case where nothing was buffered/reordered) and
+        from `_handle_car_data`/`_handle_position` on every subsequent `.z`
+        arrival, so the close fires as soon as it is safe — no added
+        latency beyond whatever the reorder buffer was already going to
+        release anyway."""
+        if drv.pending_pit_close_ts is None:
+            return
+        if observed_z_ts < drv.pending_pit_close_ts:
+            return
+        end_ts = drv.pending_pit_close_ts
+        drv.pending_pit_close_ts = None
+        self._close_in_lap(drv, end_ts)
 
     def _close_in_lap(self, drv: DriverData, end_ts: datetime) -> None:
         """Close the in-lap immediately at pit entry, numbered by cur_lap (the
@@ -366,26 +429,34 @@ class TelemetryProcessor(Processor):
             # real positions are length-3. Carried into the sample for lap-commit.
             est = 1 if (len(coords) >= 4 and coords[3]) else 0
             drv = self._drv(num)
+            # AC-4: a Position.z arrival also counts as "locally observed a
+            # .z-derived sample" for the deferred PIT close — it doesn't
+            # itself add anything to drv.samples, but since the reorder
+            # buffer's watermark is shared across CarData.z/Position.z, its
+            # own timestamp having caught up guarantees no earlier-timestamped
+            # CarData is still pending upstream either.
+            if drv.pending_pit_close_ts is not None:
+                self._maybe_close_pending_pit(drv, clock_time)
             if not drv.activated:
                 # Pre-race (before lights-out): pair positions with CarData so LIVE telemetry passes
                 # through (dashboard gauges) — but run NO S/F/lap logic and store no samples; there
                 # are no laps to persist yet. (SME 2026-07-15)
-                drv.pending_pos = (dp, clock_time, est)
+                self._push_pos(drv, dp, clock_time, est)
                 drv.last_dp = dp
                 continue
             if drv.in_pit:
                 # Through the pit lane/garage we DO capture telemetry (so the stationary
                 # speed==0 stretch is identifiable) but run NO S/F crossing detection —
                 # pit-lane dp wraps are spurious projections that must not count as laps.
-                # pending_pos is set even when dp is stale (a stopped car's dp is constant)
-                # so CarData can pair and emit the speed==0 samples. OUT re-seeds last_dp.
-                drv.pending_pos = (dp, clock_time, est)
+                # Buffered even when dp is stale (a stopped car's dp is constant) so
+                # CarData can pair and emit the speed==0 samples. OUT re-seeds last_dp.
+                self._push_pos(drv, dp, clock_time, est)
                 drv.last_dp = dp
                 drv.last_pos_ts = clock_time
                 continue
             prev = drv.last_dp
             if prev is None:
-                drv.pending_pos = (dp, clock_time, est)
+                self._push_pos(drv, dp, clock_time, est)
                 drv.last_dp = dp
                 drv.last_pos_ts = clock_time
                 continue
@@ -402,11 +473,11 @@ class TelemetryProcessor(Processor):
                                         drv.pending_report_ts or clock_time)
                     drv.live_lap += 1
                     drv.live_zero_ts = line_ts
-                drv.pending_pos = (dp, clock_time, est)
+                self._push_pos(drv, dp, clock_time, est)
                 drv.last_dp = dp
                 drv.last_pos_ts = clock_time
             elif dp > prev:
-                drv.pending_pos = (dp, clock_time, est)
+                self._push_pos(drv, dp, clock_time, est)
                 drv.last_dp = dp
                 drv.last_pos_ts = clock_time
             # else: stale (dp == prev) or backward jump → skip, keep last_dp.
@@ -420,6 +491,64 @@ class TelemetryProcessor(Processor):
             return now_ts
         frac = (100.0 - prev_dp) / total
         return prev_ts + (now_ts - prev_ts) * frac
+
+    # ── Pairing buffer (D7-B) ────────────────────────────────────────────
+    # Bounded so a driver's pos_buffer can't grow across a whole session —
+    # positions arrive at ~3-4 Hz, so this comfortably covers any single
+    # batch (architecture-plan.md §A.7.1 observed 3-5 entries/message) with
+    # wide headroom, while old entries fall off as new ones push past it.
+    _POS_BUFFER_MAX = 64
+
+    def _push_pos(self, drv: DriverData, dp: float, ts: datetime, est: int) -> None:
+        ts_ms = _epoch_ms(ts)
+        bisect.insort(drv.pos_buffer, (ts_ms, dp, ts, est), key=lambda e: e[0])
+        if len(drv.pos_buffer) > self._POS_BUFFER_MAX:
+            del drv.pos_buffer[: len(drv.pos_buffer) - self._POS_BUFFER_MAX]
+
+    @staticmethod
+    def _nearest_unconsumed_pos(drv: DriverData, car_ts_ms: int) -> Optional[tuple]:
+        """The position in drv.pos_buffer with the latest ts_ms <= car_ts_ms
+        (D7-B: pair by timestamp, not arrival adjacency) THAT HAS NOT ALREADY
+        BEEN PAIRED to an earlier CarData entry.
+
+        Fixed (fix-attempt 3, 2026-07-28): the original D7-B implementation
+        never consumed a matched position, on the stated reasoning that "the
+        car's position genuinely hasn't changed" between several CarData
+        samples that fall between the same two positions — true of the DP
+        VALUE, but wrong for what actually got persisted. `drv.samples`
+        (the completed-lap trace: `docs/artifacts/2026-07-28-016-telemetry-
+        downstream-reconciliation/data-investigation.md`) ended up storing
+        several rows with byte-identical `[dp, ..., t_ms]`, differing only in
+        channel readings — i.e. several genuinely distinct CarData samples
+        collapsed onto a single point in the plotted trace, instead of
+        spreading across it. Measured against real Spa 2026 Qualifying data:
+        69.4% of committed telemetryLap samples carried a duplicated
+        timestamp (production: 0.02%), and DISTINCT telemetry points per car
+        collapsed to ~37.7% of production's (`distinct new/old` ratio, flat
+        across all 22 cars — a single deterministic mechanism, not a race).
+
+        Production's pre-redesign single-slot model never had this problem
+        because it explicitly clears `pending_pos` immediately after a
+        CarData entry consumes it (`pending_pos = None`) — a position can be
+        used AT MOST ONCE. This restores that same invariant on top of D7-B's
+        buffer (so batched/out-of-arrival-order delivery still finds the
+        CORRECT position by timestamp, not just "whatever arrived most
+        recently" — the actual thing D7-B fixed): `pos_watermark_ms` tracks
+        the ts_ms of the last position actually paired; a position at or
+        before that watermark is refused even if it is still the nearest
+        preceding one in the buffer, so a CarData entry with no genuinely
+        NEW eligible position is skipped — exactly as production always
+        skipped the 2nd+ CarData in a C-run (`pending_pos is None`)."""
+        buf = drv.pos_buffer
+        if not buf:
+            return None
+        idx = bisect.bisect_right(buf, car_ts_ms, key=lambda e: e[0]) - 1
+        if idx < 0:
+            return None
+        ts_ms, dp, ts, est = buf[idx]
+        if drv.pos_watermark_ms is not None and ts_ms <= drv.pos_watermark_ms:
+            return None   # nearest preceding position already consumed — no new one to pair
+        return dp, ts, est, ts_ms
 
     # ── CarData ───────────────────────────────────────────────────────────
     def _handle_car_data(self, data: Any, clock_time: datetime) -> None:
@@ -446,11 +575,43 @@ class TelemetryProcessor(Processor):
                 if not isinstance(ch, dict):
                     continue
                 drv = self._drv(num)
-                if drv.pending_pos is None:
-                    continue   # no pending position to pair with → skip this CarData
-                dp, pos_ts, est = drv.pending_pos
-                drv.pending_pos = None
-                abs_ms = _epoch_ms(pos_ts)
+                # D7-B: pair by nearest-preceding utcTimestamp, not arrival
+                # adjacency — AND, fixed fix-attempt 3, only against a
+                # position not already consumed by an earlier CarData entry
+                # (see `_nearest_unconsumed_pos`'s docstring for why the
+                # un-consumed lookup alone caused a real 62% loss of distinct
+                # telemetry resolution). `clock_time` is THIS CarData entry's
+                # own utcTimestamp (StreamNormalizer's .z payload-timestamp
+                # bypass — the entry's own Utc, not the message envelope).
+                match = self._nearest_unconsumed_pos(drv, _epoch_ms(clock_time))
+                if match is None:
+                    # AC-3 (requirement-spec.md): emit UNPAIRED instead of
+                    # silently skipping. dp=None, channel data still
+                    # persisted — "channels present, position unknown" is a
+                    # legitimate row (file-impact-map.md §3), not a dropped
+                    # sample. abs_ms anchors on the CarData entry's OWN
+                    # timestamp (no matched position to anchor on).
+                    dp, pos_ts, est, pos_ts_ms = None, None, 0, None
+                else:
+                    dp, pos_ts, est, pos_ts_ms = match
+                    drv.pos_watermark_ms = pos_ts_ms   # consume it — the next CarData needs a NEWER position
+                # abs_ms anchors the STORED per-lap sample (drv.samples / the
+                # persisted telemetryLap trace) to the matched position's own
+                # timestamp — dp describes where the car was AT that position
+                # sample, and lap-boundary math (crossings, _prune_samples,
+                # _synthetic_at_seam) is itself derived from position-wrap
+                # timestamps, so this keeps both on the same clock. car_ms is
+                # this CarData entry's OWN trustworthy utcTimestamp — used
+                # for the LIVE-only emission below (a live gauge should read
+                # as of its own sample's arrival, not lag behind by the age
+                # of the matched position; also keeps `liveTelemetry`'s
+                # persisted offset_ms unique per sample regardless of the
+                # (now rare, single-use) position-reuse case).
+                # AC-3: no matched position (pos_ts is None) -> anchor on the
+                # CarData entry's OWN timestamp instead (there is no
+                # position sample to anchor on).
+                abs_ms = _epoch_ms(pos_ts) if pos_ts is not None else _epoch_ms(clock_time)
+                car_ms = _epoch_ms(clock_time)
                 # Absent channel -> None (client draws a dotted gap), NEVER a
                 # fake 0 — a default 0 was read as a real "speed dropped to 0"
                 # sample. A PRESENT 0 is legitimate and kept as 0. (mrHzxVmb / L9)
@@ -481,11 +642,22 @@ class TelemetryProcessor(Processor):
                             "gear": gear, "throttle": thr, "brake": brk}
                 if drv.activated:
                     drv.samples.append(sample)   # store only once running — nothing to persist pre-race
-                live["ts"] = abs_ms
+                # AC-4: this CarData entry's own timestamp has now been
+                # locally observed — if a PIT close is still pending and
+                # this sample's timestamp has caught up to it, run the
+                # deferred close now (drv.samples already has this sample
+                # appended above, so it's included if it belongs in-window).
+                if drv.pending_pit_close_ts is not None:
+                    self._maybe_close_pending_pit(drv, clock_time)
+                # LIVE-only fields and the emit's persistence clock use the
+                # CarData entry's own timestamp (car_ms/clock_time), not the
+                # (possibly reused) matched position's — see the comment on
+                # `car_ms` above.
+                live["ts"] = car_ms
                 live["lap"] = drv.live_lap
-                live["lapElapsedMs"] = (abs_ms - _epoch_ms(drv.live_zero_ts)
+                live["lapElapsedMs"] = (car_ms - _epoch_ms(drv.live_zero_ts)
                                         if drv.live_zero_ts is not None else None)
-                self._bus.emit(f"liveTelemetry:{num}", live, pos_ts)
+                self._bus.emit(f"liveTelemetry:{num}", live, clock_time)
 
     # ── STOP / Retired ────────────────────────────────────────────────────
     def _handle_stop(self, num: str, ts: datetime) -> None:
@@ -539,10 +711,38 @@ class TelemetryProcessor(Processor):
         # next-lap straggler (dp~0) at the back — either draws a line straight
         # across the chart. Strip leading/trailing samples that jump backward
         # across the seam so the trace is monotonic in dp.
-        while len(in_lap) >= 2 and in_lap[0][0] > in_lap[1][0]:
-            in_lap.pop(0)
-        while len(in_lap) >= 2 and in_lap[-1][0] < in_lap[-2][0]:
-            in_lap.pop()
+        # AC-3: a None dp (emit-unpaired, file-impact-map.md §3) can't
+        # participate in this ordering comparison — None is not orderable
+        # against a float. Rather than halting the whole strip on the FIRST
+        # null-dp row encountered (which, at the measured 17.7-19.9% null
+        # rate, left the previous-lap straggler this loop exists to remove
+        # in the trace ~18-20% of the time — should-fix 4, 2026-07-29
+        # fix-attempt 2), the comparison is evaluated over the NON-NULL
+        # subsequence: a genuine straggler is identified and popped by its
+        # own index even when a null-dp row sits between it and the sample
+        # it's compared against. Null-dp rows themselves are never popped
+        # here (a null dp can neither confirm nor rule out being part of the
+        # stragglered run) — they stay in `in_lap`'s output as legitimate
+        # "channels present, position unknown" gap samples, exactly as
+        # before.
+        while True:
+            idxs = [k for k, s in enumerate(in_lap) if s[0] is not None]
+            if len(idxs) < 2:
+                break
+            i0, i1 = idxs[0], idxs[1]
+            if in_lap[i0][0] > in_lap[i1][0]:
+                in_lap.pop(i0)
+            else:
+                break
+        while True:
+            idxs = [k for k, s in enumerate(in_lap) if s[0] is not None]
+            if len(idxs) < 2:
+                break
+            i_last, i_prev = idxs[-1], idxs[-2]
+            if in_lap[i_last][0] < in_lap[i_prev][0]:
+                in_lap.pop(i_last)
+            else:
+                break
 
         out = []
         synth_start = self._synthetic_at_seam(drv, start_ts, 0.0)
@@ -612,8 +812,13 @@ class TelemetryProcessor(Processor):
         # The crossing sample (ts == seam_ms, dp ~0) belongs AFTER the seam, so
         # `before` must be strictly pre-seam (the pre-S/F dp ~99) — else the
         # across-S/F gap reads ~100% and interpolation is wrongly skipped.
-        before = next((s for s in reversed(drv.samples) if s[6] < seam_ms), None)
-        after = next((s for s in drv.samples if s[6] >= seam_ms), None)
+        # AC-3: a None-dp (emit-unpaired) sample can't bracket a seam — the
+        # gap arithmetic below needs a real dp on both sides — so it is
+        # excluded from bracket selection here (it still exists in
+        # drv.samples/the emitted trace, just isn't usable as a seam
+        # bracket).
+        before = next((s for s in reversed(drv.samples) if s[6] < seam_ms and s[0] is not None), None)
+        after = next((s for s in drv.samples if s[6] >= seam_ms and s[0] is not None), None)
         if before is None or after is None:
             return None
         # Across-S/F gap: before.dp is near 100, after.dp near 0.

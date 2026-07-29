@@ -1,12 +1,17 @@
 """
-JSONL File Reader with tail-follow support.
+JSONL File Reader — pure tail-follow forwarder.
 
-Reads F1 timing data from JSONL files, decompresses .z topics, splits
-CarData.z/Position.z into individual entries by payload timestamp, and
-reorders messages within a 1-second window.
+Reads F1 timing data lines from JSONL files and forwards them, in strict file
+order, with no reordering, no buffering window, and no `.z` handling. Per the
+2026-07-27-003 pipeline redesign (`docs/artifacts/2026-07-27-003-pipeline-redesign/`),
+those responsibilities (STREAM_LAG timestamp correction, `.z` decompression/
+splitting, and the continuous dedup rule) now live in
+`app/processing/stream_normalizer.py`. This module's only job is: bytes -> lines
+-> RawLine, in the order they appear in the file, plus tail-follow polling and
+live-sim pacing.
 
 Two modes:
-- Normal: yields messages as (topic, data, timestamp) tuples at read speed
+- Normal: yields RawLine(topic, data, envelope_ts) at read speed
 - Tail-follow: when reaching EOF without _SessionEnd marker, polls for new content
 """
 
@@ -14,10 +19,8 @@ import asyncio
 import json
 import logging
 import time
-import zlib
-import base64
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Optional
 
@@ -28,49 +31,24 @@ SESSION_END_MARKER = "_SessionEnd"
 
 
 @dataclass
-class RawMessage:
-    """A raw timing message from the JSONL file."""
+class RawLine:
+    """One forwarded line from the JSONL file, in file order.
+
+    `data` is exactly what `Json` deserialized to — for `.z` topics this is
+    still the base64-encoded compressed string; decompression is the
+    normalizer's job, not the reader's (AC-3: the reader has no logic beyond
+    sequential reading).
+    """
     topic: str
     data: Any
-    timestamp: datetime
-
-
-def decompress_z_data(data: str) -> Any:
-    """Decompress .z topic data (base64 → zlib raw inflate → JSON)."""
-    decoded = base64.b64decode(data)
-    decompressed = zlib.decompress(decoded, -zlib.MAX_WBITS)
-    return json.loads(decompressed)
-
-
-def split_z_entries(topic: str, data: Any) -> list[tuple[Optional[str], Any]]:
-    """Split a decompressed .z message into individual entries with payload timestamps.
-
-    Returns list of (iso_timestamp_or_None, single_entry_data) pairs.
-    """
-    if topic == "CarData.z" and isinstance(data, dict) and "Entries" in data:
-        result = []
-        for entry in data["Entries"]:
-            utc = entry.get("Utc")
-            if utc:
-                result.append((utc, {"Entries": [entry]}))
-        return result if result else [(None, data)]
-
-    if topic == "Position.z" and isinstance(data, dict) and "Position" in data:
-        result = []
-        for pos in data["Position"]:
-            ts = pos.get("Timestamp")
-            if ts:
-                result.append((ts, {"Position": [pos]}))
-        return result if result else [(None, data)]
-
-    return [(None, data)]
+    envelope_ts: datetime
 
 
 def _parse_timestamp(dt_str: str) -> Optional[datetime]:
     """Parse a datetime string, handling various F1 formats.
 
     Always returns timezone-aware (UTC) datetimes to avoid naive/aware
-    comparison errors in the reorder buffer.
+    comparison errors downstream.
     """
     try:
         dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
@@ -93,8 +71,8 @@ async def read_jsonl(
     speed: float = 1.0,
     _now: Callable[[], float] = time.monotonic,
     _sleep: Callable = asyncio.sleep,
-) -> AsyncIterator[RawMessage]:
-    """Read and process messages from a session's JSONL file.
+) -> AsyncIterator[RawLine]:
+    """Read a session's JSONL file and forward each line, in file order.
 
     Args:
         session_path: Directory containing live.jsonl
@@ -105,22 +83,17 @@ async def read_jsonl(
             consumer can finalize (used when a live capture ends).
         pace: Live-SIMULATION mode — sleep between lines so each is released at
             its envelope (arrival) timestamp relative to the first, reproducing
-            the real arrival cadence (incl. the reorder-window burst that a fast
-            whole-file read hides). Paces the READ (input), so the reorder buffer
-            sees paced arrivals.
+            the real arrival cadence. Paces the READ (input).
         speed: wall-time multiplier for `pace` (2.0 = 2x real speed).
         _now, _sleep: injectable monotonic clock + async sleep (deterministic tests).
 
     Yields:
-        RawMessage tuples in chronological order (reordered within 1s window)
+        RawLine(topic, data, envelope_ts) in strict file order — no reordering.
     """
     live_file = session_path / "live.jsonl"
     if not live_file.exists():
         raise FileNotFoundError(f"No live.jsonl found at {session_path}")
 
-    reorder_window = timedelta(seconds=1.0)
-    reorder_buffer: list[tuple[datetime, RawMessage]] = []
-    newest_ts: Optional[datetime] = None
     session_ended = False
     yield_count = 0
     caught_up = False
@@ -160,13 +133,6 @@ async def read_jsonl(
                 # Signal that initial file content has been consumed
                 if not caught_up:
                     caught_up = True
-                    # Flush reorder buffer before signalling
-                    if reorder_buffer:
-                        reorder_buffer.sort(key=lambda x: x[0])
-                        for _, msg in reorder_buffer:
-                            yield msg
-                            yield_count += 1
-                        reorder_buffer = []
                     if on_caught_up:
                         on_caught_up()
                 # Graceful stop: the data source signalled that no more
@@ -205,76 +171,14 @@ async def read_jsonl(
             if pace:
                 await _pace(envelope_ts)
 
-            # Decompress .z topics
-            if topic.endswith('.z') and isinstance(data, str):
-                try:
-                    data = decompress_z_data(data)
-                except Exception:
-                    logger.debug(f"Failed to decompress {topic}")
-                    continue
-
-            # Split .z topics into individual entries with payload timestamps
-            if topic.endswith('.z') and isinstance(data, dict):
-                entries = split_z_entries(topic, data)
-                for payload_ts_str, entry_data in entries:
-                    if payload_ts_str:
-                        ts = _parse_timestamp(payload_ts_str) or envelope_ts
-                    else:
-                        ts = envelope_ts
-
-                    reorder_buffer.append((ts, RawMessage(
-                        topic=topic,
-                        data=entry_data,
-                        timestamp=ts,
-                    )))
-                    if newest_ts is None or ts > newest_ts:
-                        newest_ts = ts
-            else:
-                # Non-.z topic: use envelope timestamp
-                reorder_buffer.append((envelope_ts, RawMessage(
-                    topic=topic,
-                    data=data,
-                    timestamp=envelope_ts,
-                )))
-                # Advance the flush window on NON-.z messages too. Without this,
-                # a no-telemetry stretch (red flag, pre-session, cars in pits —
-                # no CarData/Position.z) never advances newest_ts, so RCM /
-                # TrackStatus / SessionStatus / Heartbeat pile in the reorder
-                # buffer un-flushed; the live edge (MAX offset_ms) freezes and
-                # the whole backlog bursts out when telemetry resumes. (B07 2FPsLcpN)
-                if newest_ts is None or envelope_ts > newest_ts:
-                    newest_ts = envelope_ts
-
-            # Flush entries older than the reorder window
-            if newest_ts and reorder_buffer:
-                cutoff = newest_ts - reorder_window
-                ready = []
-                remaining = []
-                for item in reorder_buffer:
-                    if item[0] <= cutoff:
-                        ready.append(item)
-                    else:
-                        remaining.append(item)
-
-                if ready:
-                    ready.sort(key=lambda x: x[0])
-                    reorder_buffer = remaining
-                    for _, msg in ready:
-                        yield msg
-                        yield_count += 1
+            yield RawLine(topic=topic, data=data, envelope_ts=envelope_ts)
+            yield_count += 1
 
             # Yield to event loop periodically in normal mode
             if not fast and yield_count % 500 == 0:
                 await asyncio.sleep(0)
 
-    # Flush remaining buffer entries
-    if reorder_buffer:
-        reorder_buffer.sort(key=lambda x: x[0])
-        for _, msg in reorder_buffer:
-            yield msg
-            yield_count += 1
-
-    logger.info(f"FileReader finished: {yield_count} messages from {session_path.name}")
+    logger.info(f"FileReader finished: {yield_count} lines from {session_path.name}")
 
 
 def load_subscribe_json(session_path: Path) -> dict[str, Any]:

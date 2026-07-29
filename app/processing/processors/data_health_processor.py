@@ -39,8 +39,12 @@ def _ms(dt: Optional[datetime]) -> Optional[float]:
 
 class DataHealthProcessor(Processor):
     TIMING_STALE_MS = 6000      # whole TimingData feed silent this long → stopped
-    POS_STALE_MS = 8000
-    CARDATA_STALE_MS = 8000
+    # AC-5 (requirement-spec.md): 8000 + W (W=1.0s, the AC-1 reorder buffer's
+    # window) — restores the pre-buffer measured-staleness baseline. Do NOT
+    # set to 5000ms (refuted: catches 0/11 real outages that 8000ms already
+    # catches, and roughly doubles false-red flicker time).
+    POS_STALE_MS = 9000
+    CARDATA_STALE_MS = 9000
     MOVE_RECENT_MS = 3000       # position-tracked recency for the speed=0 check
     GREEN_GRACE_MS = 15000      # after green resumes, let all streams catch up first
 

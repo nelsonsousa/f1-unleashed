@@ -39,6 +39,7 @@ log/
 # Testing
 .pytest_cache/
 .coverage
+coverage.xml
 htmlcov/
 
 # Claude config kept private in real projects (per template "new project" step 0).
