@@ -28,6 +28,7 @@ from typing import Any, Optional
 import numpy as np
 
 from app.config import DATA_DIR
+from app.processing.dp_reckoner import DpReckoner
 from app.processing.message_bus import SessionMessageBus
 from app.processing.processors.base import Processor
 from app.processing.track_geometry import (
@@ -71,9 +72,7 @@ class PositionProcessor(Processor):
         # value (see `_sc_active_at`/`_handle_track_status`).
         self._sc_transitions: list[tuple[datetime, bool]] = []
         self._r_buf: dict[str, list] = {}             # tolerated est. positions, held for backfill
-        self._r_dp: dict[str, float] = {}             # reconstructed distance %
         self._wrapped: dict[str, bool] = {}           # dp wrapped naturally this lap (else force one at S/F)
-        self._r_ts: dict[str, datetime] = {}          # last integration time
         self._r_speed: dict[str, float] = {}          # last valid speed (km/h)
         self._r_smooth: dict[str, float] = {}         # last speed after oscillation smoothing
         self._r_zeros: dict[str, int] = {}            # consecutive speed=0 count
@@ -83,14 +82,47 @@ class PositionProcessor(Processor):
         self._r_dir: dict[str, int] = {}              # current swing: +1 rising, -1 falling
         self._r_ext: dict[str, float] = {}            # running extremum speed since the last pivot
         self._r_ext_dp: dict[str, float] = {}         # dp at that running extremum
-        # Speed→distance scale, calibrated from real motion (dp% per km/h·s). The SVG has
-        # no real lap length, so we learn it: dp advanced between two fixes / (speed·dt).
-        self._C: Optional[float] = None
-        self._cal_dp_sum: float = 0.0                 # Σ real dp advanced (all cars)
-        self._cal_sv_sum: float = 0.0                 # Σ speed·dt over CONTINUOUS CarData (all cars)
-        self._cal_n: int = 0                          # position intervals contributing
-        self._cal_prev_dp: dict[str, float] = {}      # per car: last real dp
-        self._cal_car_ts: dict[str, datetime] = {}    # per car: last CarData time (sv dt)
+        # Speed→distance scale (calibrated from real motion, dp% per km/h·s) and per-car
+        # dead-reckoning anchor: both owned by the shared DpReckoner (WB1,
+        # docs/artifacts/2026-08-01-040-merged-position-telemetry-processor/), not this class,
+        # so a future TelemetryProcessor integration (WB3) can share the SAME reckoner instead
+        # of independently re-deriving it. `_r_dp`/`_r_ts`/`_C`/`_cal_n` below are thin proxies
+        # onto `self._reckoner` kept so existing white-box tests
+        # (`tests/regression/test_position_processor_max_dt_stall_discard_ac7.py`,
+        # `tests/unit/test_position_processor_sc_active_lookup_coverage.py`) keep working
+        # unmodified against the same attribute names.
+        self._reckoner = DpReckoner()
+
+    # ── WB1 compatibility properties ──────────────────────────────────────
+    # Thin proxies onto `self._reckoner`'s internal state, kept ONLY so the
+    # pre-existing white-box tests that seed/read `proc._r_dp`, `proc._r_ts`,
+    # `proc._C`, `proc._cal_n` directly keep working unmodified now that this
+    # state actually lives in `DpReckoner`. New code should call the
+    # reckoner's own public methods (`current_dp`, `is_seeded`, `advance`,
+    # `observe_real_position`, `set_dp`) instead of these properties.
+    @property
+    def _r_dp(self) -> dict[str, float]:
+        return self._reckoner._dp
+
+    @property
+    def _r_ts(self) -> dict[str, datetime]:
+        return self._reckoner._ts
+
+    # `_C`/`_cal_n` are write-only (no getter): every reference across the
+    # test suite and production code only ever *seeds* these via assignment
+    # (`proc._C = ...`, `proc._cal_n = ...`) to prime `self._reckoner`'s
+    # calibration state; nothing reads them back off `PositionProcessor`
+    # itself (production code and `DpReckoner`-level tests read `_C`/`_cal_n`
+    # off `self._reckoner` directly). A getter here would be dead code.
+    def _set_C(self, value: Optional[float]) -> None:
+        self._reckoner._C = value
+
+    _C = property(fset=_set_C)
+
+    def _set_cal_n(self, value: int) -> None:
+        self._reckoner._cal_n = value
+
+    _cal_n = property(fset=_set_cal_n)
 
     def subscribe(self) -> None:
         self._bus.on("SessionInfo", self._handle_session_info)
@@ -242,24 +274,12 @@ class PositionProcessor(Processor):
 
             # Calibrate the speed→distance scale GLOBALLY (total dp advanced / total speed·dt),
             # so the Position-vs-CarData sampling mismatch cancels out; then re-seed the
-            # reconstruction so it can take over seamlessly when Position drops out.
-            prev_dp = self._cal_prev_dp.get(num)
-            if prev_dp is not None:
-                ddp = (dist_pct - prev_dp) % 100.0
-                if 0.001 < ddp < 10.0:                 # sane forward advance, no wrap/pit jump
-                    self._cal_dp_sum += ddp
-                    self._cal_n += 1
-                    if self._cal_sv_sum > 0:
-                        self._C = self._cal_dp_sum / self._cal_sv_sum
-                        if self._cal_n == 400:
-                            logger.info(f"[recon] calibrated C={self._C:.5f} dp%/(kph·s) "
-                                        f"(~0.0083 expected for a 3.3 km lap)")
-            self._cal_prev_dp[num] = dist_pct
+            # reconstruction so it can take over seamlessly when Position drops out. Delegated
+            # to the shared DpReckoner (WB1) — see dp_reckoner.py's own docstring.
+            self._reckoner.observe_real_position(num, dist_pct, clock_time)
             self._last_pos_ts[num] = clock_time
             self._miss[num] = 0                        # real fix → no outage, reset counter
             self._r_buf.pop(num, None)                 # real fix → discard tolerated buffer
-            self._r_dp[num] = dist_pct
-            self._r_ts[num] = clock_time
 
             prev = self._last_pos.get(num)
             if prev and prev == (rx, ry, dist_pct):
@@ -414,23 +434,17 @@ class PositionProcessor(Processor):
             brk = ch.get("5") if isinstance(ch, dict) else None      # brake %
             speed = self._smooth_speed(num, speed, thr, brk)
 
-            # calibration: accumulate speed·dt over CONTINUOUS CarData steps (NOT reset by fixes,
-            # so the accumulator covers the same span the position deltas measure).
-            prev_car = self._cal_car_ts.get(num)
-            self._cal_car_ts[num] = clock_time
-            if prev_car is not None:
-                dtc = (clock_time - prev_car).total_seconds()
-                if 0 < dtc < 5:
-                    self._cal_sv_sum += speed * dtc
-
-            dt = (clock_time - self._r_ts[num]).total_seconds()
-            self._r_ts[num] = clock_time
-            if dt <= 0:
-                continue
-            dt = min(dt, MAX_DT_S)
-            if self._C is None or self._cal_n < 30:
-                continue                              # scale not learned yet
-            ddp = self._C * speed * dt
+            # Calibration (speed·dt accumulation) and the dead-reckoning integration itself are
+            # delegated to the shared DpReckoner (WB1) — see dp_reckoner.py's own docstring,
+            # including the AC-7 fix (the full elapsed dt now integrates; no MAX_DT_S clamp).
+            # `prev_dp` is captured BEFORE calling advance() because DpReckoner's own result is
+            # already wrapped (mod 100) for the normal case — the SC/VSC branch below needs the
+            # PRE-advance value to apply its own (non-wrapping) 99.9%-clamp instead.
+            prev_dp = self._reckoner.current_dp(num)
+            result = self._reckoner.advance(num, speed, clock_time)
+            if result.dp is None:
+                continue                              # stale/duplicate tick, or scale not learned yet
+            ddp = result.ddp
 
             # AC-4: deferred, point-in-time lookup — was SC/VSC active as of
             # THIS sample's own payload timestamp, not whatever _sc_active
@@ -440,8 +454,8 @@ class PositionProcessor(Processor):
                 # SC/VSC: dead-reckon only, and clamp below 100 so the dp never free-wraps — the
                 # single crossing per lap is placed authoritatively at the S/F reset. No apex snap.
                 self._r_prev[num] = speed
-                self._r_dp[num] = min(self._r_dp[num] + ddp, 99.9)
-                dp = self._r_dp[num]
+                dp = min(prev_dp + ddp, 99.9)
+                self._reckoner.set_dp(num, dp)        # override DpReckoner's own wrapped result
                 x, y = self._dist_pct_to_xy(dp)
                 entry = [round(x, 1), round(y, 1), round(dp, 3), 1]   # [3]=1 → estimated (for (b) commit)
                 if self._miss[num] <= MISS_SAMPLES:
@@ -452,9 +466,9 @@ class PositionProcessor(Processor):
                     recon[num] = entry
                 continue
 
-            if self._r_dp[num] + ddp >= 100.0:
+            if prev_dp + ddp >= 100.0:
                 self._wrapped[num] = True             # natural S/F wrap this lap → no synthetic needed
-            dp = (self._r_dp[num] + ddp) % 100.0
+            dp = result.dp                            # DpReckoner's own (prev_dp + ddp) % 100.0
 
             # ZigZag anchor snap: track the running extremum; when speed reverses by >= APEX_PROM a
             # pivot is confirmed at that extremum's dp — a PEAK (was rising) snaps to the next 'max'
