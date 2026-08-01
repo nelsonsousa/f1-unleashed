@@ -995,9 +995,18 @@
     // =========================================================================
 
     // One server-decoded sample: {dp, speed, rpm, gear, throttle, brake,
-    // ts, lap, lapElapsedMs}. dp is the track distance %. A change in `lap`
-    // marks an S/F crossing → start a fresh live-lap trace. Samples with a
-    // null dp (position outage) are skipped.
+    // ts, lap, lapElapsedMs, lastKnownDp, msSinceLastKnown}. dp is the track
+    // distance %. A change in `lap` marks an S/F crossing → start a fresh
+    // live-lap trace. Samples with a null dp are skipped -- since the
+    // merged Position+Telemetry dp-reckoner shipped (WB1-3,
+    // docs/artifacts/2026-08-01-040-merged-position-telemetry-processor/),
+    // dp is populated on essentially every sample; a null dp here is now
+    // almost always the pre-calibration bootstrap window at session start
+    // (file-impact-map.md §6.4), not the routine ~19% pairing-miss rate
+    // this guard was originally written for. `lastKnownDp`/`msSinceLastKnown`
+    // (WB3, requirement-spec.md §8.1) are not yet consumed by this file --
+    // surfacing them in the UI (e.g. a staleness indicator) is a separate,
+    // later UI-design task, not part of this reconciliation pass (WB4).
     function handleLiveTelemetry(num, data, offsetMs) {
         if (!data || typeof data !== 'object') return;
         if (data.dp == null) return;
@@ -1244,14 +1253,19 @@
     }
 
     // Should-fix 6 (2026-07-29 fix-attempt 2, AC-3): the end-of-lap marker
-    // used to be anchored on the raw last sample -- at the measured
+    // used to be anchored on the raw last sample -- at the (then-)measured
     // 17.7-19.9% null-dp rate (AC-3's emit-unpaired persistence), a lap
     // whose LAST sample happens to have a null dp silently skipped the
     // marker entirely (drawMarker's null-dp guard, ~line 1270) instead of
     // walking back to the last sample that actually has a plottable
     // position. Only the completed-lap trace path needs this -- the live
     // gauge path (handleLiveTelemetry) never persists a null-dp marker
-    // sample and needs no change (file-impact-map.md §3).
+    // sample and needs no change (file-impact-map.md §3). Updated 2026-08-01
+    // (WB4 reconciliation): the merged dp-reckoner (WB1-3) means dp is now
+    // populated on essentially every sample, so this walk-back is exercised
+    // far less often -- but it remains correct and is kept unchanged, since
+    // the residual pre-calibration bootstrap window (file-impact-map.md §6.4)
+    // can still produce a null-dp last sample early in a session.
     function lastNonNullDpSample(samples) {
         if (!samples || !samples.length) return null;
         for (let i = samples.length - 1; i >= 0; i--) {
@@ -1317,6 +1331,12 @@
     // Real grid-start standstill rarely lasts long enough to look like
     // an outage; we accept that edge case as a cosmetic blip rather
     // than complicating the test.
+    // Updated 2026-08-01 (WB4 reconciliation): the merged dp-reckoner
+    // (WB1-3, docs/artifacts/2026-08-01-040-merged-position-telemetry-processor/)
+    // means disjunct (c) now fires only in the residual pre-calibration
+    // bootstrap window (file-impact-map.md §6.4), not at the routine
+    // ~19% rate this comment originally described -- the guard itself is
+    // unchanged and still correct, this note only corrects the stale rate.
     function isOutageSample(s) {
         return s[0] == null
             || s[1] == null || s[2] == null || s[4] == null || s[5] == null
