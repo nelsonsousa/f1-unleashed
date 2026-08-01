@@ -95,6 +95,13 @@ def split_z_entries(topic: str, data: Any) -> list[tuple[Optional[str], Any]]:
     timestamps. Returns list of (iso_timestamp_or_None, single_entry_data).
 
     Moved verbatim from file_reader.py — no logic change.
+
+    NOTE: this CarData.z single-entry split is why TelemetryProcessor's
+    last-entry-vs-other-entries carve-out (WB3, dp_reckoner integration)
+    never observes more than one entry per message in production today —
+    that carve-out exists defensively for a multi-entry batch this function
+    currently never produces. If this splitting behavior ever changes,
+    re-check telemetry_processor.py's _handle_car_data.
     """
     if topic == "CarData.z" and isinstance(data, dict) and "Entries" in data:
         result = []

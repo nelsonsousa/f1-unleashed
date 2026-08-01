@@ -50,6 +50,20 @@ Laps:
   * STOP/RET closes the in-progress lap.
 
 Sample tuple (stored): [dp, speed, rpm, gear, throttle, brake, t_ms_rel].
+
+dp estimation (WB3, requirement-spec.md §2.2/§8.1, 2026-08-01): a CarData entry with no eligible
+unconsumed position (a pairing miss) no longer persists `dp=None` -- it is dead-reckoned via the
+shared `DpReckoner` (`app/processing/dp_reckoner.py`), the SAME calibrated instance
+`PositionProcessor` advances on every real Position.z fix, unconditionally and with no minimum-gap
+threshold. Every sample (hit or miss) also carries `lastKnownDp`/`msSinceLastKnown` on its
+`liveTelemetry` emit -- the dp% and elapsed time (message-timestamp domain) since this car's most
+recent REAL position fix, replacing the old binary `est` framing (§8.1: every telemetry-side `dp`
+is conceptually an estimate regardless of pathway, so "how stale is the anchor" is the question
+that carries information, not "was this one estimated"). The 8th sample element (`sample[7]`,
+formerly the Position-side reconstruction flag `est`) is repurposed to hold `msSinceLastKnown`,
+captured once at the moment the sample itself is collected (not recomputed later at lap-commit,
+since the reckoner's real-fix anchor is continuously overwritten by later fixes) -- see
+`_emit_lap`'s DTW gate (AC-14) for its one remaining reader.
 """
 from __future__ import annotations
 
@@ -60,6 +74,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from app.processing.dp_reckoner import DpReckoner, EST_THRESHOLD_S
 from app.processing.message_bus import SessionMessageBus
 from app.processing.processors.base import Processor
 
@@ -148,9 +163,13 @@ class DriverData:
     last_dp: Optional[float] = None
     last_pos_ts: Optional[datetime] = None   # ts of the previous position sample
     # Captured samples since session start:
-    #   [dp, speed, rpm, gear, thr, brk, abs_ms, est]
-    # est = 1 when the position was RECONSTRUCTED (estimated) during a Position.z
-    # outage, else 0. Used at lap-commit to decide whether the (b) DTW matcher runs.
+    #   [dp, speed, rpm, gear, thr, brk, abs_ms, msSinceLastKnown]
+    # msSinceLastKnown (WB3, requirement-spec.md §8.1) = elapsed ms since this car's most
+    # recent REAL position fix, as of THIS sample's own capture time -- captured once here,
+    # never recomputed later, since the reckoner's real-fix anchor is continuously overwritten
+    # by subsequent real fixes. `None` only in the residual pre-calibration/never-seeded window.
+    # Replaces the old boolean `est` (position-side reconstruction flag) -- see _emit_lap's
+    # DTW gate (AC-14), this field's one remaining reader.
     samples: list = field(default_factory=list)
     # Lap tracking. Completed-lap telemetry is numbered by the AUTHORITATIVE
     # NoL counter (driverLaps.currentLap = the lap the driver is ON), NOT by
@@ -180,12 +199,18 @@ class DriverData:
 
 class TelemetryProcessor(Processor):
 
-    def __init__(self, bus: SessionMessageBus, session_type: str):
+    def __init__(self, bus: SessionMessageBus, session_type: str,
+                 reckoner: Optional[DpReckoner] = None):
         super().__init__(bus, session_type)
         self._session_type = session_type
         self._is_race = session_type == "race"
         self._drivers: dict[str, DriverData] = {}
         self._race_started = False
+        # WB3: the SAME DpReckoner instance PositionProcessor advances (AC-5's "single
+        # reckoner, not two" requirement) -- preprocessor.py constructs one and passes it to
+        # both. Optional so every existing 2-arg construction (tests) keeps working unmodified,
+        # each with its own private, never-externally-seeded instance.
+        self._reckoner = reckoner if reckoner is not None else DpReckoner()
         # Circuit signature (loaded once from SessionInfo). matcher "b" → run the
         # DTW dp re-derivation on reconstructed laps at commit; "a"/None → never.
         self._matcher: Optional[str] = None
@@ -557,12 +582,23 @@ class TelemetryProcessor(Processor):
         entries = data.get("Entries")
         if not isinstance(entries, list):
             return
-        for entry in entries:
+        # WB3 (requirement-spec.md §8.1): which of THIS message's entries is
+        # the batch's LAST one -- the same `entries[-1]` position_processor.py
+        # itself advances (`_handle_car_data`, `cars = (entries[-1] or
+        # {}).get("Cars")`). In production every CarData.z message carries
+        # exactly ONE entry (StreamNormalizer splits per-entry before either
+        # processor ever sees it), so this is trivially "the only entry"
+        # every time; the distinction only has observable effect for tests
+        # that feed a multi-entry Entries list directly, bypassing
+        # StreamNormalizer.
+        last_idx = len(entries) - 1
+        for idx, entry in enumerate(entries):
             if not isinstance(entry, dict):
                 continue
             cars = entry.get("Cars")
             if not isinstance(cars, dict):
                 continue
+            is_last_entry = (idx == last_idx)
             for num, car in cars.items():
                 try:
                     if int(num) > 99:
@@ -575,6 +611,10 @@ class TelemetryProcessor(Processor):
                 if not isinstance(ch, dict):
                     continue
                 drv = self._drv(num)
+                # Absent channel -> None (client draws a dotted gap), NEVER a
+                # fake 0 — a default 0 was read as a real "speed dropped to 0"
+                # sample. A PRESENT 0 is legitimate and kept as 0. (mrHzxVmb / L9)
+                speed = ch.get("2")
                 # D7-B: pair by nearest-preceding utcTimestamp, not arrival
                 # adjacency — AND, fixed fix-attempt 3, only against a
                 # position not already consumed by an earlier CarData entry
@@ -585,16 +625,45 @@ class TelemetryProcessor(Processor):
                 # bypass — the entry's own Utc, not the message envelope).
                 match = self._nearest_unconsumed_pos(drv, _epoch_ms(clock_time))
                 if match is None:
-                    # AC-3 (requirement-spec.md): emit UNPAIRED instead of
-                    # silently skipping. dp=None, channel data still
-                    # persisted — "channels present, position unknown" is a
-                    # legitimate row (file-impact-map.md §3), not a dropped
-                    # sample. abs_ms anchors on the CarData entry's OWN
-                    # timestamp (no matched position to anchor on).
-                    dp, pos_ts, est, pos_ts_ms = None, None, 0, None
+                    # WB3 (requirement-spec.md §2.2/§8.1, AC-2, superseding
+                    # the old "emit dp=None on a pairing miss" rule): the
+                    # shared DpReckoner -- the SAME instance
+                    # PositionProcessor advances (AC-5) -- dead-reckons this
+                    # entry's dp instead, unconditionally, no minimum-gap
+                    # threshold. Two cases, per file-impact-map.md §1.4's
+                    # registration-order analysis (verified against the
+                    # actual current code, not assumed): for every entry
+                    # EXCEPT the batch's last one, this processor is the
+                    # sole/first CarData.z caller reaching the reckoner for
+                    # that tick, so a direct advance() call is safe. For the
+                    # batch's LAST entry specifically, PositionProcessor
+                    # (registered before this processor, preprocessor.py) has
+                    # ALREADY called advance() for that exact tick by the
+                    # time this handler runs -- a second advance() call would
+                    # hit the idempotency guard (dt == 0) and silently return
+                    # dp=None on every single message (dp_reckoner.py's own
+                    # "IMPORTANT for WB3" docstring note) -- current_dp()
+                    # reads the value PositionProcessor just computed instead,
+                    # a pure read with no idempotency hazard.
+                    dp = None
+                    if isinstance(speed, (int, float)):
+                        if is_last_entry:
+                            dp = self._reckoner.current_dp(num)
+                        else:
+                            dp = self._reckoner.advance(num, float(speed), clock_time).dp
+                    pos_ts, pos_ts_ms = None, None
                 else:
-                    dp, pos_ts, est, pos_ts_ms = match
+                    dp, pos_ts, _pos_est, pos_ts_ms = match
                     drv.pos_watermark_ms = pos_ts_ms   # consume it — the next CarData needs a NEWER position
+                # WB3 (AC-2, AC-4, §8.1): read off the shared reckoner's
+                # real-fix anchor state, UNCONDITIONALLY for every sample —
+                # hit or miss. These describe the ANCHOR (this car's most
+                # recent REAL fix), not the estimate built from it, so they
+                # are meaningful regardless of which of the three pathways
+                # (real position, Position-side reconstruction, or this
+                # CarData-side dead-reckoning) produced this sample's own dp.
+                last_known_dp = self._reckoner.last_known_dp(num)
+                ms_since_last_known = self._reckoner.ms_since_last_known(num, clock_time)
                 # abs_ms anchors the STORED per-lap sample (drv.samples / the
                 # persisted telemetryLap trace) to the matched position's own
                 # timestamp — dp describes where the car was AT that position
@@ -612,10 +681,6 @@ class TelemetryProcessor(Processor):
                 # position sample to anchor on).
                 abs_ms = _epoch_ms(pos_ts) if pos_ts is not None else _epoch_ms(clock_time)
                 car_ms = _epoch_ms(clock_time)
-                # Absent channel -> None (client draws a dotted gap), NEVER a
-                # fake 0 — a default 0 was read as a real "speed dropped to 0"
-                # sample. A PRESENT 0 is legitimate and kept as 0. (mrHzxVmb / L9)
-                speed = ch.get("2")
                 thr = ch.get("4")
                 brk = ch.get("5")
                 gear = ch.get("3")
@@ -633,13 +698,20 @@ class TelemetryProcessor(Processor):
                     # R at a standstill is real state (reverse selected while stopped), not a
                     # dropout — keep the gear so the dash can show R. (SME 2026-07-15)
                     g = -1 if gear == -1 else None
-                    sample = [dp, None, None, g, None, None, abs_ms, est]
+                    # sample[7] (WB3): msSinceLastKnown, captured NOW -- see
+                    # the module/DriverData docstrings for why this must be
+                    # captured at collection time, not recomputed later.
+                    sample = [dp, None, None, g, None, None, abs_ms, ms_since_last_known]
                     live = {"dp": dp, "speed": None, "rpm": None, "gear": g,
                             "throttle": None, "brake": None}
                 else:
-                    sample = [dp, speed, ch.get("0"), gear, thr, brk, abs_ms, est]
+                    sample = [dp, speed, ch.get("0"), gear, thr, brk, abs_ms, ms_since_last_known]
                     live = {"dp": dp, "speed": speed, "rpm": ch.get("0"),
                             "gear": gear, "throttle": thr, "brake": brk}
+                # WB3 (AC-4): unconditionally, on every sample -- not only when
+                # a real position was unavailable.
+                live["lastKnownDp"] = last_known_dp
+                live["msSinceLastKnown"] = ms_since_last_known
                 if drv.activated:
                     drv.samples.append(sample)   # store only once running — nothing to persist pre-race
                 # AC-4: this CarData entry's own timestamp has now been
@@ -755,13 +827,29 @@ class TelemetryProcessor(Processor):
             out.append(synth_end[:6] + [int(end_ms - start_ms)])
 
         # (b) DTW at lap-commit: on circuits whose signature selects the DTW
-        # matcher, re-derive dp for a RECONSTRUCTED lap by aligning its speed
-        # trace to the signature speed profile. Real-position laps (est=0) and
-        # matcher-"a" circuits are left untouched; any failure keeps the un-DTW'd
-        # dp. Majority test on the lap's own samples (8th element = est).
+        # matcher, re-derive dp for a lap whose samples are majority STALE by
+        # aligning its speed trace to the signature speed profile; any
+        # failure keeps the un-DTW'd dp. matcher-"a" circuits are always left
+        # untouched.
+        #
+        # AC-14 (requirement-spec.md §8.1, WB3, 2026-08-01): the old gate
+        # read a per-sample boolean `est` (the Position-side reconstruction
+        # flag) -- meaningless once every telemetry-side dp is conceptually
+        # an estimate (§8.1). Replaced with a majority test on
+        # `msSinceLastKnown` (8th element, sample[7]) exceeding
+        # EST_THRESHOLD_S*1000 ms -- the same "routine reckoning noise vs.
+        # genuine starvation" distinction EST_THRESHOLD_S already draws for
+        # the `position` topic's own real/estimated switch (WB2), reused
+        # here rather than a second, independently-tuned number. A `None`
+        # value (the residual pre-calibration/never-seeded window, §6.4)
+        # never counts as stale -- there is nothing to judge staleness
+        # against yet.
         if self._matcher == "b" and self._prof_s:
-            est_n = sum(1 for s in in_lap if len(s) > 7 and s[7] == 1)
-            if est_n * 2 > len(in_lap):
+            stale_n = sum(
+                1 for s in in_lap
+                if len(s) > 7 and s[7] is not None and s[7] > EST_THRESHOLD_S * 1000
+            )
+            if stale_n * 2 > len(in_lap):
                 try:
                     self._dtw_relabel_dp(out, synth_start is not None,
                                          synth_end is not None)

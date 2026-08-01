@@ -32,7 +32,7 @@ from typing import Any, Optional
 import numpy as np
 
 from app.config import DATA_DIR
-from app.processing.dp_reckoner import DpReckoner
+from app.processing.dp_reckoner import DpReckoner, EST_THRESHOLD_S
 from app.processing.message_bus import SessionMessageBus
 from app.processing.processors.base import Processor
 from app.processing.track_geometry import (
@@ -44,13 +44,18 @@ logger = logging.getLogger(__name__)
 
 SIG_DIR = DATA_DIR / "analysis" / "circuit_signatures"   # FP1-learned apex signatures
 
-EST_THRESHOLD_S = 1.0     # AC-6 (requirement-spec.md, WB2): wall-clock seconds since a car's last
-                          # REAL Position.z fix before the `position` topic switches from
-                          # tolerating (buffering) to emitting the estimated/reckoned position.
-                          # Measured from message timestamps (`clock_time`), never system time --
-                          # see `_is_estimating`. Deliberately NOT a CarData sample count (that was
-                          # the pre-WB2 `MISS_SAMPLES` gate) -- 10 samples at the ~240ms median
-                          # CarData rate is ~2.4s, and the rate is not constant across sessions.
+# EST_THRESHOLD_S (AC-6, WB2): wall-clock seconds since a car's last REAL
+# Position.z fix before the `position` topic switches from tolerating
+# (buffering) to emitting the estimated/reckoned position. Measured from
+# message timestamps (`clock_time`), never system time -- see
+# `_is_estimating`. Deliberately NOT a CarData sample count (that was the
+# pre-WB2 `MISS_SAMPLES` gate) -- 10 samples at the ~240ms median CarData
+# rate is ~2.4s, and the rate is not constant across sessions.
+# Moved to dp_reckoner.py in WB3 (requirement-spec.md §8.1) so
+# telemetry_processor.py's AC-14 DTW gate shares the same constant instead
+# of a second, independently-tuned copy of the literal -- re-imported here
+# (rather than duplicated) so `position_processor.EST_THRESHOLD_S` stays a
+# valid import path for existing callers/tests.
 APEX_PROM = 15.0          # a speed-minimum is only an apex if speed dropped >= this (km/h) from the peak
 SNAP_TOL_PCT = 1.5        # snap reconstructed dp to an anchor only within this drift (% lap) [(a)]
 APEX_SPEED_MARGIN = 0.20  # a detected minimum can only be an apex if its speed <= anchor*(1+this) [(a)]
@@ -61,7 +66,8 @@ GLITCH_MAX_ZEROS = 2      # up to this many consecutive speed=0 samples = glitch
 class PositionProcessor(Processor):
     """Projects car positions onto track and emits distance percentages."""
 
-    def __init__(self, bus: SessionMessageBus, session_type: str):
+    def __init__(self, bus: SessionMessageBus, session_type: str,
+                 reckoner: Optional[DpReckoner] = None):
         super().__init__(bus, session_type)
         self._geo: Optional[TrackGeometry] = None
         self._geometry_emitted = False
@@ -99,13 +105,17 @@ class PositionProcessor(Processor):
         # Speed→distance scale (calibrated from real motion, dp% per km/h·s) and per-car
         # dead-reckoning anchor: both owned by the shared DpReckoner (WB1,
         # docs/artifacts/2026-08-01-040-merged-position-telemetry-processor/), not this class,
-        # so a future TelemetryProcessor integration (WB3) can share the SAME reckoner instead
+        # so TelemetryProcessor's own integration (WB3) can share the SAME reckoner instead
         # of independently re-deriving it. `_r_dp`/`_r_ts`/`_C`/`_cal_n` below are thin proxies
         # onto `self._reckoner` kept so existing white-box tests
         # (`tests/regression/test_position_processor_max_dt_stall_discard_ac7.py`,
         # `tests/unit/test_position_processor_sc_active_lookup_coverage.py`) keep working
         # unmodified against the same attribute names.
-        self._reckoner = DpReckoner()
+        # WB3: `reckoner` is an OPTIONAL injection point -- `preprocessor.py` constructs one
+        # `DpReckoner()` and passes the SAME instance to both this class and TelemetryProcessor
+        # (AC-5's "single reckoner, not two" requirement); every existing 2-arg call site
+        # (tests) keeps getting its own private, isolated instance exactly as before.
+        self._reckoner = reckoner if reckoner is not None else DpReckoner()
 
     # ── WB1 compatibility properties ──────────────────────────────────────
     # Thin proxies onto `self._reckoner`'s internal state, kept ONLY so the

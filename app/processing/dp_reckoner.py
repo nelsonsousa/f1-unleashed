@@ -70,6 +70,27 @@ and prior state -- no wall-clock ("now") is read anywhere, only
 `clock_time` (the message's own timestamp, passed in by the caller) -- and
 all per-car state is `dict[str, ...]` keyed by car number, never iterated
 in a way whose order affects the result.
+
+WB3 extension (2026-08-01, requirement-spec.md §8.1, purely additive --
+no existing method's behavior changes): `_real_dp`/`_real_ts` and the
+`last_known_dp`/`ms_since_last_known` accessors below give any caller a
+read of "this car's dp/time at its most recent REAL fix specifically,"
+untouched by any later `advance()` call -- unlike `current_dp()`/`_dp`,
+which `advance()` overwrites every integration step. `TelemetryProcessor`
+uses these to compute `lastKnownDp`/`msSinceLastKnown` for every CarData
+sample regardless of which of the three pathways (real position,
+Position-side reconstruction, or CarData-side dead-reckoning) produced
+that sample's own `dp`. Both are pure reads of state written only inside
+`observe_real_position` -- calling them carries no ordering dependency and
+no idempotency hazard, unlike a second `advance()` call for the same tick
+(see the "IMPORTANT for WB3" note above).
+
+`EST_THRESHOLD_S` also moves here in WB3 (from `position_processor.py`,
+same value/meaning, re-exported from there for backward compatibility) --
+both the `position`-topic real/estimated switch (WB2) and the
+`telemetry_processor.py` DTW lap-commit gate (AC-14) need the same
+"stale enough to matter" threshold, and a single source of truth is
+preferable to two independently-tuned copies of the same literal.
 """
 
 from datetime import datetime
@@ -83,6 +104,14 @@ CAL_DDP_MIN = 0.001          # sane forward-advance floor (rejects a stale-repea
 CAL_DDP_MAX = 10.0           # sane forward-advance ceiling (rejects a wrap/pit-lane jump)
 CAL_CARDATA_DT_MAX_S = 5.0   # reject implausible CarData gaps from feeding the sv accumulator
 CAL_LOG_AT_N = 400           # one-shot diagnostic log once calibration has plenty of samples
+
+# AC-6 (requirement-spec.md, WB2)/AC-14 (WB3): wall-clock seconds since a
+# car's last REAL position fix before staleness is considered significant --
+# shared by position_processor.py's `position`-topic real/estimated switch
+# and telemetry_processor.py's DTW lap-commit re-derivation gate. Moved here
+# in WB3 (was previously defined only in position_processor.py) so both
+# consumers read the same constant instead of duplicating the literal.
+EST_THRESHOLD_S = 1.0
 
 # AC-7: NOT the MAX_DT_S clamp this module replaces. A pathological-input
 # guard only -- see the module docstring. Three orders of magnitude above
@@ -116,6 +145,15 @@ class DpReckoner:
         # Per-car reckoning anchor.
         self._dp: dict[str, float] = {}                # current reckoned dp%
         self._ts: dict[str, datetime] = {}              # last integration/observation time
+
+        # WB3: the dp/time of the last REAL fix specifically -- written ONLY
+        # inside observe_real_position(), never inside advance(). Unlike
+        # `_dp`/`_ts` above (which advance() overwrites every integration
+        # step), these hold steady between real fixes so `last_known_dp`/
+        # `ms_since_last_known` can answer "what did we last KNOW for
+        # certain" independent of how much dead-reckoning has happened since.
+        self._real_dp: dict[str, float] = {}
+        self._real_ts: dict[str, datetime] = {}
 
     @property
     def C(self) -> Optional[float]:
@@ -162,6 +200,27 @@ class DpReckoner:
         self._cal_prev_dp[num] = dp
         self._dp[num] = dp
         self._ts[num] = clock_time
+        # WB3: anchor the last-REAL-fix state separately -- advance() never
+        # touches these two dicts, so they stay exactly "as of the last real
+        # fix" no matter how much dead-reckoning happens afterward.
+        self._real_dp[num] = dp
+        self._real_ts[num] = clock_time
+
+    def last_known_dp(self, num: str) -> Optional[float]:
+        """The dp% at `num`'s most recent REAL (measured) position fix, or
+        `None` if `num` has never had one. Never touched by `advance()` --
+        a pure read of state `observe_real_position()` alone writes."""
+        return self._real_dp.get(num)
+
+    def ms_since_last_known(self, num: str, clock_time: datetime) -> Optional[float]:
+        """Milliseconds elapsed, measured from message timestamps only
+        (never wall-clock), since `num`'s most recent REAL position fix --
+        or `None` if `num` has never had one. `0.0` immediately after a
+        fresh real fix; grows monotonically between real fixes."""
+        ts = self._real_ts.get(num)
+        if ts is None:
+            return None
+        return (clock_time - ts).total_seconds() * 1000.0
 
     def advance(self, num: str, speed: float, clock_time: datetime) -> AdvanceResult:
         """Dead-reckon `num`'s dp forward from its last anchor/advance by

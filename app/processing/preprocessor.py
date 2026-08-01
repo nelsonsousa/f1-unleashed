@@ -53,6 +53,7 @@ from app.config import DATA_DIR
 from app.processing.database import SessionDatabase
 from app.processing.file_reader import read_jsonl, load_subscribe_json
 from app.processing.stream_normalizer import StreamNormalizer, NormalizedMessage
+from app.processing.dp_reckoner import DpReckoner
 from app.processing.message_bus import SessionMessageBus
 from app.processing.processors.base import Processor
 from app.processing.processors.championship_processor import ChampionshipProcessor
@@ -743,7 +744,12 @@ class SessionPreProcessor:
         self._db.close()
 
     def _init_processors(self) -> None:
-        telem_proc = TelemetryProcessor(self._bus, self._session_type)
+        # WB3 (docs/artifacts/2026-08-01-040-merged-position-telemetry-processor/,
+        # requirement-spec.md AC-5, "single reckoner, not two"): PositionProcessor
+        # and TelemetryProcessor share the SAME DpReckoner instance, not two
+        # independently-calibrated copies.
+        dp_reckoner = DpReckoner()
+        telem_proc = TelemetryProcessor(self._bus, self._session_type, reckoner=dp_reckoner)
         self._telem_proc = telem_proc  # stash for end-of-session finalize
         # (The old per-session PaceProcessor + pace/tyre-phases/strategy analysis stack
         # was removed — M2. To be rebuilt later. The live pace colours come from the
@@ -776,7 +782,17 @@ class SessionPreProcessor:
             # the processor itself no-ops if registered elsewhere.
             *([FiaStewardsProcessor(self._bus, self._session_type)]
               if self._session_type in ("race", "sprint") else []),
-            PositionProcessor(self._bus, self._session_type),
+            # WB3: PositionProcessor MUST be registered (and therefore
+            # dispatched, SessionMessageBus.on() calls same-topic handlers in
+            # registration order) BEFORE telem_proc on CarData.z --
+            # telem_proc's own _handle_car_data relies on PositionProcessor
+            # having already advanced the shared dp_reckoner for the
+            # batch's last entry before it reads current_dp() for that same
+            # tick (dp_reckoner.py's "IMPORTANT for WB3" docstring note;
+            # file-impact-map.md §8.1/§4 item 1). Same precedent as the
+            # LapClassificationProcessor/DriverStatusProcessor ordering
+            # comment above.
+            PositionProcessor(self._bus, self._session_type, reckoner=dp_reckoner),
             telem_proc,
             LapDeltaProcessor(self._bus, self._session_type),
             LapPredictionProcessor(self._bus, self._session_type),
