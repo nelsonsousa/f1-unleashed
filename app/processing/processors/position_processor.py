@@ -12,12 +12,16 @@ full snapshot of the cars that moved; skips messages where no car has moved.
 
 Position outage recovery: F1's Position feed can drop out (e.g. Monaco 2026 lost
 it for most of the race) while CarData (speed) keeps flowing. We tolerate up to
-MISS_SAMPLES consecutive telemetry samples with no new real Position — integrating
+EST_THRESHOLD_S seconds of elapsed wall-clock time (measured from the .z messages'
+own timestamps, never system time) with no new real Position — integrating
 speed·Δt through them from the last real fix — and only then start dead-reckoning:
 snap the accumulated drift to known corner locations (speed minima line up with
 corners), map that distance back to (x, y) via the track polyline, and emit it on the
-SAME `position` topic. Any real Position resets the counter and takes over immediately;
-brief gaps are never reconstructed, so the estimate can't fight the real feed.
+SAME `position` topic. Any real Position resets the elapsed-time clock and takes over
+immediately; brief gaps (<= EST_THRESHOLD_S) are never reconstructed, so the estimate
+can't fight the real feed. This is a time-based threshold, not a CarData sample count
+(WB2, requirement-spec.md AC-6) -- the two are not equivalent, since CarData's own
+arrival rate is not constant across sessions.
 """
 
 import json
@@ -40,7 +44,13 @@ logger = logging.getLogger(__name__)
 
 SIG_DIR = DATA_DIR / "analysis" / "circuit_signatures"   # FP1-learned apex signatures
 
-MISS_SAMPLES = 10         # tolerate this many telemetry samples with no real Position before estimating
+EST_THRESHOLD_S = 1.0     # AC-6 (requirement-spec.md, WB2): wall-clock seconds since a car's last
+                          # REAL Position.z fix before the `position` topic switches from
+                          # tolerating (buffering) to emitting the estimated/reckoned position.
+                          # Measured from message timestamps (`clock_time`), never system time --
+                          # see `_is_estimating`. Deliberately NOT a CarData sample count (that was
+                          # the pre-WB2 `MISS_SAMPLES` gate) -- 10 samples at the ~240ms median
+                          # CarData rate is ~2.4s, and the rate is not constant across sessions.
 APEX_PROM = 15.0          # a speed-minimum is only an apex if speed dropped >= this (km/h) from the peak
 SNAP_TOL_PCT = 1.5        # snap reconstructed dp to an anchor only within this drift (% lap) [(a)]
 APEX_SPEED_MARGIN = 0.20  # a detected minimum can only be an apex if its speed <= anchor*(1+this) [(a)]
@@ -62,8 +72,12 @@ class PositionProcessor(Processor):
         self._sig_apex: list[float] = []              # FP1-learned detectable apex dps (preferred)
         self._anchors: list[tuple[float, str, float]] = []   # (dp, 'apex'|'max', speed) sorted
         self._apex_i: dict[str, int] = {}             # per car: next expected anchor index
-        self._last_pos_ts: dict[str, datetime] = {}   # last REAL Position.z time
-        self._miss: dict[str, int] = {}               # consecutive telemetry samples w/o a real fix
+        self._last_pos_ts: dict[str, datetime] = {}   # last REAL Position.z time -- the AC-6
+                                                        # anchor `_is_estimating` measures elapsed
+                                                        # time from
+        self._miss: dict[str, int] = {}               # WB2: diagnostic-only counter (consecutive
+                                                        # telemetry samples w/o a real fix) -- no
+                                                        # longer the gating variable, see AC-6
         self._cur_lap: dict[str, int] = {}            # driverLaps.currentLap (S/F-crossing anchor)
         self._sc_active: bool = False                 # SC/VSC/red → suspend apex snapping, dead-reckon only
         # AC-4: ordered (transition_ts, new_value) pairs -- lets
@@ -147,7 +161,7 @@ class PositionProcessor(Processor):
                 # completing sample near 100 before the reset — the telemetry processor then sees a
                 # 100→0 wrap and COUNTS the lap (even if its interior is imperfect).
                 if (self._geo is not None and not self._wrapped.get(num)
-                        and self._miss.get(num, 0) > MISS_SAMPLES):
+                        and self._is_estimating(num, clock_time)):
                     x, y = self._dist_pct_to_xy(99.9)
                     self._bus.emit("position", {num: [round(x, 1), round(y, 1), 99.9, 1]}, clock_time)
                 self._r_dp[num] = 0.0                  # snap to S/F line
@@ -405,6 +419,21 @@ class PositionProcessor(Processor):
                 break
         return active
 
+    def _is_estimating(self, num: str, clock_time: datetime) -> bool:
+        """AC-6 (requirement-spec.md, WB2): whether `num`'s `position` output
+        should currently be in ESTIMATED mode -- more than EST_THRESHOLD_S
+        seconds have elapsed, as of `clock_time` (the caller's OWN message
+        timestamp, never wall-clock `datetime.now()`), since `num`'s last
+        REAL Position.z fix. Replaces the pre-WB2 `MISS_SAMPLES`
+        sample-count gate -- this is a wall-clock comparison, not a count of
+        CarData ticks received during the gap. Defaults to False (not
+        estimating) if `num` has never had a real fix -- there is nothing to
+        have gone stale yet."""
+        last_ts = self._last_pos_ts.get(num)
+        if last_ts is None:
+            return False
+        return (clock_time - last_ts).total_seconds() > EST_THRESHOLD_S
+
     def _first_apex_after(self, dp: float) -> int:
         """Index of the first anchor ahead of dp (this lap has no wrap)."""
         for j, (a, _kind, _sp) in enumerate(self._anchors):
@@ -458,7 +487,7 @@ class PositionProcessor(Processor):
                 self._reckoner.set_dp(num, dp)        # override DpReckoner's own wrapped result
                 x, y = self._dist_pct_to_xy(dp)
                 entry = [round(x, 1), round(y, 1), round(dp, 3), 1]   # [3]=1 → estimated (for (b) commit)
-                if self._miss[num] <= MISS_SAMPLES:
+                if not self._is_estimating(num, clock_time):          # AC-6: within EST_THRESHOLD_S, tolerate/buffer
                     self._r_buf.setdefault(num, []).append((clock_time, entry))
                 else:
                     for ts, e in self._r_buf.pop(num, []):
@@ -498,7 +527,7 @@ class PositionProcessor(Processor):
 
             x, y = self._dist_pct_to_xy(dp)
             entry = [round(x, 1), round(y, 1), round(dp, 3), 1]   # [3]=1 → estimated (for (b) commit)
-            if self._miss[num] <= MISS_SAMPLES:
+            if not self._is_estimating(num, clock_time):          # AC-6: within EST_THRESHOLD_S, tolerate/buffer
                 self._r_buf.setdefault(num, []).append((clock_time, entry))   # tolerate: buffer
             else:
                 for ts, e in self._r_buf.pop(num, []):
