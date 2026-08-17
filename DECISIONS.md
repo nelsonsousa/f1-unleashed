@@ -331,3 +331,49 @@ tests/regression/__init__.py`), no behavior change to any existing test.
   criteria against synthetic fixtures instead, per this project's "when you
   cannot test something, document it explicitly" rule
   (`rules/testing.md`).
+
+---
+
+## Closure (2026-08-17, branch `feat/wb1-complete-universal-gate`)
+
+**This document is now historical, not current.** Everything above describes the state as
+of `4ffed21` (2026-07-28). The three items decision #1's "to complete this later" section
+and the "Explicitly out of scope" list above named as deferred are now done, on this branch:
+
+1. **The universal 60-minute-before-scheduled-start gate (§9.2) is now wired and live.**
+   `scheduled_start_utc` is threaded into `StreamNormalizer(...)` at all three
+   `SessionPreProcessor` construction sites (replay, CDN download, live capture — the last
+   of which needed its own construction-timing fix, see below). The old `SessionInfo.Key`
+   gate (`_gated`, `_gate_buffer`, `_gate_first_ts`, `_expected_key`, `GATE_TIMEOUT_S`), the
+   pre-start `.z` topic skip, and the explicit `set_reference()` override are all removed —
+   the single-mechanism simplification decision #1 originally deferred.
+2. **`on_baseline_ready`'s replacement trigger is decided and implemented** (human sign-off:
+   fire at the same logical moment as before — the old gate's "SessionInfo.Key matches and
+   the batch is flushed" — under the new mechanism). First implementation fired on the first
+   emitted message regardless of content and was found, by `change-reviewer`, to serve an
+   empty DB when that first message was a no-op (`review-findings.md` finding M1); fixed to
+   fire on the first message strictly later than `_start_time` (the opening timestamp group
+   closing), independently re-verified.
+3. **D6b (`display_delay_ms`) is decided and implemented**: deleted, not just commented —
+   `PlaybackClock`'s dead parameter and both misleading "matched to LIVE_EDGE_MARGIN_S"
+   comments are gone.
+4. **The live-capture call site needed more than decision #1 anticipated.** Investigation
+   (`docs/artifacts/2026-08-17-047-wb1-pipeline-redesign-resume/file-impact-map.md` §1.3)
+   found `main.py`'s schedule lookup was never actually wired to `live_capture.py`'s
+   `SessionPreProcessor` construction, and that reusing `live_capture.py`'s existing
+   `_scheduled_start_utc()` helper as-is would raise a naive/aware-datetime `TypeError` on
+   the first real live capture. Both fixed: `SessionPreProcessor` construction is deferred
+   until the `SessionInfo` topic is specifically seen (with an end-of-run fallback if it
+   never arrives), and a single shared, tz-aware `parse_scheduled_start_utc()` helper now
+   lives in `file_reader.py`, used by all three call sites and by `live_capture.py` itself.
+
+**Full trail**: `docs/artifacts/2026-08-17-047-wb1-pipeline-redesign-resume/` at the project
+root — `file-impact-map.md` (investigation), `implementation-plan.md` (build, plus a fix
+addendum for finding M1), `test-plan.md` (including the M1 red-gate evidence),
+`verification-report.md` (two independent passes), `review-findings.md` (two review passes,
+including the judgment call that a related `DriverList`-timing concern raised during
+re-verification is not a defect — see that file's addendum for the full analysis).
+
+**Not resurrected by this closure**: D8 (high-reconnect-count), the full live/CDN parity
+integration test, and the `__init__.py` build fix noted above remain exactly as this
+document originally left them — none of those were in this branch's scope either.

@@ -26,7 +26,8 @@ from typing import Optional
 
 from app import settings
 from app.config import CACHE_DIR
-from app.processing.preprocessor import SessionPreProcessor
+from app.processing.file_reader import parse_scheduled_start_utc
+from app.processing.preprocessor import SessionPreProcessor, run_end_of_session_analysis
 from app.services.signalr_client import F1SignalRClient
 
 logger = logging.getLogger(__name__)
@@ -322,14 +323,36 @@ class LiveCaptureService:
                             logger.info("SessionStatus=Ends — stopping audio capture")
                             await asyncio.to_thread(self._stop_audio, cache_path)
 
-                        # Start the DB preprocessor once live.jsonl exists
-                        # (the SignalR client writes it on first data).
-                        if preprocessor is None and (cache_path / "live.jsonl").exists():
-                            preprocessor = SessionPreProcessor(cache_path, "")
+                        # Start the DB preprocessor once we've SPECIFICALLY seen
+                        # the SessionInfo topic (not merely "live.jsonl exists"),
+                        # mirroring `_schedule_audio_start`'s own deferral on the
+                        # same topic — 2026-08-17-047 WB-1 resume,
+                        # file-impact-map.md §1.3. `SessionPreProcessor.run(
+                        # tail_follow=True)` reads `live.jsonl` from byte 0, so
+                        # deferring construction loses nothing already written;
+                        # what it avoids is the write-order race between
+                        # `live.jsonl` (written synchronously per key) and
+                        # `subscribe.json` (written only after the whole initial
+                        # snapshot loop finishes, `signalr_client.py`'s
+                        # `CompletionMessage` handling) — reading `subscribe.json`
+                        # off disk at this point could silently see `{}` and fall
+                        # back to the gate's no-op default, reopening the
+                        # zombie-message bug (CVFyRpfx) this gate exists to
+                        # catch. Passing SessionInfo's already-in-memory `data`
+                        # straight to `parse_scheduled_start_utc` sidesteps the
+                        # race entirely — no second file read.
+                        if preprocessor is None and topic == "SessionInfo" \
+                                and (cache_path / "live.jsonl").exists():
+                            scheduled_start_utc = parse_scheduled_start_utc(
+                                message.get("data") if isinstance(message.get("data"), dict) else {})
+                            preprocessor = SessionPreProcessor(
+                                cache_path, "", scheduled_start_utc=scheduled_start_utc)
                             preprocess_task = asyncio.create_task(
                                 preprocessor.run(tail_follow=True)
                             )
-                            logger.info(f"DB preprocessor started for capture {session_id}")
+                            logger.info(
+                                f"DB preprocessor started for capture {session_id} "
+                                f"(scheduled_start_utc={scheduled_start_utc})")
 
                         # Audio no longer depends on AudioStreams — it's captured
                         # directly from the fixed rdio URL, started with the capture.
@@ -391,6 +414,23 @@ class LiveCaptureService:
             # no end-of-capture re-anchor.
             if signalr_client:
                 await asyncio.to_thread(signalr_client.stop)
+
+            # Safety net: the SessionInfo topic that normally triggers
+            # preprocessor construction above never arrived (pathological —
+            # not expected in production, since SessionInfo is part of
+            # SignalR's initial full-state snapshot per
+            # signalr_client.py's CompletionMessage handling) but data WAS
+            # captured to live.jsonl. Build the DB anyway, with no schedule
+            # (matching this code's pre-2026-08-17-047 behaviour for this
+            # edge case: `scheduled_start_utc=None` is StreamNormalizer's
+            # documented no-op-gate default, DECISIONS.md #3) rather than
+            # silently losing an entire capture's processed DB.
+            if preprocessor is None and (cache_path / "live.jsonl").exists():
+                logger.warning(
+                    f"DB preprocessor never started for capture {session_id} "
+                    f"(no SessionInfo seen) — building without a scheduled-start gate")
+                preprocessor = SessionPreProcessor(cache_path, "")
+                preprocess_task = asyncio.create_task(preprocessor.run(tail_follow=True))
 
             # Finalize the DB build. SignalR is stopped first (above), so
             # all data is on disk; a graceful stop lets the preprocessor
@@ -614,22 +654,21 @@ class LiveCaptureService:
 
     @staticmethod
     def _scheduled_start_utc(session_info: dict):
-        """Naive-UTC scheduled session start from SessionInfo StartDate (local) +
-        GmtOffset (e.g. StartDate=2026-07-04T16:00:00, GmtOffset=01:00:00 → 15:00
-        UTC). None if the fields are missing/unparseable."""
-        sd = session_info.get("StartDate")
-        off = session_info.get("GmtOffset")
-        if not sd or not off:
-            return None
-        try:
-            start_local = datetime.fromisoformat(sd).replace(tzinfo=None)
-            off = off.strip()
-            sign = -1 if off.startswith("-") else 1
-            h, m, s = (off.lstrip("+-").split(":") + ["0", "0", "0"])[:3]
-            offset = sign * timedelta(hours=int(h), minutes=int(m), seconds=int(float(s)))
-            return start_local - offset
-        except (ValueError, TypeError):
-            return None
+        """Tz-aware scheduled session start from SessionInfo StartDate (local)
+        + GmtOffset. None if the fields are missing/unparseable.
+
+        Delegates to `file_reader.parse_scheduled_start_utc` — the single
+        shared `StartDate + GmtOffset -> UTC` implementation (2026-08-17-047
+        WB-1 resume, file-impact-map.md §1.5) also used to source
+        `StreamNormalizer(scheduled_start_utc=...)` for the live-capture path
+        below. Previously returned a NAIVE datetime; callers here
+        (`_schedule_audio_start`) are updated to work in tz-aware UTC
+        throughout rather than re-stripping tzinfo, since `StreamNormalizer`'s
+        gate requires a tz-aware value and having two variants of this
+        computation (one naive, one aware) was the exact duplication this
+        change eliminates.
+        """
+        return parse_scheduled_start_utc(session_info)
 
     def _schedule_audio_start(self, data, cache_path: Path) -> None:
         """Schedule the audio ffmpeg to start at (scheduled session start − 10 min),
@@ -650,13 +689,13 @@ class LiveCaptureService:
             self._start_audio(self._RDIO_AUDIO_URL, cache_path)
             return
         lead_at = start_utc - timedelta(minutes=10)
-        delay = (lead_at - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds()
+        delay = (lead_at - datetime.now(timezone.utc)).total_seconds()
         if delay <= 0:
-            logger.info(f"Audio start {lead_at.isoformat()}Z already passed — starting now")
+            logger.info(f"Audio start {lead_at.isoformat()} already passed — starting now")
             self._start_audio(self._RDIO_AUDIO_URL, cache_path)
             return
-        logger.info(f"Scheduling audio start for {lead_at.isoformat()}Z "
-                    f"(session {start_utc.isoformat()}Z − 10 min, in {delay / 60:.1f} min)")
+        logger.info(f"Scheduling audio start for {lead_at.isoformat()} "
+                    f"(session {start_utc.isoformat()} − 10 min, in {delay / 60:.1f} min)")
         self._audio_start_task = asyncio.create_task(
             self._delayed_audio_start(delay, cache_path))
 

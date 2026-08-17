@@ -16,36 +16,33 @@ in the PR/handoff summary) before any assertion was written, per
 `.claude/agents/test-engineer.md` ("actually run it through the real code
 path first").
 
-## Structural note on the fixtures (read this before editing expectations)
+## Structural note on the fixtures (2026-08-17-047 WB-1 resume update)
 
 Every fixture's leading `SessionInfo` line (the "healthy session before
 things went wrong" baseline the MANIFEST describes) carries a `Json` payload
 with no `"Key"` field, e.g. `{"Meeting": "Silverstone", "Session": "Race"}`.
-`SessionPreProcessor`'s own gate (`preprocessor.py` -- the
-`msg.topic == "SessionInfo" and msg_key == self._expected_key` check) only
-opens when `msg.data.get("Key")` is present and matches the session's
-expected key. A blind agent working only from the live.jsonl wire format
-(no access to this codebase) had no way to know that -- real F1 SessionInfo
-messages always carry Key, but the fixture's synthetic baseline line does
-not. Structural consequence, confirmed by direct probing: run each fixture
-AS-IS (its own bytes, nothing added) and the gate never opens for any of the
-12 -- every build completes as a degenerate 0-message "complete" build,
-regardless of what the corruption further down the file is. That would be
-true of literally any of these files, corrupted or not, so testing the
-fixtures that way would tell us nothing about how the corruption itself is
-handled -- see `test_fixture_as_provided_never_opens_the_sessioninfo_gate`
-for one direct demonstration of this, kept as its own documented finding
-rather than folded silently into every other test's setup.
+Historically (before this task) `SessionPreProcessor`'s gate matched on that
+`Key` field, and none of these 12 fixtures' own leading `SessionInfo`
+carries one -- so every fixture, run as-is, sat entirely in the pre-gate
+buffer and built as a degenerate 0-message "complete" session regardless of
+what corruption followed. Every test below used to prepend a synthetic,
+Key-bearing `SessionInfo` line ahead of the fixture's own bytes purely to
+work around that.
 
-To exercise what a REAL corrupted capture (which always has a valid
-SessionInfo.Key) does with each corruption mode, every other test in this
-file prepends one extra, well-formed `SessionInfo` line carrying the
-expected Key ahead of the fixture's own (unmodified) bytes. This changes
-nothing about the corruption under test -- it only supplies the one piece of
-session-start plumbing these standalone fixtures could not have known to
-include, so the file's own bytes reach the normal-processing path (bus emit,
-filtering, DB capture) instead of sitting in the pre-gate buffer for the
-whole read.
+That workaround is gone. The gate is no longer `Key`-based at all
+(DECISIONS.md #1's completion, `preprocessor.py`'s universal
+60-minute-before-scheduled-start gate) -- with no `scheduled_start_utc`
+passed to `SessionPreProcessor` (none of these tests need one; the fixtures'
+own corruption is the thing under test, not gate timing), the gate is a
+documented no-op (`_gate_cutoff is None` -> always keep, DECISIONS.md #3)
+and EVERY message the loop sees, starting with the fixture's own first line,
+survives and becomes `_start_time`. Each fixture's real, UNMODIFIED bytes
+are run through `SessionPreProcessor.run()` directly now -- no prepended
+line, no `Key` requirement, no workaround needed. `message_count`
+expectations below are exactly what each fixture's own well-formed lines
+produce (verified by direct run against the current code, not assumed --
+this is one line lower than expectations pinned before this task, since
+there is no longer a synthetic prepended line to also count).
 
 ## What was found
 
@@ -95,22 +92,13 @@ from app.processing.preprocessor import SessionPreProcessor
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "malformed_live_jsonl"
 
-# Matches the fixtures' own folder-derived expected key (11330) so the gate
-# check can ever succeed once a Key-bearing SessionInfo is present.
 _EXPECTED_KEY = 11330
 
-_GATE_OPENING_PREFIX = json.dumps({
-    "Type": "SessionInfo",
-    "DateTime": "2026-07-18T14:03:19.000Z",
-    "Json": {"Key": _EXPECTED_KEY, "Type": "Race", "Name": "Race"},
-}) + "\n"
 
-
-def _make_session(root: Path, fixture_name: str, *, prefix_gate_opener: bool) -> Path:
+def _make_session(root: Path, fixture_name: str) -> Path:
     """Build a session dir whose live.jsonl is the named fixture's real,
-    unmodified bytes -- optionally preceded by one extra Key-bearing
-    SessionInfo line so the fixture's own content reaches normal processing
-    (see module docstring's "Structural note")."""
+    unmodified bytes -- no synthetic prefix needed (see module docstring's
+    "Structural note")."""
     sess = root / "2026" / "1290_Test_GP" / f"{_EXPECTED_KEY}_Race"
     sess.mkdir(parents=True)
     si = {"Key": _EXPECTED_KEY, "Type": "Race", "Name": "Race"}
@@ -118,8 +106,6 @@ def _make_session(root: Path, fixture_name: str, *, prefix_gate_opener: bool) ->
 
     fixture_bytes = (FIXTURE_DIR / fixture_name).read_bytes()
     with open(sess / "live.jsonl", "wb") as f:
-        if prefix_gate_opener:
-            f.write(_GATE_OPENING_PREFIX.encode("utf-8"))
         f.write(fixture_bytes)
     return sess
 
@@ -128,10 +114,11 @@ class Wb4MalformedJsonlFixtures(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
 
-    async def _run(self, fixture_name: str, *, prefix_gate_opener: bool = True):
-        """Build a SessionPreProcessor against `fixture_name` and run it to
-        completion or failure. Returns (preprocessor, raised_exception)."""
-        sess = _make_session(self.root, fixture_name, prefix_gate_opener=prefix_gate_opener)
+    async def _run(self, fixture_name: str):
+        """Build a SessionPreProcessor against `fixture_name`'s real,
+        unmodified bytes and run it to completion or failure. Returns
+        (preprocessor, raised_exception)."""
+        sess = _make_session(self.root, fixture_name)
         with mock.patch("app.processing.database.transient_db_path",
                         return_value=self.root / f"{fixture_name}.db"):
             p = SessionPreProcessor(sess, "Race")
@@ -188,7 +175,7 @@ class Wb4MalformedJsonlFixtures(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(raised)
         self.assertFalse(p.failed)
         self.assertEqual(p._db.get_meta("status"), "complete")
-        self.assertEqual(p._db.get_meta("message_count"), "3")
+        self.assertEqual(p._db.get_meta("message_count"), "2")
         p._db.close()
 
     async def test_missing_type_field_is_processed_as_unrouted_topic_not_fatal(self):
@@ -203,7 +190,7 @@ class Wb4MalformedJsonlFixtures(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(raised)
         self.assertFalse(p.failed)
         self.assertEqual(p._db.get_meta("status"), "complete")
-        self.assertEqual(p._db.get_meta("message_count"), "5")
+        self.assertEqual(p._db.get_meta("message_count"), "4")
         p._db.close()
 
     async def test_invalid_base64_z_payload_entry_is_dropped_not_fatal(self):
@@ -218,7 +205,7 @@ class Wb4MalformedJsonlFixtures(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(raised)
         self.assertFalse(p.failed)
         self.assertEqual(p._db.get_meta("status"), "complete")
-        self.assertEqual(p._db.get_meta("message_count"), "2")
+        self.assertEqual(p._db.get_meta("message_count"), "1")
         p._db.close()
 
     async def test_invalid_zlib_z_payload_entry_is_dropped_not_fatal(self):
@@ -231,7 +218,7 @@ class Wb4MalformedJsonlFixtures(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(raised)
         self.assertFalse(p.failed)
         self.assertEqual(p._db.get_meta("status"), "complete")
-        self.assertEqual(p._db.get_meta("message_count"), "2")
+        self.assertEqual(p._db.get_meta("message_count"), "1")
         p._db.close()
 
     async def test_z_payload_decompresses_to_non_json_entry_is_dropped_not_fatal(self):
@@ -246,7 +233,7 @@ class Wb4MalformedJsonlFixtures(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(raised)
         self.assertFalse(p.failed)
         self.assertEqual(p._db.get_meta("status"), "complete")
-        self.assertEqual(p._db.get_meta("message_count"), "2")
+        self.assertEqual(p._db.get_meta("message_count"), "1")
         p._db.close()
 
     async def test_unparseable_datetime_entries_are_dropped_not_fatal(self):
@@ -262,7 +249,7 @@ class Wb4MalformedJsonlFixtures(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(raised)
         self.assertFalse(p.failed)
         self.assertEqual(p._db.get_meta("status"), "complete")
-        self.assertEqual(p._db.get_meta("message_count"), "4")
+        self.assertEqual(p._db.get_meta("message_count"), "3")
         p._db.close()
 
     async def test_embedded_null_byte_line_is_dropped_not_fatal(self):
@@ -278,37 +265,37 @@ class Wb4MalformedJsonlFixtures(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(raised)
         self.assertFalse(p.failed)
         self.assertEqual(p._db.get_meta("status"), "complete")
-        self.assertEqual(p._db.get_meta("message_count"), "4")
+        self.assertEqual(p._db.get_meta("message_count"), "3")
         p._db.close()
 
     async def test_empty_file_builds_degenerate_but_valid(self):
         """empty_file.jsonl: 0 bytes. `read_jsonl` hits EOF on its very
         first `readline()` and (not tail-following) breaks immediately --
-        no exception. The build completes with only the prepended
-        gate-opening SessionInfo counted; this matches the intended
-        "degenerate session builds, doesn't crash" behaviour already pinned
-        by tests/test_preprocess_degenerate.py (B02) for the SessionInfo-
-        only case, extended here to the zero-content case.
+        no exception. No message ever reaches the loop at all, so
+        `message_count` is 0 and `_start_time` stays unset; this matches the
+        intended "degenerate session builds, doesn't crash" behaviour
+        already pinned by tests/test_preprocess_degenerate.py (B02) for the
+        SessionInfo-only case, extended here to the zero-content case.
         """
         p, raised = await self._run("empty_file.jsonl")
         self.assertIsNone(raised)
         self.assertFalse(p.failed)
         self.assertEqual(p._db.get_meta("status"), "complete")
-        self.assertEqual(p._db.get_meta("message_count"), "1")
+        self.assertEqual(p._db.get_meta("message_count"), "0")
         p._db.close()
 
     async def test_single_truncated_line_builds_degenerate_but_valid(self):
         """single_truncated_line.jsonl: exactly one line, truncated mid
         token, no valid content at all. Fails json.loads, dropped by
         read_jsonl's per-line handler exactly like any other malformed
-        line -- the build completes degenerate (only the prepended
-        gate-opener counted) rather than crashing.
+        line -- no message ever reaches the loop, so the build completes
+        degenerate (message_count 0) rather than crashing.
         """
         p, raised = await self._run("single_truncated_line.jsonl")
         self.assertIsNone(raised)
         self.assertFalse(p.failed)
         self.assertEqual(p._db.get_meta("status"), "complete")
-        self.assertEqual(p._db.get_meta("message_count"), "1")
+        self.assertEqual(p._db.get_meta("message_count"), "0")
         p._db.close()
 
     async def test_corrupted_line_in_middle_is_dropped_not_fatal(self):
@@ -324,7 +311,7 @@ class Wb4MalformedJsonlFixtures(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(raised)
         self.assertFalse(p.failed)
         self.assertEqual(p._db.get_meta("status"), "complete")
-        self.assertEqual(p._db.get_meta("message_count"), "5")
+        self.assertEqual(p._db.get_meta("message_count"), "4")
         p._db.close()
 
     async def test_mixed_line_endings_all_lines_processed_not_fatal(self):
@@ -340,38 +327,40 @@ class Wb4MalformedJsonlFixtures(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(raised)
         self.assertFalse(p.failed)
         self.assertEqual(p._db.get_meta("status"), "complete")
-        self.assertEqual(p._db.get_meta("message_count"), "6")
+        self.assertEqual(p._db.get_meta("message_count"), "5")
         p._db.close()
 
-    # -- Documents the fixture-generation gap noted in the module docstring --
+    # -- Documents that the old fixture-generation gap (module docstring's
+    # "Structural note") is now resolved by the universal gate itself -------
 
-    async def test_fixture_as_provided_never_opens_the_sessioninfo_gate(self):
-        """Structural finding, not a WB-4 gap: run corrupted_line_in_middle
-        .jsonl exactly as delivered (no prepended Key-bearing SessionInfo).
-        Its own leading SessionInfo line has no "Key" field
-        (`{"Meeting": "Silverstone", "Session": "Race"}`), so
-        `SessionPreProcessor`'s gate-open check
-        (`msg_key is not None and msg_key == self._expected_key`) can never
-        match -- the whole file sits in the pre-gate buffer for its
-        duration and the build completes as an empty "complete" build no
-        matter what corruption follows. Every one of the 12 fixtures shares
-        this same leading-SessionInfo shape, so this is true of all of them,
-        not particular to this one file -- picked arbitrarily as the
-        representative case. This is a property of how the fixtures were
-        blind-generated (no access to this codebase's gate-matching logic),
-        not a defect in `preprocessor.py`.
+    async def test_fixture_as_provided_now_processes_normally_no_workaround_needed(self):
+        """This test used to document a real gap: none of these 12
+        fixtures' own leading `SessionInfo` carries a `Key`, so the old
+        `Key`-matching gate could never open for any of them as-provided,
+        and every test in this file had to prepend a synthetic Key-bearing
+        line to work around it (see the module docstring's old "Structural
+        note", now updated). With the `Key`-based gate gone (DECISIONS.md
+        #1's completion) and no `scheduled_start_utc` passed here (a no-op
+        gate, DECISIONS.md #3), `corrupted_line_in_middle.jsonl` run EXACTLY
+        as delivered -- no prefix, no workaround -- now processes normally:
+        the fixture's own first (Key-less) SessionInfo line becomes
+        `_start_time` immediately, and every other well-formed line in the
+        file is processed and counted, exactly matching
+        `test_corrupted_line_in_middle_is_dropped_not_fatal`'s own
+        already-correct expectation (this file's `_run` no longer takes a
+        `prefix_gate_opener` argument at all -- there is nothing left to
+        toggle).
         """
-        p, raised = await self._run("corrupted_line_in_middle.jsonl", prefix_gate_opener=False)
+        p, raised = await self._run("corrupted_line_in_middle.jsonl")
         self.assertIsNone(raised)
         self.assertFalse(p.failed)
         self.assertEqual(p._db.get_meta("status"), "complete")
         self.assertEqual(
-            p._db.get_meta("message_count"), "0",
-            "as-provided (no Key on the fixture's own SessionInfo line), the "
-            "gate never opens and nothing after it is ever counted -- this "
-            "is a fixture-generation artifact, not evidence about how the "
-            "corruption itself is handled (see the other tests in this file, "
-            "which prepend a Key-bearing SessionInfo precisely to avoid this)"
+            p._db.get_meta("message_count"), "4",
+            "as-provided (no synthetic prefix, no Key on the fixture's own "
+            "SessionInfo line), every well-formed line is now processed -- "
+            "the universal gate has no Key requirement at all, closing the "
+            "fixture-generation gap the old Key-matching gate created"
         )
         p._db.close()
 

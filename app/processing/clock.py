@@ -21,13 +21,12 @@ class ClockState(str, Enum):
 class PlaybackClock:
     """UTC-based playback clock with speed control."""
 
-    def __init__(self, start_time: datetime, display_delay_ms: int = 2000):
+    def __init__(self, start_time: datetime):
         # Session timeline
         self._start_time = start_time
-        self._display_delay = timedelta(milliseconds=display_delay_ms)
 
-        # Clock starts at start_time + display_delay so display time = start_time
-        self._current_time = start_time + self._display_delay
+        # Clock starts at start_time — display time = start_time.
+        self._current_time = start_time
 
         # Playback control
         self._state = ClockState.PAUSED
@@ -41,8 +40,12 @@ class PlaybackClock:
 
     @property
     def display_time(self) -> datetime:
-        """Display time = clock time minus delay."""
-        return self._current_time - self._display_delay
+        """Display time (= clock time; `display_delay_ms` was deleted
+        2026-08-17-047 — architecture-plan.md §A.5.1 proved it always
+        cancelled to a no-op, since `_current_time` was initialized at
+        `start_time + display_delay` and this subtracted the same delay
+        straight back out)."""
+        return self._current_time
 
     @property
     def start_time(self) -> datetime:
@@ -102,7 +105,7 @@ class PlaybackClock:
 
     def seek_to(self, display_time: datetime) -> None:
         """Seek to a specific display time."""
-        self._current_time = display_time + self._display_delay
+        self._current_time = display_time
         if self._state == ClockState.PLAYING:
             self._last_tick_real = time.monotonic()
 

@@ -20,7 +20,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Optional
 
@@ -56,6 +56,43 @@ def _parse_timestamp(dt_str: str) -> Optional[datetime]:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt
     except (ValueError, AttributeError):
+        return None
+
+
+def parse_scheduled_start_utc(session_info: dict) -> Optional[datetime]:
+    """Tz-aware scheduled session start (UTC), from an F1 SessionInfo dict's
+    raw `StartDate` (local) + `GmtOffset` fields (e.g.
+    StartDate=2026-07-04T16:00:00, GmtOffset=01:00:00 -> 15:00 UTC).
+
+    Single shared implementation (2026-08-17-047 WB-1 resume,
+    file-impact-map.md §1.5) for the `StartDate + GmtOffset -> UTC`
+    computation needed at every `SessionPreProcessor` construction site that
+    feeds `StreamNormalizer(scheduled_start_utc=...)` — replay
+    (`session.py`), CDN download (`livetiming_fetcher.py`), and live capture
+    (`live_capture.py`). Always tz-aware: `StreamNormalizer._gate()` compares
+    against `_parse_timestamp()`'s output, which is always tz-aware, so a
+    naive result here would raise `TypeError` on the first comparison — this
+    replaces `live_capture.py`'s previous naive-`datetime`-returning helper
+    of the same computation.
+
+    Returns None if `StartDate`/`GmtOffset` are missing or unparseable — the
+    caller passes None through, which is `StreamNormalizer`'s documented
+    no-op-gate default (DECISIONS.md #3).
+    """
+    if not isinstance(session_info, dict):
+        return None
+    sd = session_info.get("StartDate")
+    off = session_info.get("GmtOffset")
+    if not sd or not off:
+        return None
+    try:
+        start_local = datetime.fromisoformat(sd).replace(tzinfo=None)
+        off = off.strip()
+        sign = -1 if off.startswith("-") else 1
+        h, m, s = (off.lstrip("+-").split(":") + ["0", "0", "0"])[:3]
+        offset = sign * timedelta(hours=int(h), minutes=int(m), seconds=int(float(s)))
+        return (start_local - offset).replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
         return None
 
 

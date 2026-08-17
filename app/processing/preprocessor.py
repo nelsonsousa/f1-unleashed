@@ -1,12 +1,27 @@
 """
 Session Pre-Processor — transforms raw JSONL into pre-computed display data.
 
-Message gating:
-  - All messages are buffered until SessionInfo with the expected session Key arrives.
-  - That SessionInfo is emitted first. Buffered messages with the same timestamp are
-    kept, rest discarded. Buffer timeout: 60 seconds (discard if no matching SessionInfo).
-  - After gating, messages with envelope timestamps >1h before the reference time
-    (SessionInfo arrival) are filtered out.
+Message gating (2026-08-17-047 WB-1 resume — completes the 2026-07-27-003
+pipeline redesign's §9.2 universal gate, DECISIONS.md #1):
+  - `StreamNormalizer` (constructed with a real `scheduled_start_utc`, see
+    `SessionPreProcessor.__init__`) discards any message whose payload
+    timestamp is more than 60 minutes before the session's SCHEDULED start,
+    before this module ever sees it. This is the ONLY gate now — the old
+    `SessionInfo.Key` exact-match buffer/gate and the old pre-start `.z` skip
+    are both removed, replaced by this one rule.
+  - The first message to survive that gate becomes this module's own
+    `_start_time`/reference (mirrors `StreamNormalizer._stamp()`'s own
+    "first survivor" auto-reference, requirement-spec.md §9.2). The baseline
+    flush + `on_baseline_ready` trigger separately (fix for M1,
+    review-findings.md, 2026-08-17-047 WB-1 resume): on the first message
+    strictly LATER than `_start_time` (i.e. once the opening same-timestamp
+    group — which routinely includes the real baseline topics, SessionInfo-
+    derived data and DriverList — has fully arrived and been emitted), with
+    an end-of-run fallback for a session where that never happens (see
+    `run()`).
+  - After that, messages with envelope timestamps >1h before `_start_time`
+    are filtered out by `_filter_message` — a separate, already-shipped
+    mechanism (architecture-plan.md §A.7.7), not the universal gate above.
 
 Payload timestamp filtering:
   - For topics like RaceControlMessages, SessionData, etc., individual entries with
@@ -98,7 +113,6 @@ BUFFER_FLUSH_MS = 1000
 # rest) at negligible build-time cost; an offline build with no client just
 # does a few extra no-op yields.
 YIELD_EVERY = 50
-GATE_TIMEOUT_S = 60  # Discard buffered messages if no matching SessionInfo within 60s
 
 # Raw F1 topics — not captured to DB (these are input, not output)
 RAW_F1_TOPICS = {
@@ -167,14 +181,6 @@ def _parse_utc(s: str) -> Optional[datetime]:
         return None
 
 
-def _extract_session_key(folder_name: str) -> Optional[int]:
-    """Extract session key from folder name like '11236_Sprint_Qualifying'."""
-    parts = folder_name.split("_", 1)
-    if parts[0].isdigit():
-        return int(parts[0])
-    return None
-
-
 def _filter_payload_timestamps(topic: str, data: Any, cutoff: datetime) -> Optional[Any]:
     """Filter stale entries from payloads that contain timestamps.
 
@@ -239,45 +245,44 @@ def _filter_payload_timestamps(topic: str, data: Any, cutoff: datetime) -> Optio
 class SessionPreProcessor:
     """Transforms raw JSONL into pre-computed display data in SQLite."""
 
-    def __init__(self, session_path: Path, session_type: str):
+    def __init__(self, session_path: Path, session_type: str, *,
+                 scheduled_start_utc: Optional[datetime] = None):
         self._session_path = session_path
         self._session_type = session_type
-        self._expected_key = _extract_session_key(session_path.name)
 
         self._db = SessionDatabase(session_path)
         self._bus = SessionMessageBus()
         self._processors: list[Processor] = []
         self.failed = False   # set True if run() hits an unhandled error (H5)
 
-        # StreamNormalizer (2026-07-27-003 pipeline redesign): owns STREAM_LAG,
-        # .z decompression/splitting, and the continuous dedup rule (§9.1).
-        # `scheduled_start_utc` is NOT threaded in yet — see DECISIONS.md #1 in
-        # this work block's branch — so its universal 60-minute gate (§9.2) is
-        # currently a no-op and the SessionInfo.Key gate below still does the
-        # gating job it always has. `set_reference()` is called explicitly at
-        # gate-open, below, to keep offset_ms anchored exactly where it is
-        # today (D4) rather than at the normalizer's own auto-picked first
-        # message (which would land up to ~40 minutes early, per architecture-
-        # plan.md §A.4).
-        self._normalizer = StreamNormalizer()
-        # Continuous dedup (§9.1) must not run for messages that are still
-        # only being buffered pending the SessionInfo.Key gate below — a
-        # message that will later be discarded at gate-flush (never matching
-        # `ref_ts`, and not DriverList) must not consume/poison the dedup
-        # state, or the REAL subsequent message for that topic gets silently
-        # suppressed as a duplicate even though nothing was actually emitted
-        # yet. Disabled here, re-enabled at gate-open below (where `_gated`
-        # flips False) once forwarding is effectively guaranteed. Restores
-        # the pre-redesign property that dedup state is only ever updated by
-        # messages that are actually going to be forwarded (previously true
-        # by construction, since the old dedup lived at the OUTPUT layer —
-        # this `_last_emitted`, below — which only ever saw emitted messages).
-        self._normalizer.set_dedup_enabled(False)
+        # StreamNormalizer (2026-07-27-003 pipeline redesign, completed
+        # 2026-08-17-047 WB-1 resume): owns STREAM_LAG, .z decompression/
+        # splitting, the continuous dedup rule (§9.1), and now the universal
+        # 60-minute-before-scheduled-start gate (§9.2) — the ONLY gate,
+        # replacing the old SessionInfo.Key exact-match buffer/gate entirely
+        # (DECISIONS.md #1's completion; see `run()` for where `_start_time`/
+        # the baseline flush now anchor off the first gate-surviving message
+        # instead of a Key match).
+        #
+        # `scheduled_start_utc` is a CONSTRUCTOR PARAMETER threaded through
+        # from the caller (session.py / livetiming_fetcher.py / live_capture.py
+        # — see file-impact-map.md §1 for each call site's source) and is NOT
+        # the same value as `self._scheduled_start_utc` below, which
+        # `_on_session_info` sets later from the PROCESSED `sessionInfo` bus
+        # emission purely to suppress pre-session scrubber `event` markers.
+        # Two different values, two different purposes, that happen to share
+        # a name (file-impact-map.md §1.4) — never conflate them.
+        self._normalizer = StreamNormalizer(scheduled_start_utc=scheduled_start_utc)
 
         self._output_buffer: list[tuple[int, str, str]] = []  # (offset, topic, json)
         self._last_emitted: dict[str, str] = {}  # topic -> last JSON string
         self._start_time: Optional[datetime] = None
         self._cutoff: Optional[datetime] = None  # 1h before reference time
+        # True once `on_baseline_ready` has fired for this run — set once the
+        # first timestamp group past `_start_time` has closed (or, failing
+        # that, at end of run — see `run()`), guaranteed to fire at most once
+        # (item 3, 2026-08-17-047 WB-1 resume; M1 fix, review-findings.md).
+        self._baseline_ready_fired = False
         self._running = False
         self._message_count = 0
         self._last_flush_ms = 0
@@ -287,11 +292,6 @@ class SessionPreProcessor:
         # so `_wall_clock_backstop_loop`/`_emit_flushed_message` are safe to
         # call independently of a full `run()`.
         self._latest_backstop_ts: Optional[datetime] = None
-
-        # Gating state
-        self._gated = True  # True until SessionInfo with correct key arrives
-        self._gate_buffer: list[NormalizedMessage] = []
-        self._gate_first_ts: Optional[datetime] = None
 
         # Set to break out of tail-follow so the run can finalize.
         self._stop_follow = asyncio.Event()
@@ -347,10 +347,6 @@ class SessionPreProcessor:
             else:
                 self._session_type = "practice"
 
-        # If no expected key from folder name, try subscribe.json
-        if self._expected_key is None:
-            self._expected_key = session_info.get("Key")
-
         # Scheduled session start (UTC) — used to suppress pre-session scrubber
         # `event` markers. Sourced from the SessionInfoProcessor's emitted
         # `sessionInfo` (derived from live.jsonl), NOT subscribe.json (a capture
@@ -400,97 +396,27 @@ class SessionPreProcessor:
                 if not self._running:
                     break
 
-                # Skip stale telemetry at file start. Pre-redesign this was one
-                # of TWO mechanisms guarding the confirmed zombie-message bug
-                # (CVFyRpfx); requirement-spec.md §9.2 replaces both with one
-                # universal 60-min-before-scheduled-start gate inside the
-                # normalizer — deferred here (DECISIONS.md #1), so this skip
-                # stays as the guard it always was.
-                if self._start_time is None and msg.topic in ("CarData.z", "Position.z"):
-                    continue
+                # The universal gate (StreamNormalizer._gate(), §9.2) has
+                # already dropped anything more than 60 minutes before the
+                # scheduled start — everything reaching this point has
+                # survived it. The FIRST survivor anchors `_start_time`/
+                # `_cutoff` (the new equivalent of the old SessionInfo.Key
+                # gate-open moment; DECISIONS.md #1's completion) — set here,
+                # unconditionally, on the first message this loop ever sees,
+                # rather than deferred to after `_filter_message` below, so a
+                # message that itself gets filtered out (rare: RCM/SessionData
+                # payload-entry filtering, not the envelope-level cutoff,
+                # which a message can never fail against a cutoff computed
+                # FROM itself) doesn't leave `_start_time`/`_cutoff` unset.
+                if self._start_time is None:
+                    self._start_time = msg.utc_timestamp
+                    # Persist the absolute session start so the engine can
+                    # anchor its playback clock from the DB instead of a
+                    # separate pre-scan of live.jsonl (KdKK0D5G).
+                    self._db.set_meta("start_time", msg.utc_timestamp.isoformat())
+                    self._cutoff = msg.utc_timestamp - timedelta(hours=1)
+                    logger.info(f"Universal gate opened at {msg.utc_timestamp}")
 
-                # --- Gating: buffer until SessionInfo with correct key ---
-                if self._gated:
-                    if not self._gate_buffer:
-                        self._gate_first_ts = msg.utc_timestamp
-
-                    # Check if this is the SessionInfo we're waiting for
-                    if msg.topic == "SessionInfo" and isinstance(msg.data, dict):
-                        msg_key = msg.data.get("Key")
-                        if msg_key is not None and msg_key == self._expected_key:
-                            self._gated = False
-                            self._start_time = msg.utc_timestamp
-                            # Re-enable dedup now that forwarding is
-                            # effectively guaranteed (no more buffer-then-
-                            # discard ahead of this point) — see the
-                            # `set_dedup_enabled(False)` call in __init__.
-                            self._normalizer.set_dedup_enabled(True)
-                            # Anchor the normalizer's offsetMs origin here too —
-                            # overrides whatever auto-reference it picked up
-                            # during buffering (D4: the origin stays at
-                            # gate-open, not the normalizer's own first
-                            # surviving message, architecture-plan.md §A.4).
-                            self._normalizer.set_reference(msg.utc_timestamp)
-                            # Persist the absolute session start so the engine can
-                            # anchor its playback clock from the DB instead of a
-                            # separate pre-scan of live.jsonl (KdKK0D5G).
-                            self._db.set_meta("start_time", msg.utc_timestamp.isoformat())
-                            self._cutoff = msg.utc_timestamp - timedelta(hours=1)
-                            logger.info(f"Session gated: key={msg_key} at {msg.utc_timestamp}")
-
-                            # Emit SessionInfo first
-                            self._bus.emit(msg.topic, msg.data, msg.utc_timestamp)
-                            self._message_count += 1
-
-                            # Flush buffer:
-                            #  - DriverList: always flush, so the driver-list
-                            #    processor has full team info regardless of
-                            #    where the TeamName update sits in the
-                            #    archive's timestamp stream (downloads merge
-                            #    per-topic .jsonStream files in time order;
-                            #    F1 may have sent the team-info DriverList
-                            #    before SessionInfo).
-                            #  - Other topics: only those with the same
-                            #    timestamp as SessionInfo (filters stale
-                            #    pre-session timing data).
-                            ref_ts = msg.utc_timestamp
-                            for buffered in self._gate_buffer:
-                                if buffered is msg:
-                                    continue
-                                if not (buffered.utc_timestamp == ref_ts
-                                        or buffered.topic == "DriverList"):
-                                    continue
-                                filtered = self._filter_message(buffered)
-                                if filtered:
-                                    self._discover_topic(filtered.topic)
-                                    self._bus.emit(filtered.topic, filtered.data, filtered.utc_timestamp)
-                                    self._message_count += 1
-                                    last_ts = filtered.utc_timestamp
-                            self._gate_buffer = []
-                            # Baseline (SessionInfo + DriverList + same-ts
-                            # topics) is now emitted. Flush so a reader
-                            # connection sees the offset-0 rows, then signal
-                            # baseline-ready — the engine gates its connect
-                            # restore on this so tiles paint without a manual
-                            # seek (card 77).
-                            self._flush_buffer()
-                            if on_baseline_ready:
-                                on_baseline_ready()
-                            continue
-
-                    # Buffer the message
-                    self._gate_buffer.append(msg)
-
-                    # Timeout: discard buffer if no matching SessionInfo within 60s
-                    if (self._gate_first_ts and
-                            (msg.utc_timestamp - self._gate_first_ts).total_seconds() > GATE_TIMEOUT_S):
-                        logger.warning(f"Gate timeout: discarding {len(self._gate_buffer)} buffered messages")
-                        self._gate_buffer = []
-                        self._gate_first_ts = msg.utc_timestamp
-
-                    continue
-
-                # --- Normal processing (after gate opened) ---
                 filtered = self._filter_message(msg)
                 if not filtered:
                     continue
@@ -498,15 +424,45 @@ class SessionPreProcessor:
                 self._message_count += 1
                 last_ts = filtered.utc_timestamp
                 # Taken FROM the message (architecture-plan.md §A.1.2) — the
-                # normalizer already computed it relative to the reference set
-                # at gate-open, above, rather than recomputed here.
+                # normalizer already computed it relative to ITS OWN
+                # first-survivor reference (StreamNormalizer._stamp()), which
+                # is exactly this same first message, so no explicit
+                # `set_reference()` override is needed any more (DECISIONS.md
+                # #2's completion).
                 offset_ms = filtered.offset_ms if filtered.offset_ms is not None else int(
                     (filtered.utc_timestamp - self._start_time).total_seconds() * 1000)
 
                 self._discover_topic(filtered.topic)
                 self._bus.emit(filtered.topic, filtered.data, filtered.utc_timestamp)
 
-                if (self._message_count % BUFFER_FLUSH_MESSAGES == 0
+                if (not self._baseline_ready_fired
+                        and filtered.utc_timestamp > self._start_time):
+                    # Baseline ready (fix for M1, review-findings.md,
+                    # 2026-08-17-047 WB-1 resume): fire once the first
+                    # TIMESTAMP GROUP closes -- i.e. once a message strictly
+                    # later than `_start_time` arrives -- not merely once ANY
+                    # message has been emitted. This is the direct, stateless
+                    # analogue of the old SessionInfo.Key gate's behaviour
+                    # ("emit SessionInfo, then flush the buffered
+                    # same-timestamp batch, then signal"): a real capture's
+                    # baseline topics (SessionInfo-derived data, DriverList)
+                    # routinely share the session's opening envelope
+                    # timestamp with other, earlier-in-file, no-op topics
+                    # (e.g. TrackStatus "AllClear" against a fresh processor
+                    # -- review's reproduction against
+                    # regression/golden/shanghai-sq-cdn). Waiting for the
+                    # first later timestamp guarantees every same-timestamp
+                    # message -- baseline topics included -- has already
+                    # been emitted and buffered before we flush and signal.
+                    # (A session where EVERY message shares `_start_time`'s
+                    # exact timestamp never reaches this branch at all; the
+                    # end-of-run fallback below covers that case.)
+                    self._baseline_ready_fired = True
+                    self._flush_buffer()
+                    self._last_flush_ms = offset_ms
+                    if on_baseline_ready:
+                        on_baseline_ready()
+                elif (self._message_count % BUFFER_FLUSH_MESSAGES == 0
                         or offset_ms - self._last_flush_ms >= BUFFER_FLUSH_MS):
                     self._flush_buffer()
                     self._last_flush_ms = offset_ms
@@ -544,7 +500,12 @@ class SessionPreProcessor:
             # drv.samples AT THAT MOMENT, so a still-buffered `.z` entry
             # flushed afterward would be exactly the "vanishes silently"
             # case this fix exists to close.
-            if not self._gated and self._start_time is not None:
+            # `self._start_time is not None` alone now captures "gate has
+            # opened" — the old separate `_gated` flag is gone (DECISIONS.md
+            # #1's completion); `_start_time` IS the gate-open signal, set at
+            # the same point `_gated` used to flip False (see the main loop
+            # above).
+            if self._start_time is not None:
                 for msg in self._normalizer.flush():
                     if not self._running:
                         break
@@ -575,6 +536,24 @@ class SessionPreProcessor:
             # (The dormant pace/tyre-phases/strategy analysis stack was removed — M2.
             # The live pecking-order + pit-loss-estimate analyses run below/elsewhere.)
             self._flush_buffer()
+
+            # Baseline-ready end-of-run fallback (M1, review-findings.md,
+            # 2026-08-17-047 WB-1 resume). The in-loop trigger above fires
+            # once a message strictly later than `_start_time` arrives — a
+            # session where EVERY message shares `_start_time`'s exact
+            # envelope timestamp (a single-message session, or a whole
+            # capture that arrives in one same-timestamp burst) never
+            # reaches that branch. Fire here instead, after every flush
+            # above has already run, so the callback still fires (at most
+            # once) for any session that emitted at least one message — the
+            # same "flush strictly before signal" guarantee, just at the
+            # other end of the run instead of mid-loop.
+            if (self._start_time is not None and not self._baseline_ready_fired
+                    and self._message_count > 0):
+                self._baseline_ready_fired = True
+                if on_baseline_ready:
+                    on_baseline_ready()
+
             self._db.set_meta("status", "complete")
             self._db.set_meta("message_count", str(self._message_count))
             self._db.set_meta("processor_version", processor_code_version())
@@ -650,26 +629,19 @@ class SessionPreProcessor:
                 continue
             # The buffer this releases from holds ONLY CarData.z/Position.z
             # entries (StreamNormalizer._z_buffer — see poll_wall_clock_
-            # backstop's docstring), so the same two guards the main loop
-            # applies to every Z_TOPICS message before it ever reaches
-            # `_bus.emit` must be applied here too, or the backstop becomes a
-            # second, ungated emission path that bypasses both:
-            #  1. The zombie-message guard (`_start_time is None` — confirmed
-            #     prior production bug, card CVFyRpfx): a session still
-            #     waiting for its SessionInfo gate has no `_start_time` yet,
-            #     so any Z_TOPICS entry sitting in the buffer at that point is
-            #     pre-session noise and must be dropped, exactly as the main
-            #     loop's `continue` at Z_TOPICS/`_start_time is None` drops it.
-            #  2. The gate buffer: while `_gated`, nothing may reach the bus
-            #     directly — everything either gets dropped (case 1, since
-            #     `_gated` and `_start_time is None` are the same state, see
-            #     the constructor comment) or is buffered pending the gate
-            #     flush. Since this buffer only ever holds Z_TOPICS entries,
-            #     and Z_TOPICS entries are never gate-buffered even in the
-            #     main loop (they're dropped outright pre-start instead),
-            #     dropping here is the correct mirror of that behaviour, not
-            #     a divergence from it.
-            if self._gated or self._start_time is None:
+            # backstop's docstring). Every entry in it has ALREADY survived
+            # the universal gate (StreamNormalizer._gate() runs before
+            # insertion, §9.2) — genuinely pre-session zombies are dropped
+            # there now, not here (DECISIONS.md #1's completion; the old
+            # `_gated` buffer this comment used to describe no longer
+            # exists). This guard is retained only as a defensive backstop
+            # for the (essentially unreachable in practice — the backstop
+            # only fires after `wall_clock_backstop_s`, default 180s, of
+            # whole-feed silence) edge case where it fires before the main
+            # loop has processed even its own first message and set
+            # `_start_time`/`_cutoff`: `_start_time is None` mirrors exactly
+            # what the main loop itself hasn't established yet.
+            if self._start_time is None:
                 continue
             for msg in released:
                 ts = self._emit_flushed_message(msg)

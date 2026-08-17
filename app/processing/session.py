@@ -22,7 +22,7 @@ from fastapi import WebSocket
 from app.config import REPLAY_DEBUG, CACHE_DIR
 from app.processing.clock import PlaybackClock, ClockState
 from app.processing.database import SessionDatabase
-from app.processing.file_reader import load_subscribe_json, _parse_timestamp
+from app.processing.file_reader import load_subscribe_json, parse_scheduled_start_utc, _parse_timestamp
 from app.processing.preprocessor import SessionPreProcessor
 from app.services.live_capture import live_capture
 from app.services import telemetry
@@ -48,11 +48,18 @@ def _log_task_exception(task: "asyncio.Task") -> None:
 
 TICK_INTERVAL = 0.016  # ~60fps tick rate
 
-# Live-edge audio/data sync (card 78). The live playback edge is capped at
-# min(data_edge, audio_edge) − this buffer, pinning playback to whichever
-# stream is lagging so neither feed is outrun and audio/data stay aligned at
-# the edge. The buffer is wiggle room for buffering / download delay.
-LIVE_EDGE_BUFFER_S = 8.0
+# Live-edge / display margin (card 479) — 5 s. WHY 5 s: F1 packages
+# CarData/Position at ~1 Hz, so a sample's envelope (arrival) time can trail
+# its payload timestamp by up to ~5 s. Holding
+# the playhead 5 s behind the arrival edge lets every sample be delivered IN
+# payload-timestamp order and "on time" (at the instant it was recorded);
+# non-payload topics just arrive the normal ~5 s late. Same 5 s = the ceiling
+# (min(data_edge, audio_edge) − this) the free-running clock stays below so it
+# advances smoothly at 1x instead of pinning to the jerky edge, and what "go Live"
+# requests (self._duration). If the audio edge updates less often than this, or
+# packaging lag exceeds it, a few samples arrive late — the rowid late-sweep in
+# _playback_loop backstops the tail; a persistent re-stutter means increase it.
+LIVE_EDGE_MARGIN_S = 5.0
 
 # Soft-couple stall-release: if the audio leading edge (pdt_map.jsonl) hasn't
 # been refreshed within this long, the PdtTracker/ffmpeg has stalled — stop
@@ -225,8 +232,15 @@ class SessionEngine:
                 f": {self._session_name}")
         else:
             logger.info(f"Building transient DB for {self._session_name}")
+            # scheduled_start_utc for StreamNormalizer's universal gate
+            # (2026-08-17-047 WB-1 resume, file-impact-map.md §1.1): sourced
+            # from `self._session_info` (raw PascalCase, already loaded above
+            # for session-type detection) — the replay call site, no race to
+            # guard against here (subscribe.json is a static, already-written
+            # file for a completed/downloaded session).
             self._preprocessor = SessionPreProcessor(
                 self._session_path, self._session_type,
+                scheduled_start_utc=parse_scheduled_start_utc(self._session_info),
             )
             self._preprocess_task = asyncio.create_task(
                 self._run_preprocess()

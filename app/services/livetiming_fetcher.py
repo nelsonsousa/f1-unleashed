@@ -17,6 +17,7 @@ import aiohttp
 
 from app.config import REPLAY_DEBUG, CACHE_DIR
 from app.processing.database import transient_db_path
+from app.processing.file_reader import parse_scheduled_start_utc
 from app.processing.preprocessor import SessionPreProcessor
 
 logger = logging.getLogger(__name__)
@@ -755,7 +756,13 @@ class LiveTimingFetcher:
         # data/analysis/, and the DB is then deleted (kept in DEBUG mode).
         if progress_callback:
             progress_callback("Processing", "building session database")
-        pre = SessionPreProcessor(cache_dir, "")
+        # scheduled_start_utc for StreamNormalizer's universal gate
+        # (2026-08-17-047 WB-1 resume, file-impact-map.md §1.2): sourced from
+        # `session_info_json`, already fetched above in this same method,
+        # single-threaded/sequential-await — no race to guard against here
+        # (unlike the live-capture path, §1.3).
+        scheduled_start_utc = parse_scheduled_start_utc(session_info_json or {})
+        pre = SessionPreProcessor(cache_dir, "", scheduled_start_utc=scheduled_start_utc)
         try:
             # force=True so a re-download rebuilds from the new live.jsonl
             # rather than early-returning on a prior 'complete' status.

@@ -149,20 +149,24 @@ class FlushRunsBeforeFinalizeSession(_Harness):
             p._db.close()
 
 
-class FlushIsSkippedIfSessionNeverGated(_Harness):
-    async def test_no_flush_call_site_crash_when_gate_never_opens(self):
-        """A file with no matching SessionInfo never opens the gate
-        (`self._gated` stays True, `self._start_time` stays None) -- the
-        flush call site must not assume gating succeeded."""
-        base = datetime(2026, 7, 18, 10, 0, 0, tzinfo=timezone.utc)
-        other_si = {"Key": 99999, "Type": "Practice", "Name": "Practice 1"}
-        self._write_lines([
-            json.dumps({"Type": "SessionInfo", "DateTime": _iso(base), "Json": other_si}),
-        ])
+class FlushIsSkippedIfNoMessageEverArrives(_Harness):
+    """2026-08-17-047 WB-1 resume: the old `SessionInfo.Key` gate (which
+    could stay closed forever on a Key mismatch, `self._gated` stuck True)
+    is gone. The universal gate is stateless per-message and defaults to a
+    no-op when `scheduled_start_utc` is None (DECISIONS.md #3), so `_start_time`
+    is now set unconditionally on the FIRST message the main loop ever sees
+    -- there is no longer a way for a message to arrive and leave `_start_time`
+    unset. The one remaining way `_start_time` stays None is that NO message
+    ever reaches the loop at all (an empty/entirely-unparseable live.jsonl) --
+    the flush call site (`if self._start_time is not None:`) must not assume
+    a message ever arrived."""
+
+    async def test_no_flush_call_site_crash_when_no_message_ever_arrives(self):
+        (self.sess / "live.jsonl").write_text("")
         p = self._make()
         try:
             await p.run()   # must not raise
-            self.assertTrue(p._gated)
+            self.assertIsNone(p._start_time)
         finally:
             p._db.close()
 
@@ -229,12 +233,13 @@ class WallClockBackstopLoop(_Harness):
             p._running = True
             # This test drives `_wall_clock_backstop_loop` directly, bypassing
             # `run()`'s own gating -- must-fix 1 (2026-07-29 fix-attempt 2)
-            # made the loop respect `_gated`/`_start_time` exactly like the
+            # made the loop respect the gate/`_start_time` exactly like the
             # main loop does, so a direct-call test now needs to simulate a
             # post-gate session (the realistic case the loop actually runs
             # in -- it's only ever started from inside `run()`, after gating
-            # has already begun).
-            p._gated = False
+            # has already begun). 2026-08-17-047 WB-1 resume: the old
+            # `_gated` flag is gone -- `_start_time is not None` alone is now
+            # the gate-open signal.
             p._start_time = datetime(2026, 7, 18, 10, 0, 0, tzinfo=timezone.utc)
             ts = datetime(2026, 7, 18, 10, 0, 5, tzinfo=timezone.utc)
             call_count = {"n": 0}
@@ -271,7 +276,6 @@ class WallClockBackstopLoop(_Harness):
         p = self._make()
         try:
             p._running = True
-            p._gated = False
             p._start_time = datetime(2026, 7, 18, 10, 0, 0, tzinfo=timezone.utc)
             call_count = {"n": 0}
 
@@ -296,17 +300,19 @@ class WallClockBackstopLoop(_Harness):
 
     async def test_loop_drops_released_entries_while_still_gated(self):
         """Must-fix 1 (2026-07-29 fix-attempt 2, regression coverage): a
-        wall-clock backstop release that fires while the session is still
-        gated (`_gated=True`/`_start_time=None` -- e.g. a live session stuck
-        waiting on the correct SessionInfo.Key for longer than the backstop
+        wall-clock backstop release that fires while the session hasn't yet
+        gated open (`_start_time=None` -- e.g. a live session that hasn't
+        seen any gate-surviving message yet, for longer than the backstop
         duration) must NOT reach `_bus.emit` -- this is precisely the
-        zombie-message-guard/gate-buffer bypass must-fix 1 closes. Before the
-        fix, `poll_wall_clock_backstop()`'s released entries were emitted
-        unconditionally regardless of gate state."""
+        zombie-message-guard bypass must-fix 1 closes. Before the fix,
+        `poll_wall_clock_backstop()`'s released entries were emitted
+        unconditionally regardless of gate state. 2026-08-17-047 WB-1
+        resume: the old separate `_gated` flag is gone -- `_start_time is
+        None` alone is now the "hasn't gated open yet" signal (this test
+        never calls `run()`, so `_start_time` is naturally still unset)."""
         p = self._make()
         try:
             p._running = True
-            self.assertTrue(p._gated)
             self.assertIsNone(p._start_time)
             ts = datetime(2026, 7, 18, 10, 0, 5, tzinfo=timezone.utc)
             call_count = {"n": 0}
@@ -357,7 +363,6 @@ class WallClockBackstopLoop(_Harness):
         p = self._make()
         try:
             p._running = True
-            p._gated = False
             p._start_time = datetime(2026, 7, 18, 10, 0, 0, tzinfo=timezone.utc)
             ts1 = datetime(2026, 7, 18, 10, 0, 5, tzinfo=timezone.utc)
             ts2 = datetime(2026, 7, 18, 10, 0, 6, tzinfo=timezone.utc)
