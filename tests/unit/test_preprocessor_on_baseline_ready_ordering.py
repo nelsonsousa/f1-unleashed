@@ -137,7 +137,21 @@ class BaselineReadySurvivesGateWithoutSurvivingFilterMessage(_Harness):
     `_filter_message` itself drops must not fire `on_baseline_ready` for
     nothing ever having reached the bus (rare in practice -- RCM/SessionData
     payload-entry filtering only, never the envelope-level cutoff, which a
-    message can never fail against a cutoff computed FROM itself)."""
+    message can never fail against a cutoff computed FROM itself).
+
+    Restructured 2026-08-18-051 (N9 hardening, `implementation-plan.md`):
+    this fixture deliberately contains no `SessionInfo` at all, so with the
+    SessionInfo-aware trigger `on_baseline_ready` no longer fires mid-loop at
+    the Heartbeat emit -- it fires via the end-of-run fallback instead, since
+    there is no SessionInfo group to wait for closing. The literal
+    `fired_at_message_counts == [1]` assertion this test used to make was
+    about exactly which message index the callback landed on, which is a
+    property of the OLD "any group close" mechanism, not of the guarantee
+    this test exists to prove. The guarantee -- `_start_time`/
+    `_baseline_ready_fired` decoupling for a first-survivor message dropped
+    by `_filter_message` -- is asserted directly below instead: the callback
+    fires exactly once, and not before the first real emit (the dropped RCM
+    message must never be mistaken for "baseline ready")."""
 
     async def test_first_survivor_dropped_by_filter_message_does_not_fire_early(self):
         # First message: RaceControlMessages whose SOLE entry is timestamped
@@ -152,7 +166,9 @@ class BaselineReadySurvivesGateWithoutSurvivingFilterMessage(_Harness):
         lines = [
             _env("RaceControlMessages", "2026-07-18T10:00:00.000Z", rcm),
             # Second message, well within the cutoff -- the actual first
-            # EMIT, and where on_baseline_ready must fire.
+            # EMIT. No SessionInfo anywhere in this fixture -- the callback
+            # can only fire via the end-of-run fallback (there is no
+            # SessionInfo group to wait for closing).
             _env("Heartbeat", "2026-07-18T10:00:05.000Z", {}),
         ]
         self._write_lines(lines)
@@ -169,10 +185,26 @@ class BaselineReadySurvivesGateWithoutSurvivingFilterMessage(_Harness):
             # even though that message itself was later dropped by
             # `_filter_message`.
             self.assertEqual(p._db.get_meta("start_time"), "2026-07-18T10:00:00+00:00")
-            # on_baseline_ready fired exactly once, and only once the
-            # Heartbeat (the actual first EMIT) had been counted -- not for
-            # the RCM message, which was dropped and never emitted.
-            self.assertEqual(fired_at_message_counts, [1])
+            # The actual guarantee: `on_baseline_ready` fires EXACTLY ONCE
+            # (`_baseline_ready_fired` flips exactly once), and it never
+            # fires for the dropped RCM message -- i.e. never before the
+            # first real emit (`_message_count` >= 1) had already landed.
+            # This is the `_start_time`/`_baseline_ready_fired` decoupling
+            # this test exists to prove; it says nothing about which
+            # message index the callback lands on, which depends on the
+            # (SessionInfo-aware, N9-hardened) trigger mechanism, not on
+            # this guarantee.
+            self.assertEqual(
+                len(fired_at_message_counts), 1,
+                "on_baseline_ready must fire exactly once",
+            )
+            self.assertGreaterEqual(
+                fired_at_message_counts[0], 1,
+                "on_baseline_ready must not fire before the first real emit "
+                "(the dropped RCM message, at _message_count == 0, must "
+                "never be mistaken for baseline-ready)",
+            )
+            self.assertTrue(p._baseline_ready_fired)
             rows = p._db.get_messages_in_range(-1, 10_000)
             heartbeat_rows = [r for r in rows if r[1] == "heartbeat"]
             self.assertEqual(len(heartbeat_rows), 1)

@@ -283,6 +283,17 @@ class SessionPreProcessor:
         # that, at end of run — see `run()`), guaranteed to fire at most once
         # (item 3, 2026-08-17-047 WB-1 resume; M1 fix, review-findings.md).
         self._baseline_ready_fired = False
+        # N9 hardening (review-findings.md addendum, 2026-08-18-051): the
+        # opening timestamp group is NOT guaranteed to contain `SessionInfo`
+        # -- only true of all 21 golden fixtures this project holds, enforced
+        # nowhere in the code. `_session_info_seen`/`_session_info_ts` track
+        # the moment the DERIVED `sessionInfo` bus topic (SessionInfoProcessor,
+        # not the raw envelope topic) is actually processed, wherever in the
+        # stream that falls, so `on_baseline_ready`'s trigger can wait for
+        # SessionInfo's OWN timestamp group to close instead of assuming it
+        # shares the opening one. Set from `_on_session_info` below.
+        self._session_info_seen = False
+        self._session_info_ts: Optional[datetime] = None
         self._running = False
         self._message_count = 0
         self._last_flush_ms = 0
@@ -436,27 +447,36 @@ class SessionPreProcessor:
                 self._bus.emit(filtered.topic, filtered.data, filtered.utc_timestamp)
 
                 if (not self._baseline_ready_fired
-                        and filtered.utc_timestamp > self._start_time):
-                    # Baseline ready (fix for M1, review-findings.md,
-                    # 2026-08-17-047 WB-1 resume): fire once the first
-                    # TIMESTAMP GROUP closes -- i.e. once a message strictly
-                    # later than `_start_time` arrives -- not merely once ANY
-                    # message has been emitted. This is the direct, stateless
-                    # analogue of the old SessionInfo.Key gate's behaviour
-                    # ("emit SessionInfo, then flush the buffered
-                    # same-timestamp batch, then signal"): a real capture's
-                    # baseline topics (SessionInfo-derived data, DriverList)
-                    # routinely share the session's opening envelope
-                    # timestamp with other, earlier-in-file, no-op topics
-                    # (e.g. TrackStatus "AllClear" against a fresh processor
-                    # -- review's reproduction against
-                    # regression/golden/shanghai-sq-cdn). Waiting for the
-                    # first later timestamp guarantees every same-timestamp
-                    # message -- baseline topics included -- has already
-                    # been emitted and buffered before we flush and signal.
-                    # (A session where EVERY message shares `_start_time`'s
-                    # exact timestamp never reaches this branch at all; the
-                    # end-of-run fallback below covers that case.)
+                        and self._session_info_seen
+                        and filtered.utc_timestamp > self._session_info_ts):
+                    # Baseline ready (M1 fix, review-findings.md,
+                    # 2026-08-17-047 WB-1 resume; N9 hardening,
+                    # 2026-08-18-051): fire once SessionInfo's OWN timestamp
+                    # group closes -- i.e. once SessionInfo has actually been
+                    # processed (`_session_info_seen`) AND a message strictly
+                    # later than ITS timestamp (`_session_info_ts`) arrives --
+                    # not once the OPENING group closes regardless of whether
+                    # SessionInfo was in it (N9: nothing enforces that;
+                    # `_session_info_ts` decouples the two). This is still the
+                    # direct, stateless analogue of the old SessionInfo.Key
+                    # gate's behaviour ("emit SessionInfo, then flush the
+                    # buffered same-timestamp batch, then signal"): a real
+                    # capture's other baseline topics (DriverList) routinely
+                    # share SessionInfo's own envelope timestamp with other
+                    # no-op topics (e.g. TrackStatus "AllClear" against a
+                    # fresh processor -- review's reproduction against
+                    # regression/golden/shanghai-sq-cdn), so waiting for the
+                    # first LATER timestamp after SessionInfo's own guarantees
+                    # every same-timestamp message -- baseline topics
+                    # included -- has already been emitted and buffered
+                    # before we flush and signal. When SessionInfo happens to
+                    # share `_start_time`'s exact timestamp (all 21 golden
+                    # fixtures), `_session_info_ts == _start_time` and this
+                    # reduces exactly to the prior "opening group closes"
+                    # behaviour.
+                    # (A session where SessionInfo never arrives, or arrives
+                    # but nothing ever follows it, never reaches this branch;
+                    # the end-of-run fallback below covers both.)
                     self._baseline_ready_fired = True
                     self._flush_buffer()
                     self._last_flush_ms = offset_ms
@@ -538,16 +558,21 @@ class SessionPreProcessor:
             self._flush_buffer()
 
             # Baseline-ready end-of-run fallback (M1, review-findings.md,
-            # 2026-08-17-047 WB-1 resume). The in-loop trigger above fires
-            # once a message strictly later than `_start_time` arrives — a
-            # session where EVERY message shares `_start_time`'s exact
-            # envelope timestamp (a single-message session, or a whole
-            # capture that arrives in one same-timestamp burst) never
-            # reaches that branch. Fire here instead, after every flush
-            # above has already run, so the callback still fires (at most
-            # once) for any session that emitted at least one message — the
-            # same "flush strictly before signal" guarantee, just at the
-            # other end of the run instead of mid-loop.
+            # 2026-08-17-047 WB-1 resume; N9 hardening, 2026-08-18-051). The
+            # in-loop trigger above only fires once SessionInfo has been
+            # processed AND a message strictly later than ITS timestamp
+            # arrives — two shapes never reach that branch: (a) SessionInfo
+            # never appears at all in this capture, or (b) SessionInfo
+            # arrives but is the LAST thing to ever land (its own group never
+            # closes -- includes the single-message-session and
+            # every-message-shares-one-timestamp cases). Fire here instead,
+            # after every flush above has already run, so the callback still
+            # fires (at most once) for any session that emitted at least one
+            # message — the same "flush strictly before signal" guarantee,
+            # just at the other end of the run instead of mid-loop. Note this
+            # fires even when SessionInfo never arrived at all (shape (a)):
+            # there is no baseline left to wait for, and a connecting client
+            # would otherwise wait forever.
             if (self._start_time is not None and not self._baseline_ready_fired
                     and self._message_count > 0):
                 self._baseline_ready_fired = True
@@ -793,7 +818,17 @@ class SessionPreProcessor:
     def _on_session_info(self, data: Any, clock_time: datetime) -> None:
         """Derive the scheduled start (UTC) from the emitted sessionInfo
         (startDate local + gmtOffset, both from live.jsonl). Once only —
-        startDate is static session metadata."""
+        startDate is static session metadata.
+
+        Also records the FIRST moment the derived `sessionInfo` topic is
+        processed (N9 hardening, 2026-08-18-051) -- unconditionally, ahead of
+        the early returns below, so `on_baseline_ready`'s trigger in `run()`
+        knows exactly when SessionInfo's own timestamp group opened, even if
+        `_scheduled_start_utc` was already set by an earlier emission or this
+        particular payload can't be parsed for it."""
+        if not self._session_info_seen:
+            self._session_info_seen = True
+            self._session_info_ts = clock_time
         if self._scheduled_start_utc is not None or not isinstance(data, dict):
             return
         sd = data.get("startDate")
