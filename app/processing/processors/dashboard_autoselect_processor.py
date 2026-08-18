@@ -131,7 +131,7 @@ class DashboardAutoSelectProcessor(Processor):
         top5 = {n for n, p in self._pos.items() if isinstance(p, int) and p <= 5 and not fin.get(n)}
         top5 |= {n for n, p in self._pred.items() if isinstance(p, int) and p <= 5 and not fin.get(n)}
         by_dp = lambda ns: sorted(ns, key=lambda n: self._dp.get(n, -1.0), reverse=True)
-        prime = by_dp([n for n in top5 if n in self._dp])
+        prime = by_dp([n for n in sorted(top5) if n in self._dp])
         rest = by_dp([n for n in self._dp if n not in top5 and not fin.get(n)])
         return (prime + rest)[:2]
 
