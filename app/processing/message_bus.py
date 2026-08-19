@@ -44,7 +44,27 @@ class SessionMessageBus:
                 pass
 
     def emit(self, topic: str, data: Any, clock_time: datetime) -> None:
-        """Emit a message to all handlers for the topic, then the persist sink."""
+        """Emit a message to all handlers for the topic, then the persist sink.
+
+        A processor-handler exception is logged (with topic context — a bare
+        re-raise would lose which topic/handler failed by the time
+        `SessionPreProcessor.run()`'s own `except Exception:` catches it) and
+        then propagates out of `emit()` — it is NOT swallowed. This is
+        deliberate (Trello card 7g6yuitv): a broken processor must fail the
+        whole build the same way WB-4 already made preprocessor.py's own
+        file-I/O/bookkeeping errors fail it
+        (tests/test_wb4_preprocessor_run_failure_semantics.py) — silently
+        wrong data from a broken processor is worse than a failed,
+        investigable build. `run()`'s existing `except Exception: ... raise`
+        is the mechanism that surfaces it; nothing new is added downstream.
+
+        Fail-fast: once a handler for this topic raises, no later handler for
+        the SAME topic (nor the wildcard handlers, nor the persist sink) runs
+        for this emit — there is no established precedent for "isolate this
+        handler, run the rest, then raise", and continuing to run handlers
+        after one has already corrupted this message's shared state is not
+        obviously safer than stopping immediately.
+        """
         # A re-entrant emit (we're inside a handler) is an OUTPUT produced by the
         # current input topic's processing — record it for the topic catalog.
         if self._cur_input is not None and topic != self._cur_input:
@@ -58,6 +78,7 @@ class SessionMessageBus:
                     handler(data, clock_time)
                 except Exception:
                     logger.exception(f"Error in handler for topic '{topic}'")
+                    raise
                 finally:
                     self._cur_input = prev_input
 
@@ -68,6 +89,7 @@ class SessionMessageBus:
                     handler(topic, data, clock_time)
                 except Exception:
                     logger.exception(f"Error in wildcard handler for topic '{topic}'")
+                    raise
 
         if self._persist_sink is not None:
             self._persist_sink(topic, data, clock_time)

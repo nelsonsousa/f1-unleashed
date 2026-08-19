@@ -56,9 +56,17 @@ try/except (the one WB-4 changed):
    `decompress_z_data` (base64 decode + zlib inflate + json.loads) in its own
    `except Exception: return []` (stream_normalizer.py). A `.z` topic with a
    corrupt payload is silently dropped, never reaching the bus.
-3. `message_bus.SessionMessageBus.emit` -- wraps every individual handler
-   call in `except Exception: logger.exception(...)` (message_bus.py). A
-   processor bug on a given message cannot itself propagate to `run()`.
+3. `message_bus.SessionMessageBus.emit` -- historically wrapped every
+   individual handler call in `except Exception: logger.exception(...)` and
+   swallowed it (message_bus.py), so a processor bug on a given message could
+   not itself propagate to `run()`. As of Trello card 7g6yuitv this layer no
+   longer swallows: `emit()` now logs and re-raises, and a processor
+   exception DOES propagate to `run()`'s own catch/raise, same as layer
+   non_utf8_bytes below. None of these 12 fixtures exercise a raising
+   *processor handler* though (they are all dropped at layer 1/2, or in
+   `non_utf8_bytes.jsonl`'s case, before `emit()` is ever reached) -- see
+   tests/unit/test_message_bus_handler_exception_propagation.py for layer 3's
+   own direct coverage.
 
 Only ONE of the 12 fixtures reaches past all three layers to actually
 exercise WB-4's own catch/raise: `non_utf8_bytes.jsonl`. Its raw invalid
