@@ -400,6 +400,22 @@ class TelemetryProcessor(Processor):
     # earlier, so 60s cleanly separates "the closing crossing has arrived (use
     # it)" from "still pending (defer)". Too small → a lagged report defers and
     # closes against the NEXT crossing, cascading into empty + double laps.
+    #
+    # Symmetric window (Trello 22pYhyeN, fix 2026-08-19): the same 60s must
+    # also bound how far the buffered crossing may sit AHEAD of the report.
+    # `crossings[-1]` too old means "lap m's own crossing hasn't arrived yet"
+    # (defer, correctly handled below); `crossings[-1]` too far in the FUTURE
+    # of report_ts means the buffered crossing is very likely a LATER lap's
+    # crossing (the true one for lap m is genuinely missing/late), not lap
+    # m's own boundary — accepting it gives lap m a bogus inflated duration
+    # AND discards the true earlier crossing `_try_close` needs to bound the
+    # NEXT lap (crossings is pruned to `[crossings[-1]]` on every close). On
+    # real data this closed a lap against a crossing 76.26s in the future and
+    # then silently lost the following lap entirely (data-investigation.md
+    # §6.2, docs/artifacts/2026-07-28-019-telemetry-delay-blast-radius/,
+    # project root). Without a real second observed case to calibrate a
+    # separate constant, the same 60s window is reused symmetrically rather
+    # than inventing an untested one-sided number.
     _CLOSE_TOL = timedelta(seconds=60)
     # Bracket kept before the open lap's start when pruning committed samples —
     # enough for _synthetic_at_seam's pre-seam sample (~18 samples at 3.7/s).
@@ -411,10 +427,15 @@ class TelemetryProcessor(Processor):
         back-fill laps m, m-1, … (so a no-time out lap that never got its own
         lastLap still gets numbered, and a spurious pre-out-lap crossing is
         dropped). If lap m's closing crossing hasn't arrived yet — the latest
-        crossing is older than the report by more than a lap — defer until it
-        does (the position handler retries on the next crossing)."""
+        crossing is older than the report by more than `_CLOSE_TOL` — defer
+        until it does (the position handler retries on the next crossing).
+        Symmetric (Trello 22pYhyeN): a crossing more than `_CLOSE_TOL` AHEAD
+        of the report is also deferred — it is very likely a LATER lap's
+        crossing, not lap m's own, and accepting it would give lap m a bogus
+        duration and discard the true earlier crossing the next lap needs."""
         if (not drv.crossings or len(drv.crossings) < 2
-                or drv.crossings[-1] < report_ts - self._CLOSE_TOL):
+                or drv.crossings[-1] < report_ts - self._CLOSE_TOL
+                or drv.crossings[-1] > report_ts + self._CLOSE_TOL):
             drv.pending_lap = m
             drv.pending_report_ts = report_ts
             return
