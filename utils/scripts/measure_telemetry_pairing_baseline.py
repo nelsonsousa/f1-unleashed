@@ -1,11 +1,23 @@
 #!/usr/bin/env python3
 """Measure telemetry_processor's CURRENT CarData/Position pairing yield.
 
-Baseline-establishment script for work block WB-3
+Originally the baseline-establishment script for work block WB-3
 (docs/artifacts/2026-07-27-007-project-kickoff/test-battery-plan.md §5, WB-3),
 answering G1 in backend-synthesis.md §2: "the `.z` pairing yield has a ~82%
 ceiling even sorted, and nobody has asked why". This script measures that
 number by running the REAL pipeline, not a simulation of the pairing rule.
+
+The recorded baseline (docs/telemetry_pairing_baseline.json) was regenerated
+2026-08-19 (Trello 8Of2DnEA) against `test` HEAD after two things landed on
+top of the pipeline this script originally measured: "Candidate A" (commit
+5828ae0, the StreamNormalizer cross-stream reorder buffer fix — independently
+verified correct, 2 full verification rounds PASS,
+docs/artifacts/2026-07-29-025-candidate-a-implementation/) and the WB-1
+pipeline redesign. The baseline therefore no longer represents a pre-fix
+floor to be checked against; it represents the CURRENT, verified pairing-yield
+floor of `test` HEAD as of the regeneration date, going forward — a number a
+future change can be checked against to catch a regression, not a claim that
+this figure is optimal or final.
 
 Methodology
 -----------
@@ -23,23 +35,36 @@ rule:
   * denominator — "CarData candidates": every (entry, car) pair inside a
     `CarData.z` message that has a `Channels` dict and a car number <= 99.
     This mirrors, VERBATIM, the same validity filter
-    `TelemetryProcessor._handle_car_data` applies (see
-    app/processing/processors/telemetry_processor.py:437-447) before it even
-    looks at `pending_pos`. It is counted by a second subscriber on the same
-    "CarData.z" topic (the message bus already supports more than one
+    `TelemetryProcessor._handle_car_data` applies before deciding whether to
+    look up a position match. It is counted by a second subscriber on the
+    same "CarData.z" topic (the message bus already supports more than one
     subscriber per topic — position_processor and telemetry_processor both
     already subscribe to it), so it sees exactly the same messages
     telemetry_processor sees, in the same real pipeline run.
 
   * numerator — "paired": every `liveTelemetry:{num}` message emitted, via a
-    wildcard subscriber. telemetry_processor emits exactly one of these per
-    successful pairing (app/processing/processors/telemetry_processor.py:488)
-    and none on a skip (line 449-450: "no pending position to pair with ->
-    skip this CarData"). This is the REAL pairing decision, not a
+    wildcard subscriber. This is the REAL pairing decision, not a
     reimplementation of it — the wildcard subscriber only counts what the
     unmodified processor already decided to emit.
 
   yield = paired / cardata_candidates
+
+  IMPORTANT, discovered regenerating the baseline 2026-08-19: this numerator
+  is no longer a proxy for "found a real position match". Since the WB3
+  redesign (`telemetry_processor.py`'s own module docstring, "WB3
+  (requirement-spec.md §2.2/§8.1)"), `_handle_car_data` emits
+  `liveTelemetry:{num}` UNCONDITIONALLY for every valid CarData candidate —
+  a miss no longer skips the emission, it dead-reckons `dp` via the shared
+  `DpReckoner` and emits anyway. The old skip path ("no pending position to
+  pair with -> skip this CarData") this script's numerator/denominator were
+  originally built to distinguish no longer exists. Consequently `yield` as
+  measured here is now structurally pinned at 100% by construction — it
+  proves the pipeline still emits for every valid candidate (a real, if
+  narrow, invariant a future regression could break), but it can no longer
+  distinguish a real position match from a dead-reckoned fallback, and it
+  is NOT a measure of positional accuracy or dead-reckoning quality. Treat a
+  future value below 100% as a genuine build/emission regression; do not
+  read 100% as "no dead-reckoning occurred".
 
 This is a full-pipeline measurement: SignalR envelope parsing, the .z
 decompress/split, the payload-timestamp reorder buffer, the session gate, the
@@ -64,12 +89,14 @@ Caveats, stated plainly
   real code actually pairs and emits — this script does not filter those out,
   because filtering them would no longer be measuring what the shipped code
   does.
-* This DELIBERATELY measures against TODAY's working, sorted-order pipeline
-  (the reorder buffer + payload-timestamp sort in `file_reader.py`, unchanged
-  by this script) — the ~82% figure D7-B is meant to be checked against, per
-  backend-synthesis.md G1. It does not measure file-order (unsorted) yield;
-  that number already exists (architecture-plan.md §A.7.1) and is not
-  D7-B's baseline.
+* This measures against whatever pipeline is checked out at run time (the
+  reorder buffers + payload-timestamp sort in `file_reader.py` and
+  `StreamNormalizer`, unchanged by this script) — i.e. it always reports
+  "today's" yield for whatever "today" the script is run on; it does not
+  itself encode which pipeline version that is. The recorded baseline file's
+  own `_description`/`measured_at` fields are what pin a given number to a
+  specific pipeline state. It does not measure file-order (unsorted) yield;
+  that number already exists separately (architecture-plan.md §A.7.1).
 * Uses a scratch `F1_DATA_HOME` (a temp directory, deleted after the run) so
   no real user data-home is touched, and each golden fixture directory is
   read-only for the whole run — only `live.jsonl` inside it is read; the
@@ -252,13 +279,22 @@ def main() -> int:
 
     baseline = {
         "_description": ("Real full-pipeline CarData/Position pairing yield, measured "
-                          "against today's WORKING sorted-order file_reader.py + "
-                          "position_processor.py + UNMODIFIED telemetry_processor.py "
-                          "(D7-B has not yet landed). yield = liveTelemetry:* emissions "
-                          "/ CarData entries with a valid per-driver Channels dict "
-                          "(same filter telemetry_processor._handle_car_data applies). "
-                          "Established by work block WB-3 "
-                          "(test-battery-plan.md, backend-synthesis.md G1)."),
+                          "against `test` HEAD's verified pipeline (post Candidate A / "
+                          "commit 5828ae0 and the WB-1 pipeline redesign, including WB3's "
+                          "_handle_car_data rewrite) as the current, going-forward floor, "
+                          "not a pre-fix baseline. yield = liveTelemetry:* emissions / "
+                          "CarData entries with a valid per-driver Channels dict (same "
+                          "filter telemetry_processor._handle_car_data applies). NOTE: "
+                          "since WB3, _handle_car_data emits liveTelemetry unconditionally "
+                          "for every valid candidate (dead-reckoning dp on a miss instead "
+                          "of skipping), so yield is now structurally 100% by construction "
+                          "-- it is no longer a proxy for real-position-match rate, only "
+                          "for 'the pipeline still emits for every valid candidate'. See "
+                          "measure_telemetry_pairing_baseline.py's module docstring. "
+                          "Originally established by work block WB-3 (test-battery-plan.md, "
+                          "backend-synthesis.md G1); regenerated 2026-08-19 "
+                          "(Trello 8Of2DnEA) to cover the full regression/golden/ fixture "
+                          "set and reflect current verified pipeline behavior."),
         "measured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "overall": {
             "paired": overall_paired,

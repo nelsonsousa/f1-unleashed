@@ -1,65 +1,200 @@
 {
-  "_description": "Real full-pipeline CarData/Position pairing yield, measured against today's WORKING sorted-order file_reader.py + position_processor.py + UNMODIFIED telemetry_processor.py (D7-B has not yet landed). yield = liveTelemetry:* emissions / CarData entries with a valid per-driver Channels dict (same filter telemetry_processor._handle_car_data applies). Established by work block WB-3 (test-battery-plan.md, backend-synthesis.md G1).",
-  "measured_at": "2026-07-27T23:03:47Z",
+  "_description": "Real full-pipeline CarData/Position pairing yield, measured against `test` HEAD's verified pipeline (post Candidate A / commit 5828ae0 and the WB-1 pipeline redesign, including WB3's _handle_car_data rewrite) as the current, going-forward floor, not a pre-fix baseline. yield = liveTelemetry:* emissions / CarData entries with a valid per-driver Channels dict (same filter telemetry_processor._handle_car_data applies). NOTE: since WB3, _handle_car_data emits liveTelemetry unconditionally for every valid candidate (dead-reckoning dp on a miss instead of skipping), so yield is now structurally 100% by construction -- it is no longer a proxy for real-position-match rate, only for 'the pipeline still emits for every valid candidate'. See measure_telemetry_pairing_baseline.py's module docstring. Originally established by work block WB-3 (test-battery-plan.md, backend-synthesis.md G1); regenerated 2026-08-19 (Trello 8Of2DnEA) to cover the full regression/golden/ fixture set and reflect current verified pipeline behavior.",
+  "measured_at": "2026-08-19T15:39:06Z",
   "overall": {
-    "paired": 1001328,
-    "cardata_candidates": 3056114,
-    "yield_pct": 32.7647
+    "paired": 9903746,
+    "cardata_candidates": 9903746,
+    "yield_pct": 100.0
   },
   "per_fixture": {
+    "miami-fp1-cdn": {
+      "case": "miami-fp1-cdn",
+      "session": "11270_Practice_1",
+      "cardata_candidates": 491458,
+      "paired": 491458,
+      "yield_pct": 100.0,
+      "build_failed": false,
+      "elapsed_s": 204.9
+    },
+    "miami-q-cdn": {
+      "case": "miami-q-cdn",
+      "session": "11276_Qualifying",
+      "cardata_candidates": 386232,
+      "paired": 386232,
+      "yield_pct": 100.0,
+      "build_failed": false,
+      "elapsed_s": 95.8
+    },
+    "miami-race-cdn": {
+      "case": "miami-race-cdn",
+      "session": "11280_Race",
+      "cardata_candidates": 750750,
+      "paired": 750750,
+      "yield_pct": 100.0,
+      "build_failed": false,
+      "elapsed_s": 129.9
+    },
+    "miami-sprint-cdn": {
+      "case": "miami-sprint-cdn",
+      "session": "11275_Sprint",
+      "cardata_candidates": 374704,
+      "paired": 374704,
+      "yield_pct": 100.0,
+      "build_failed": false,
+      "elapsed_s": 61.1
+    },
+    "miami-sq-cdn": {
+      "case": "miami-sq-cdn",
+      "session": "11271_Sprint_Qualifying",
+      "cardata_candidates": 284306,
+      "paired": 284306,
+      "yield_pct": 100.0,
+      "build_failed": false,
+      "elapsed_s": 82.7
+    },
+    "shanghai-fp1-cdn": {
+      "case": "shanghai-fp1-cdn",
+      "session": "11235_Practice_1",
+      "cardata_candidates": 409926,
+      "paired": 409926,
+      "yield_pct": 100.0,
+      "build_failed": false,
+      "elapsed_s": 127.3
+    },
+    "shanghai-q-cdn": {
+      "case": "shanghai-q-cdn",
+      "session": "11241_Qualifying",
+      "cardata_candidates": 391380,
+      "paired": 391380,
+      "yield_pct": 100.0,
+      "build_failed": false,
+      "elapsed_s": 140.6
+    },
+    "shanghai-race-cdn": {
+      "case": "shanghai-race-cdn",
+      "session": "11245_Race",
+      "cardata_candidates": 743666,
+      "paired": 743666,
+      "yield_pct": 100.0,
+      "build_failed": false,
+      "elapsed_s": 198.2
+    },
+    "shanghai-sprint-cdn": {
+      "case": "shanghai-sprint-cdn",
+      "session": "11240_Sprint",
+      "cardata_candidates": 409508,
+      "paired": 409508,
+      "yield_pct": 100.0,
+      "build_failed": false,
+      "elapsed_s": 105.3
+    },
+    "shanghai-sq-cdn": {
+      "case": "shanghai-sq-cdn",
+      "session": "11236_Sprint_Qualifying",
+      "cardata_candidates": 286550,
+      "paired": 286550,
+      "yield_pct": 100.0,
+      "build_failed": false,
+      "elapsed_s": 100.4
+    },
     "spa-fp3-cdn": {
       "case": "spa-fp3-cdn",
       "session": "11329_Practice_3",
       "cardata_candidates": 403810,
-      "paired": 232593,
-      "yield_pct": 57.5996,
+      "paired": 403810,
+      "yield_pct": 100.0,
       "build_failed": false,
-      "elapsed_s": 75.6
+      "elapsed_s": 123.3
     },
     "spa-fp3-live": {
       "case": "spa-fp3-live",
       "session": "11329_Practice_3",
-      "cardata_candidates": 399256,
-      "paired": 75082,
-      "yield_pct": 18.8055,
+      "cardata_candidates": 399454,
+      "paired": 399454,
+      "yield_pct": 100.0,
       "build_failed": false,
-      "elapsed_s": 49.5
+      "elapsed_s": 105.8
     },
     "spa-q-cdn": {
       "case": "spa-q-cdn",
       "session": "11330_Qualifying",
       "cardata_candidates": 427966,
-      "paired": 151007,
-      "yield_pct": 35.2848,
+      "paired": 427966,
+      "yield_pct": 100.0,
       "build_failed": false,
-      "elapsed_s": 74.2
+      "elapsed_s": 112.9
     },
     "spa-q-live": {
       "case": "spa-q-live",
       "session": "11330_Qualifying",
-      "cardata_candidates": 422950,
-      "paired": 55556,
-      "yield_pct": 13.1354,
+      "cardata_candidates": 423214,
+      "paired": 423214,
+      "yield_pct": 100.0,
       "build_failed": false,
-      "elapsed_s": 61.6
+      "elapsed_s": 110.5
     },
     "spa-race-cdn": {
       "case": "spa-race-cdn",
       "session": "11334_Race",
       "cardata_candidates": 707988,
-      "paired": 383433,
-      "yield_pct": 54.1581,
+      "paired": 707988,
+      "yield_pct": 100.0,
       "build_failed": false,
-      "elapsed_s": 102.4
+      "elapsed_s": 125.6
     },
     "spa-race-live": {
       "case": "spa-race-live",
       "session": "11334_Race",
-      "cardata_candidates": 694144,
-      "paired": 103657,
-      "yield_pct": 14.9331,
+      "cardata_candidates": 694342,
+      "paired": 694342,
+      "yield_pct": 100.0,
       "build_failed": false,
-      "elapsed_s": 82.4
+      "elapsed_s": 123.2
+    },
+    "suzuka-fp1-cdn": {
+      "case": "suzuka-fp1-cdn",
+      "session": "11246_Practice_1",
+      "cardata_candidates": 406802,
+      "paired": 406802,
+      "yield_pct": 100.0,
+      "build_failed": false,
+      "elapsed_s": 108.1
+    },
+    "suzuka-fp2-cdn": {
+      "case": "suzuka-fp2-cdn",
+      "session": "11247_Practice_2",
+      "cardata_candidates": 385726,
+      "paired": 385726,
+      "yield_pct": 100.0,
+      "build_failed": false,
+      "elapsed_s": 103.8
+    },
+    "suzuka-fp3-cdn": {
+      "case": "suzuka-fp3-cdn",
+      "session": "11248_Practice_3",
+      "cardata_candidates": 394834,
+      "paired": 394834,
+      "yield_pct": 100.0,
+      "build_failed": false,
+      "elapsed_s": 89.4
+    },
+    "suzuka-q-cdn": {
+      "case": "suzuka-q-cdn",
+      "session": "11249_Qualifying",
+      "cardata_candidates": 366388,
+      "paired": 366388,
+      "yield_pct": 100.0,
+      "build_failed": false,
+      "elapsed_s": 96.1
+    },
+    "suzuka-race-cdn": {
+      "case": "suzuka-race-cdn",
+      "session": "11253_Race",
+      "cardata_candidates": 764742,
+      "paired": 764742,
+      "yield_pct": 100.0,
+      "build_failed": false,
+      "elapsed_s": 134.4
     }
   }
 }
