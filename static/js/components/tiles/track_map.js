@@ -532,7 +532,11 @@
     // Markers used to snap to each ~3.7Hz position sample. Instead, buffer samples per
     // car and, each animation frame, render the car at (playback clock − LAG) linearly
     // interpolated between its two bracketing samples — so it glides between them over
-    // their real time gap. The small lag guarantees the "next" sample is already here.
+    // their real time gap. The small lag guarantees the "next" sample is already
+    // buffered, even when telemetry arrives late/jittery. Visual-only; numeric tiles
+    // + audio stay at the clock — kept in parity with them (card CKlHX0s6; commit
+    // 11b5f2e raised this to 10000, which made the map visibly lag ~9.5s behind
+    // every other tile instead of just smoothing between samples).
     const POS_LAG_MS = 500;
     const posBuf = {};                       // num -> [{t, x, y}] ascending by t (t = ms from session start)
 

@@ -111,7 +111,9 @@
     // Live samples arrive at ~3.7Hz; render the marker and the trace's leading edge each
     // frame at (playback clock − LAG) interpolated between bracketing samples so they
     // glide instead of snapping. LAG guarantees the "next" sample is already buffered.
-    // Only runs in live-follow mode while playing.
+    // Only runs in live-follow mode while playing. Kept in parity with every other
+    // clock-driven tile (card CKlHX0s6; commit 11b5f2e raised this to 10000, which
+    // made the trace visibly lag ~9.5s behind standings instead of just smoothing).
     const TEL_LAG_MS = 500;
     let _telPlaying = false;
 
