@@ -29,9 +29,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))   # repo root, for 
 
 from app.config import CACHE_DIR                                # noqa: E402
 from app.processing.preprocessor import SessionPreProcessor     # noqa: E402
-from app.services.cache_manager import cache_manager            # noqa: E402
-
-cache_manager.cache_dir = CACHE_DIR
 
 
 def _session_key(session_dir: Path) -> int:
