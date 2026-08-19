@@ -83,7 +83,7 @@ class LapTimingProcessor(Processor):
         self._nol: dict[str, int] = {}                       # num -> current NoL
         self._laps: dict[str, dict[int, dict]] = {}          # num -> {lap -> {time,pb,ob,part}}
         self._lap_part: dict[str, dict[int, Any]] = {}       # num -> {lap -> qualifying part it STARTED in}
-        self._pending: dict[str, dict] = {}                  # num -> held lap-time
+        self._pending: dict[str, list[dict]] = {}             # num -> ordered queue of held lap-times
         self._best: dict[str, dict] = {}                     # num -> {lap,time,ms,part} — CURRENT part (display), reset per part
         self._session_best: dict[str, dict] = {}             # num -> {lap,time,ms} — session-wide, kept for delta prediction (card 63)
         self._part: Optional[int] = None                     # current qualifying part (1/2/3); None outside quali
@@ -319,12 +319,34 @@ class LapTimingProcessor(Processor):
         # empty slot — driven but not recorded by the source).
         for lap in range(max(prev_c, 0) + 1, new_c + 1):
             laps.setdefault(lap, {"time": None, "personalBest": False, "overallBest": False})
-        # Assign the time of the just-completed (highest) lap.
-        if new_c >= 1:
+        # Assign the time of the just-completed (highest) lap — but ONLY on a
+        # GENUINE advance (new_c > prev_c), not merely new_c >= 1. A
+        # post-session/reconnect full-state resend re-sends NumberOfLaps
+        # UNCHANGED (new_c == prev_c): it repeats already-known state, it is
+        # not new information, so it must neither overwrite the already-
+        # completed (and possibly personal-best) lap time nor consume/discard
+        # a still-held pending value that belongs to a lap that hasn't
+        # actually finished yet (card yVV6NNl9, Defect 1 — confirmed on 13/22
+        # cars in the investigated session, 12 of which lost a personal
+        # best). Leaving _pending untouched on a no-op resend is deliberate:
+        # the in-progress lap it holds is still in progress, and it remains
+        # available for the NEXT genuine advance.
+        if new_c > prev_c:
             if bundled_ll:
                 self._set_time(num, new_c, bundled_ll, clock_time)
-            elif num in self._pending:
-                self._set_time(num, new_c, self._pending.pop(num), clock_time)
+            elif self._pending.get(num):
+                # Consume the OLDEST held value first (FIFO) — each genuine
+                # advance resolves exactly one boundary, and standalone
+                # values arrived in the order F1 sent them (card yVV6NNl9,
+                # Defect 2). Multiple values can queue up when more than one
+                # standalone LastLapTime arrives before the confirming NoL;
+                # draining oldest-first means a run of several advances in a
+                # row (e.g. a skipped-lap catch-up) assigns them in arrival
+                # order instead of only ever seeing the most recent.
+                queue = self._pending[num]
+                self._set_time(num, new_c, queue.pop(0), clock_time)
+                if not queue:
+                    del self._pending[num]
         return True
 
     def _standalone(self, num: str, ll: dict, clock_time: datetime) -> bool:
@@ -337,12 +359,16 @@ class LapTimingProcessor(Processor):
             # then hides. Pend it so the imminent advance assigns it to the real
             # (flying) lap. (card P2A8g5O8)
             if not self._is_race and c == 1:
-                self._pending[num] = ll
+                self._pending.setdefault(num, []).append(ll)
                 return False
             self._set_time(num, c, ll, clock_time)  # the just-completed lap was still timeless
             return True
-        # the prev lap already has a time -> this is the in-progress lap; hold it
-        self._pending[num] = ll
+        # the prev lap already has a time -> this is the in-progress lap; hold it.
+        # APPEND rather than overwrite: a second standalone LastLapTime before
+        # the next NoL advance must not silently displace/lose the first
+        # (card yVV6NNl9, Defect 2) — both are queued and drained in arrival
+        # order by the next genuine advance(s) in `_advance`.
+        self._pending.setdefault(num, []).append(ll)
         return False
 
     def _set_time(self, num: str, lap: int, ll: dict, clock_time: datetime) -> None:
