@@ -438,10 +438,11 @@
         syncMiniFlags();
     }
 
-    // Mirror the main map's track-status flash + yellow-flag sectors onto the clone.
+    // Mirror the main map's track-status flash (outline only, see clearTrackColour/
+    // flashTrack above) + yellow-flag sectors onto the clone.
     function syncMiniFlags() {
         if (!_mini.trackSvg || !state.trackSvg) return;
-        ['#track-outline', '#track-sectors'].forEach(sel => {
+        ['#track-outline'].forEach(sel => {
             const a = state.trackSvg.querySelector(sel), b = _mini.trackSvg.querySelector(sel);
             if (!a || !b) return;
             b.classList.toggle('flag-blink', a.classList.contains('flag-blink'));
@@ -464,11 +465,15 @@
     // blink or solid-hold callbacks left over from a previous one.
     let _flashGen = 0;
 
+    // Only #track-outline (the outer boundary line) is recoloured for SC/VSC/red/green.
+    // #track-sectors is the marshal-sector-segmented centreline, used separately for the
+    // per-sector yellow-flag highlight (.sector-yellow) — it must keep its normal
+    // appearance under a track-status flag, not be swallowed into the same solid colour
+    // as the outline (card K2FTTDqg / WB-27).
     function clearTrackColour() {
         if (!state.trackSvg) return;
         const outline = state.trackSvg.querySelector('#track-outline');
-        const sectors = state.trackSvg.querySelector('#track-sectors');
-        [outline, sectors].filter(Boolean).forEach(el => el.classList.remove('flag-blink'));
+        if (outline) outline.classList.remove('flag-blink');
     }
 
     function flashTrack(color, pulses, onMs, offMs, holdSolid) {
@@ -480,8 +485,7 @@
         // stroke colour; there's no CSS animation, so leaving it on = solid.)
         if (!state.trackSvg) return;
         const outline = state.trackSvg.querySelector('#track-outline');
-        const sectors = state.trackSvg.querySelector('#track-sectors');
-        const elements = [outline, sectors].filter(Boolean);
+        const elements = [outline].filter(Boolean);
         if (!elements.length) return;
 
         const gen = ++_flashGen;

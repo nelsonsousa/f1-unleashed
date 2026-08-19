@@ -116,8 +116,11 @@
   }
 }
 
-/* Track-wide flag blink */
-.flag-blink .track,
+/* Track-status flag blink (SC/VSC/red/green) — outline only. .flag-blink is applied
+   to #track-outline alone (see track_map.js clearTrackColour/flashTrack); the marshal
+   -sector centreline group (#track-sectors, class .track) keeps its normal appearance
+   and only ever gets coloured by the separate .sector-yellow rule above (card K2FTTDqg
+   / WB-27). */
 .flag-blink .track-outline {
   stroke: var(--flag-color, #ffd700) !important;
   filter: drop-shadow(0 0 8px var(--flag-color, #ffd700));
