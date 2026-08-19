@@ -37,6 +37,16 @@ from typing import Any, Callable, Optional
 
 _PROC_VERSION: Optional[str] = None
 
+# Grace window on the scrubber-event pre-session filter (IIYYPBxZ, see
+# `_capture_output`): comfortably exceeds the ~±150ms STREAM_LAG estimation
+# residual observed on live captures (census range -0.089s to +0.232s across
+# 40 non-Race sessions, 2026-08-20 investigation), while staying well short of
+# the genuine pre-session noise the filter was built to suppress (an early
+# SessionStatus=Started at pit-lane-open, measured 12-55 minutes before the
+# scheduled start; the two known genuinely-early outliers, -25.9s and
+# -1795.6s, are both intentionally left suppressed by this margin).
+_SCRUBBER_EVENT_GRACE = timedelta(seconds=30)
+
 
 def processor_code_version() -> str:
     """A short hash of the processing code (all processors + this preprocessor).
@@ -969,9 +979,23 @@ class SessionPreProcessor:
         # Scrubber-event filter — suppress any `event` scrubber marker (from
         # TrackStatusProcessor: implicit-GREEN at pit-exit-open, etc.) that
         # fires BEFORE the scheduled session start, so pre-session noise stays
-        # off the scrubber. Threshold = SessionInfo's scheduled start (UTC).
+        # off the scrubber. Threshold = SessionInfo's scheduled start (UTC),
+        # minus a grace window (IIYYPBxZ, 2026-08-20 investigation): for
+        # Practice/Qualifying the session-start green flag IS the scheduled
+        # start (F1 publishes SessionStatus=Started within ~50-230ms of it),
+        # and `clock_time` here is `envelope_ts - STREAM_LAG`, an ESTIMATE
+        # carried over from a different topic (ExtrapolatedClock) that is
+        # accurate to only ~±150ms on live captures — so comparing it against
+        # the bare threshold decided by coin flip whether the single most
+        # important scrubber marker survived (measured: 12.5% of non-Race
+        # sessions, 20% of FP, lost it). The grace is sized to comfortably
+        # exceed that clock-residual noise while staying far short of the
+        # genuine pre-session noise this filter exists to suppress (an early
+        # SessionStatus=Started at pit-lane-open, measured 12-55 minutes
+        # before the scheduled start in held captures) — it does not exempt
+        # the marker outright, which would reopen exactly that hole.
         if topic == "event" and self._scheduled_start_utc is not None \
-                and clock_time < self._scheduled_start_utc:
+                and clock_time < self._scheduled_start_utc - _SCRUBBER_EVENT_GRACE:
             return
 
         offset_ms = int((clock_time - self._start_time).total_seconds() * 1000)
