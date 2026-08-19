@@ -1,0 +1,5 @@
+{"Type": "TrackStatus", "Json": {"Status": "1", "Message": "AllClear"}, "DateTime": "2026-01-01T12:00:00.000000+00:00"}
+{"Type": "WeatherData", "Json": {"AirTemp": "24.1", "TrackTemp": "31.4", "Humidity": "45.0", "Rainfall": "0"}, "DateTime": "2026-01-01T12:00:01.000000+00:00"}
+{"Type": "TimingData", "Json": {"Lines": {"1": {"Position": "1", "GapToLeader": ""}}}, "DateTime": "2026-01-01T12:00:02.000000+00:00"}
+{"Type": "TimingData", "Json": {"Lines": {"1": {"Position": "1", "GapToLeader": "+0.312"}}}, "DateTime": "2026-01-01T12:00:03.000000+00:00"}
+{"Type": "SessionStatus", "Json": {"Status": "Ends"}, "DateTime": "2026-01-01T12:00:04.000000+00:00"}

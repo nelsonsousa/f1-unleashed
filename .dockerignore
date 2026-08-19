@@ -1,0 +1,17 @@
+# WB-11 (Trello YVCb5HAF) — keep the build context to what the test images
+# actually need. `venv` in particular is a symlink to a sibling checkout
+# outside this build context (see CLAUDE.local.md's worktree layout) and
+# must never be sent to the daemon.
+venv
+log
+.git
+.server.pid
+server.log
+*.pyc
+__pycache__
+.pytest_cache
+.coverage
+coverage.xml
+docs
+DECISIONS.md
+DOCUMENTATION.md

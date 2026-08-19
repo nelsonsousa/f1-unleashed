@@ -1,0 +1,86 @@
+# WB-11 (Trello YVCb5HAF) — Dockerised test environments.
+#
+# Usage: see docker/README.md for the full walkthrough. Quick reference:
+#
+#   docker compose -f docker-compose.test.yml run --rm pytest
+#   docker compose -f docker-compose.test.yml run --rm node-tests
+#   docker compose -f docker-compose.test.yml --profile e2e up --build \
+#       --abort-on-container-exit --exit-code-from e2e-smoke
+#
+# Two profile tiers:
+#   - default (no profile): pytest + node-tests. Fast, no network dependency
+#     on a second repo. This is "run the unit-test battery" from the card.
+#   - `e2e`: brings up the sim (repos/sim, built from source) and runs ONE
+#     smoke test proving the app's real SignalR client connects to it and
+#     receives real messages. This is "test end-to-end against the live
+#     replica" from the card — see docker/README.md for what's deliberately
+#     NOT covered yet (a full e2e suite, browser testing, multi-OS matrix).
+
+services:
+  pytest:
+    build:
+      context: .
+      dockerfile: docker/pytest.Dockerfile
+    container_name: f1unleashed-test-pytest
+    command: ["pytest", "--cov=app", "--cov-report=term"]
+
+  node-tests:
+    build:
+      context: .
+      dockerfile: docker/node-tests.Dockerfile
+    container_name: f1unleashed-test-node
+
+  # The SignalR-compatible live-timing simulator (sibling repo, repos/sim).
+  # Built from source via a relative context -- this project and the sim are
+  # deliberately developed as sibling repos (see repos/sim/README.md), so
+  # this is the same relationship the human already works with locally, not
+  # a new coupling introduced here. Not portable to a CI runner that only
+  # checks out this one repo -- that is a real, named limitation, not an
+  # oversight (see docker/README.md).
+  sim:
+    build:
+      context: ../sim
+      dockerfile_inline: |
+        FROM python:3.13-slim
+        WORKDIR /sim
+        COPY requirements.txt ./
+        RUN pip install --no-cache-dir --upgrade pip \
+            && pip install --no-cache-dir -r requirements.txt
+        COPY . .
+        RUN useradd --create-home --uid 1000 simrunner \
+            && chown -R simrunner:simrunner /sim
+        USER simrunner
+        EXPOSE 8080
+        CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+    container_name: f1unleashed-test-sim
+    profiles: ["e2e"]
+    environment:
+      SIM_CDN_DATA_ROOT: /fixtures
+      SIM_PORT: "8080"
+    volumes:
+      - ./docker/e2e-fixtures:/fixtures:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/status', timeout=2)"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+      start_period: 5s
+
+  # Runs docker/e2e/test_sim_connectivity_smoke.py against the `sim` service
+  # above, using the app's own F1SignalRClient. Reuses the pytest image
+  # unmodified -- it already has every runtime dep that class needs
+  # (signalrcore, websockets, requests), and reusing it keeps this from
+  # silently drifting from what the unit/integration image actually ships.
+  e2e-smoke:
+    build:
+      context: .
+      dockerfile: docker/pytest.Dockerfile
+    container_name: f1unleashed-test-e2e-smoke
+    profiles: ["e2e"]
+    depends_on:
+      sim:
+        condition: service_healthy
+    environment:
+      SIM_BASE_URL: "http://sim:8080"
+      F1_DATA_HOME: /tmp/f1unleashed-e2e-data
+    command: ["pytest", "-q", "docker/e2e/test_sim_connectivity_smoke.py"]

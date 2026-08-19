@@ -1,0 +1,8 @@
+{
+  "SessionInfo": {
+    "Key": 999999,
+    "Type": "Practice",
+    "Name": "Docker Smoke Fixture",
+    "Meeting": {"Name": "Docker Smoke Meeting", "Country": {"Name": "Testland"}}
+  }
+}
