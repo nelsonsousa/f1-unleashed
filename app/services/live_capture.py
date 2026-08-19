@@ -157,7 +157,7 @@ class LiveCaptureService:
         meeting_key: int = 0,
         session_name: str = "",
         session_key: int = 0,
-    ) -> str:
+    ) -> tuple[str, bool]:
         """
         Start capturing live timing data from F1 SignalR.
 
@@ -165,17 +165,24 @@ class LiveCaptureService:
         this file with tail_follow=True to stream to WebSocket clients.
 
         Returns:
-            Session ID for tracking the capture.
+            (session_id, started) — `started` is False when the single-capture
+            invariant (M5) refused the request, in which case `session_id` is
+            the id of the capture that is still active (NOT a new capture).
+            Callers must not treat a `started=False` return as success: the
+            caller's own bookkeeping should be left untouched so it retries on
+            the next cycle, rather than pairing the (unstarted) new session's
+            identity with the (still-running) old session's id.
         """
         # Enforce the single-capture invariant (M5): the audio/radio/watchdog state is
         # single-slot, so a second concurrent capture would clobber the first's audio.
-        # If one is already active, refuse and return the existing session.
+        # If one is already active, refuse and return the existing session,
+        # distinguishably from success (Trello c966lztz).
         for sid, task in self._tasks.items():
             if not task.done():
                 logger.warning(
                     "start_live refused: capture %s is already active; only one live "
                     "capture runs at a time", sid)
-                return sid
+                return sid, False
 
         session_id = self._generate_session_id()
 
@@ -207,7 +214,7 @@ class LiveCaptureService:
             self._capture_loop(session_id, cache_path)
         )
 
-        return session_id
+        return session_id, True
 
     def cache_path_for(self, session_id: str):
         """The on-disk cache directory for an active capture (or None).

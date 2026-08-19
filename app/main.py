@@ -221,7 +221,7 @@ async def live_session_monitor():
                                 live_session_name = live_data.get("session_name", live_type)
                                 logger.info(f"Session live, starting capture: {live_event} - {live_type} (round {live_round}, meeting_key {live_meeting_key}, session_key {live_session_key}, {live_location})")
                                 try:
-                                    session_id = await live_capture.start_live(
+                                    session_id, started = await live_capture.start_live(
                                         year=now_utc.year,
                                         meeting_name=live_location or live_event.replace(" ", "_"),
                                         session_type=live_type,
@@ -230,10 +230,23 @@ async def live_session_monitor():
                                         session_name=live_session_name,
                                         session_key=live_session_key,
                                     )
-                                    _active_live_capture["session_id"] = session_id
-                                    _active_live_capture["event_name"] = live_event
-                                    _active_live_capture["session_type"] = live_type
-                                    logger.info(f"Live capture started: {session_id}")
+                                    if started:
+                                        _active_live_capture["session_id"] = session_id
+                                        _active_live_capture["event_name"] = live_event
+                                        _active_live_capture["session_type"] = live_type
+                                        logger.info(f"Live capture started: {session_id}")
+                                    else:
+                                        # Single-capture invariant (M5) refused the start
+                                        # because `session_id` (the OLD capture) is still
+                                        # active. Leave _active_live_capture untouched --
+                                        # do NOT pair the new session's event/type with the
+                                        # old capture's sid (Trello c966lztz) -- so the next
+                                        # cycle's need_start check still sees the mismatch
+                                        # and retries until the old capture actually stops.
+                                        logger.warning(
+                                            f"Live capture start refused: capture "
+                                            f"{session_id} is still active; will retry "
+                                            f"next cycle")
                                 except Exception as e:
                                     logger.error(f"Failed to start live capture: {e}")
 
