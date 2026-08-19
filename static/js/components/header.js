@@ -381,6 +381,12 @@
         finished: 'white',
     };
 
+    // Inactive (no session loaded) previously rendered as the bare "--"
+    // placeholder text, which reads as a blank/broken badge. Show the F1
+    // Unleashed logo there instead (t6vSsy0n).
+    const INACTIVE_BADGE_HTML =
+        '<img class="track-status-logo" src="/static/images/icons/logo_light.svg" alt="F1 Unleashed">';
+
     // Suppress the change-blink during a restore/seek re-emit (not a live
     // transition), same pattern as _radioRestoring below. (HBAKIcye)
     let _tsRestoring = false;
@@ -389,6 +395,7 @@
 
         const color = TRACK_STATUS_COLOR[data.status] || 'white';
         const text = data.message || '--';
+        const isInactive = data.status === 'inactive';
         const changed = (text !== state.trackStatusText || color !== state.trackStatusColor);
 
         state.trackStatusText = text;
@@ -397,7 +404,13 @@
         const el = document.getElementById('trackStatus');
         const textEl = document.getElementById('trackStatusText');
         if (el) el.className = `track-status ${color}`;   // resets classes (clears ts-blink)
-        if (textEl) textEl.textContent = text;
+        if (textEl) {
+            if (isInactive) {
+                textEl.innerHTML = INACTIVE_BADGE_HTML;
+            } else {
+                textEl.textContent = text;
+            }
+        }
         // Blink twice on a genuine status change to draw the eye. Skip the
         // restore/seek re-emit so a replay seek doesn't flash. (HBAKIcye)
         if (el && changed && !_tsRestoring) {

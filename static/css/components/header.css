@@ -73,6 +73,17 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Inactive-session badge: F1 Unleashed logo in place of the "--" text
+   (t6vSsy0n). Sized to sit inside the 38px-tall track-status box. */
+.track-status-logo {
+    height: 18px;
+    width: auto;
+    display: block;
 }
 
 .track-status.green {
