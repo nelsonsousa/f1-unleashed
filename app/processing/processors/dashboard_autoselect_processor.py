@@ -5,11 +5,28 @@ Emits: dashAutoSelect  = [num1, num2]  (<=2; [] when none)  — deduped on the p
 
 Rules (SME):
   practice   : drivers closest to finishing their PUSH lap (highest track %); none if nobody pushing.
-  quali Q1/Q2: at-risk-on-push (by track %) then the rest-on-push (by track %). At-risk = positional
-               (Q1 = P13-P20, Q2 = P7-P15 — drop zone + 4 above the cutoff).
-  quali Q3   : {predicted top-5 ∪ current top-5} by track %, then all others by track %.
+  quali Q1/Q2: DEFAULT (>= AT_RISK_WINDOW_S left in the part, or remaining time unknown) — every
+               push-lap driver, closest to finishing first (by track %). Inside AT_RISK_WINDOW_S,
+               narrows to at-risk-on-push (by track %) then the rest-on-push (by track %). At-risk =
+               positional (Q1 = P13-P20, Q2 = P7-P15 — drop zone + 4 above the cutoff). (card 0pEopiCB)
+  quali Q3   : DEFAULT (>= AT_RISK_WINDOW_S left, or unknown) — every push-lap driver, closest to
+               finishing first (by track %), same as Q1/Q2's default. Inside AT_RISK_WINDOW_S,
+               narrows to {predicted top-5 ∪ current top-5} by track %, then all others by track %.
+               (card 0pEopiCB)
   race       : frontmost STRONG overtaking pair (trailing Int < 0.5s); else frontmost SOFT (< 1.0s);
                else P1 & P2. Pair emitted [ahead, behind].
+
+Time-remaining source (card 0pEopiCB): `ExtrapolatedClock.Remaining` — verified against captured
+qualifying sessions to reset to the full part duration (e.g. "00:18:00" for Q1) at the start of
+each qualifying part, so it's already scoped per-part; no extra bookkeeping needed here.
+
+Tie-break (open point in card 0pEopiCB, resolved as a judgment call): when two push-lap drivers
+are tied on track %, the one with the better (numerically lower) `predictedPos` sorts first;
+drivers with no prediction yet sort after those that have one. Chosen because `predictedPos` is
+the only other per-driver "how close to a result" signal already flowing into this processor, so
+it needs no new topic — a driver-number string tiebreak was rejected as arbitrary and would have
+reintroduced exactly the kind of "some other field decides who wins the tie" opacity WB-1's
+Kuryh6y4 fix (test_dashautoselect_pick_q3_nondeterminism.py) already removed for Q3.
 """
 from __future__ import annotations
 
@@ -19,6 +36,25 @@ from typing import Any, Optional
 from app.processing.processors.base import Processor
 
 HOLD_MS = 5000   # buffer a changed pick this long (session time) before emitting it
+AT_RISK_WINDOW_S = 300   # switch to the at-risk/predicted-top-5 narrowing inside this much time left
+
+
+def _remaining_s(s: Any) -> Optional[float]:
+    """ExtrapolatedClock.Remaining ("HH:MM:SS" or "MM:SS") → seconds left in the
+    current qualifying part. None for anything unparseable."""
+    if not isinstance(s, str) or ":" not in s:
+        return None
+    parts = s.split(":")
+    try:
+        if len(parts) == 3:
+            h, m, sec = parts
+            return int(h) * 3600 + int(m) * 60 + float(sec)
+        if len(parts) == 2:
+            m, sec = parts
+            return int(m) * 60 + float(sec)
+    except (ValueError, IndexError):
+        return None
+    return None
 
 
 def _int_ms(s: Any) -> Optional[int]:
@@ -50,6 +86,7 @@ class DashboardAutoSelectProcessor(Processor):
         self._pred: dict[str, Optional[int]] = {}  # predicted position (quali)
         self._int_ms: dict[str, Optional[int]] = {}  # interval to car ahead (race)
         self._part: Optional[int] = None
+        self._remaining_s: Optional[float] = None   # seconds left in the current quali part (ExtrapolatedClock)
         self._started = False                    # session has gone green/lights-out (SessionStatus=Started)
         self._finished: dict[str, bool] = {}     # num -> has taken the chequered flag
         self._last: Optional[list] = None        # last emitted (currently shown) pair
@@ -60,6 +97,7 @@ class DashboardAutoSelectProcessor(Processor):
         self._bus.on("standings", self._on_standings)
         self._bus.on("qualifyingPart", self._on_part)
         self._bus.on("sessionInfo", self._on_session_info)
+        self._bus.on("ExtrapolatedClock", self._on_clock)
         self._bus.on("*", self._wild)
 
     # ── inputs ──────────────────────────────────────────────────────────────
@@ -111,22 +149,54 @@ class DashboardAutoSelectProcessor(Processor):
             self._part = data
             self._recompute(clock_time)
 
+    def _on_clock(self, data: Any, clock_time: datetime) -> None:
+        if isinstance(data, dict) and "Remaining" in data:
+            self._remaining_s = _remaining_s(data.get("Remaining"))
+            self._recompute(clock_time)
+
     # ── pickers ─────────────────────────────────────────────────────────────
+    def _at_risk_window(self) -> bool:
+        """True inside AT_RISK_WINDOW_S of the current quali part. Unknown remaining
+        time (no ExtrapolatedClock yet) is treated as "not yet at risk" — the same
+        too-early-focus bias the bug report (card B02ySqwU/0pEopiCB) complains about,
+        so the safe default is to stay on the plain push-lap-focus ordering."""
+        return self._remaining_s is not None and self._remaining_s < AT_RISK_WINDOW_S
+
     def _push_by_dp(self) -> list:
-        return sorted((n for n in self._dp if self._push.get(n) and not self._finished.get(n)),
-                      key=lambda n: self._dp[n], reverse=True)
+        """Push-lap candidates, closest to finishing first (highest track %). Ties on
+        track % are broken by the better (lower) predicted position — see the module
+        docstring's tie-break note; drivers with no prediction sort after those that
+        have one."""
+        candidates = [n for n in self._dp if self._push.get(n) and not self._finished.get(n)]
+
+        def key(n: str):
+            pred = self._pred.get(n)
+            pred_key = pred if isinstance(pred, int) else float("inf")
+            return (-self._dp[n], pred_key)
+
+        return sorted(candidates, key=key)
 
     def _pick_practice(self) -> list:
         return self._push_by_dp()[:2]
 
     def _pick_q12(self, part: int) -> list:
         push = self._push_by_dp()
+        if not self._at_risk_window():
+            # Default (card 0pEopiCB): every push-lap driver, closest to finishing first.
+            return push[:2]
         zone = set(range(13, 21) if part == 1 else range(7, 16))   # Q1 P13-20 / Q2 P7-15
         at_risk = [n for n in push if self._pos.get(n) in zone]
         rest = [n for n in push if self._pos.get(n) not in zone]
         return (at_risk + rest)[:2]
 
     def _pick_q3(self) -> list:
+        if not self._at_risk_window():
+            # Default (card 0pEopiCB): "all drivers at start" — scoped to push-lap
+            # candidates, same pool as Q1/Q2's default and practice's rule (a driver
+            # in the pits or on an out lap isn't an actionable "focus" pick for a
+            # flying lap). Documented judgment call — the card says "all drivers"
+            # without specifying whether that includes non-push-lap drivers.
+            return self._push_by_dp()[:2]
         fin = self._finished
         top5 = {n for n, p in self._pos.items() if isinstance(p, int) and p <= 5 and not fin.get(n)}
         top5 |= {n for n, p in self._pred.items() if isinstance(p, int) and p <= 5 and not fin.get(n)}

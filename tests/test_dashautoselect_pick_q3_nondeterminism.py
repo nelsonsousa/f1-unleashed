@@ -83,6 +83,12 @@ bus.on("dashAutoSelect", lambda data, ct: seen.append(list(data)))
 bus.emit("position", {{n: [0.0, 0.0, 42.0] for n in NUMS}}, CT)
 bus.emit("standings", {{"drivers": [{{"num": n, "position": i + 1}} for i, n in enumerate(NUMS)]}}, CT)
 bus.emit("qualifyingPart", 3, CT)
+# Card 0pEopiCB (2026-08-19): _pick_q3's top5/predicted-top5 narrowing -- the tie
+# this test exercises -- now only applies inside AT_RISK_WINDOW_S of the part ending;
+# outside that window the default is plain push-lap-focus ordering. Put the clock
+# inside the window so this test still exercises the narrowed-mode tie-break it was
+# written for.
+bus.emit("ExtrapolatedClock", {{"Remaining": "00:04:00", "Extrapolating": True}}, CT)
 # First SessionStatus Started -> _last was None, so the pick emits
 # immediately (no HOLD_MS delay to wait out).
 bus.emit("sessionInfo", {{"sessionStatus": "Started"}}, CT)
