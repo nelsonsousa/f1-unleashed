@@ -23,6 +23,17 @@ from app.processing.preprocessor import SessionPreProcessor
 logger = logging.getLogger(__name__)
 
 
+LIVE_MARKER_FILENAME = ".live"
+"""Empty placeholder file, co-located with `live.jsonl` in a session's cache
+directory, marking "the last time it was checked, this cache_path had an
+active (possibly interrupted) live capture" -- see `F1SignalRClient`'s
+append-vs-truncate decision in `app/services/signalr_client.py`
+(Trello lIGWChiB). Created when a live capture session genuinely starts,
+removed only when the session genuinely, cleanly ends. CDN downloads never
+create or check it; `fetch_session()` below removes a stale one defensively
+when it overwrites `live.jsonl` with freshly downloaded content."""
+
+
 def is_jsonl_complete(live_file: Path) -> bool:
     """True if the recording captured a whole session start-to-end.
 
@@ -731,6 +742,13 @@ class LiveTimingFetcher:
                         "DateTime": msg["timestamp"].isoformat(),
                     }
                     f.write(json.dumps(line) + "\n")
+
+            # CDN content is now authoritative for this path -- drop any
+            # stale `.live` marker so a marker left behind by an earlier,
+            # interrupted live capture at this same deterministic path can't
+            # later cause a genuinely new live capture to misread this
+            # CDN-downloaded file as resumable live state.
+            (cache_dir / LIVE_MARKER_FILENAME).unlink(missing_ok=True)
 
             # Write subscribe.json (initial state)
             subscribe_data = {}
