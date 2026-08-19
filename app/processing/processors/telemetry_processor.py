@@ -29,6 +29,10 @@ Pairing (D7-B, requirement-spec.md §9.3 — pipeline redesign 2026-07-28):
 Position validity:
   * stale (dp unchanged from previous) → skip (parked car / garage);
   * backward dp jump that is NOT an S/F wrap → skip (unreliable, e.g. pit);
+    exception: a SMALL (<= LATE_LAP_BACKWARD_TOL_PCT) single-hop backward
+    drift while prev dp is already > WRAP_HIGH is accepted, not skipped — a
+    known track-geometry projection discontinuity where the pit lane runs
+    close and parallel to the track (5Ud9mKuk); see LATE_LAP_BACKWARD_TOL_PCT;
   * an S/F wrap (dp from high→low) is the lap boundary.
 Channel validity (sample kept, channels nulled — client draws a dotted gap):
   * throttle or brake > 100;
@@ -83,6 +87,20 @@ logger = logging.getLogger(__name__)
 WRAP_HIGH = 90.0          # prev dp above this …
 WRAP_LOW = 10.0           # … and next dp below this = S/F wrap
 SYNTH_MAX_GAP_PCT = 5.0   # max pre/post-S/F dp gap to interpolate a seam sample
+# Pit-entry track-geometry projection discontinuity (Trello 5Ud9mKuk;
+# docs/artifacts/2026-07-29-026-post-candidate-a-telemetry-gaps/data-investigation.md
+# §5b, project root): late in the lap (prev dp > WRAP_HIGH), a car diverging onto
+# the physical pit lane -- which at some circuits (confirmed: Spa) runs parallel
+# and close to the track over an extended stretch, before the timing feed's own
+# PIT status latches `in_pit` -- can nearest-point-project (project_local) onto a
+# track-polyline point slightly BEHIND its true position. Measured on real data:
+# 0.231 (car 41, telemetryLap:41:18) and 0.152 (car 44, telemetryLap:44:6) dp
+# points, both single-hop and immediately recoverable (the car's own subsequent
+# samples climb forward normally from the lower value). Bounded well above the
+# observed magnitude but far below anything that could plausibly be a real S/F
+# wrap or genuinely invalid data (dp stays >> WRAP_LOW) or a normal mid-lap
+# tracking error.
+LATE_LAP_BACKWARD_TOL_PCT = 1.0
 
 
 def _epoch_ms(dt: datetime) -> int:
@@ -526,7 +544,21 @@ class TelemetryProcessor(Processor):
                 self._push_pos(drv, dp, clock_time, est)
                 drv.last_dp = dp
                 drv.last_pos_ts = clock_time
-            # else: stale (dp == prev) or backward jump → skip, keep last_dp.
+            elif prev > WRAP_HIGH and 0.0 < prev - dp <= LATE_LAP_BACKWARD_TOL_PCT:
+                # 5Ud9mKuk: a small, single-hop backward drift late in the lap —
+                # the pit-entry track-geometry projection discontinuity, NOT a
+                # real S/F wrap (dp stays far above WRAP_LOW) and NOT invalid
+                # data (bounded, and the car's own subsequent samples resume a
+                # normal forward climb from here). Accept it rather than
+                # freezing last_dp at the old, spuriously-high max, which would
+                # otherwise reject every subsequent valid position until dp
+                # climbed back past it.
+                self._push_pos(drv, dp, clock_time, est)
+                drv.last_dp = dp
+                drv.last_pos_ts = clock_time
+            # else: stale (dp == prev), a backward jump too large/out of scope
+            # for the late-lap tolerance above, or a mid-lap backward jump →
+            # skip, keep last_dp.
 
     @staticmethod
     def _line_ts(prev_dp: float, prev_ts: Optional[datetime],
