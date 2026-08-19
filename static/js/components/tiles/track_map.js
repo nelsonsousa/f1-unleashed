@@ -439,7 +439,8 @@
     }
 
     // Mirror the main map's track-status flash (outline only, see clearTrackColour/
-    // flashTrack above) + yellow-flag sectors onto the clone.
+    // flashTrack above) + yellow-flag sectors (centreline + outline, see handleYellowFlag
+    // below, card 5695aUWA) onto the clone.
     function syncMiniFlags() {
         if (!_mini.trackSvg || !state.trackSvg) return;
         ['#track-outline'].forEach(sel => {
@@ -450,10 +451,16 @@
             if (col) b.style.setProperty('--flag-color', col);
         });
         const yellow = new Set();
-        state.trackSvg.querySelectorAll('[data-sector].sector-yellow')
+        state.trackSvg.querySelectorAll('#track-sectors [data-sector].sector-yellow')
             .forEach(e => yellow.add(e.getAttribute('data-sector')));
-        _mini.trackSvg.querySelectorAll('[data-sector]').forEach(p => {
+        _mini.trackSvg.querySelectorAll('#track-sectors [data-sector]').forEach(p => {
             p.classList.toggle('sector-yellow', yellow.has(p.getAttribute('data-sector')));
+        });
+        const yellowOutline = new Set();
+        state.trackSvg.querySelectorAll('#track-outline [data-sector].sector-yellow-outline')
+            .forEach(e => yellowOutline.add(e.getAttribute('data-sector')));
+        _mini.trackSvg.querySelectorAll('#track-outline [data-sector]').forEach(p => {
+            p.classList.toggle('sector-yellow-outline', yellowOutline.has(p.getAttribute('data-sector')));
         });
     }
 
@@ -616,17 +623,31 @@
         }
     }
 
+    // Highlights a single-sector yellow flag on BOTH the marshal-sector centreline
+    // (#track-sectors, .sector-yellow — pre-existing) AND the matching arc of the track
+    // outline (#track-outline, .sector-yellow-outline — card 5695aUWA). #track-outline's
+    // per-sector paths share the exact same data-sector numbering and coordinate ranges as
+    // #track-sectors (both baked into the circuit SVG), so no new geometry is needed — just
+    // a second, outline-scoped class using the .flag-blink visual convention (drop-shadow
+    // glow) rather than the centreline's .sector-yellow styling, so the outline highlight
+    // reads as "this part of the boundary is yellow" and not a second centreline mark.
     function handleYellowFlag(data) {
         if (!state.trackSvg) return;
         // Clear all sector highlights
-        state.trackSvg.querySelectorAll('[data-sector]').forEach(p => {
+        state.trackSvg.querySelectorAll('#track-sectors [data-sector]').forEach(p => {
             p.classList.remove('sector-yellow');
+        });
+        state.trackSvg.querySelectorAll('#track-outline [data-sector]').forEach(p => {
+            p.classList.remove('sector-yellow-outline');
         });
         // Highlight flagged sectors
         if (Array.isArray(data)) {
             for (const sector of data) {
-                state.trackSvg.querySelectorAll(`[data-sector="${sector}"]`).forEach(p => {
+                state.trackSvg.querySelectorAll(`#track-sectors [data-sector="${sector}"]`).forEach(p => {
                     p.classList.add('sector-yellow');
+                });
+                state.trackSvg.querySelectorAll(`#track-outline [data-sector="${sector}"]`).forEach(p => {
+                    p.classList.add('sector-yellow-outline');
                 });
             }
         }
@@ -705,8 +726,11 @@
         // instead of snapping. First post-seek frame then re-seeds it directly.
         _mini.sm = {};
         if (state.trackSvg) {
-            state.trackSvg.querySelectorAll('[data-sector]').forEach(p => {
+            state.trackSvg.querySelectorAll('#track-sectors [data-sector]').forEach(p => {
                 p.classList.remove('sector-yellow', 'sector-double-yellow');
+            });
+            state.trackSvg.querySelectorAll('#track-outline [data-sector]').forEach(p => {
+                p.classList.remove('sector-yellow-outline');
             });
         }
     });

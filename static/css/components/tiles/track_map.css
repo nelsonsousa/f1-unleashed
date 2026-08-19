@@ -105,6 +105,17 @@
   animation: sector-double-yellow-blink 0.5s ease-in-out infinite;
 }
 
+/* Single-sector yellow flag, on the matching arc of the track outline (not the
+   centreline — see .sector-yellow above, which stays as-is on #track-sectors). Uses the
+   same glow convention as the full-track .flag-blink treatment below (8px drop-shadow)
+   rather than .sector-yellow's 4px one, so a highlighted outline segment reads as "this
+   part of the boundary is yellow" — the same visual language as the whole-outline flag,
+   just scoped to one sector's arc (card 5695aUWA). */
+.sector-yellow-outline {
+  stroke: #ffd700 !important;
+  filter: drop-shadow(0 0 8px #ffd700);
+}
+
 @keyframes sector-double-yellow-blink {
   0%, 100% {
     stroke: #ffd700;
