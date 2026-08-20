@@ -13,7 +13,7 @@ import asyncio
 import json
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -48,18 +48,40 @@ def _log_task_exception(task: "asyncio.Task") -> None:
 
 TICK_INTERVAL = 0.016  # ~60fps tick rate
 
-# Live-edge / display margin (card 479) — 5 s. WHY 5 s: F1 packages
-# CarData/Position at ~1 Hz, so a sample's envelope (arrival) time can trail
-# its payload timestamp by up to ~5 s. Holding
-# the playhead 5 s behind the arrival edge lets every sample be delivered IN
-# payload-timestamp order and "on time" (at the instant it was recorded);
-# non-payload topics just arrive the normal ~5 s late. Same 5 s = the ceiling
-# (min(data_edge, audio_edge) − this) the free-running clock stays below so it
-# advances smoothly at 1x instead of pinning to the jerky edge, and what "go Live"
-# requests (self._duration). If the audio edge updates less often than this, or
-# packaging lag exceeds it, a few samples arrive late — the rowid late-sweep in
-# _playback_loop backstops the tail; a persistent re-stutter means increase it.
-LIVE_EDGE_MARGIN_S = 5.0
+# Live-edge / display margin (card 479, raised per cards Orts6BRn/cJJUzyAj) — 15 s.
+# Originally 5 s, sized only for CarData/Position envelope-vs-payload skew: F1
+# packages CarData/Position at ~1 Hz, so a sample's envelope (arrival) time can
+# trail its payload timestamp by up to ~5 s. That 5 s was too small for this
+# constant's other job: providing headroom against heartbeat-cadence stalls.
+# During a quiet period the data edge only advances on each Heartbeat, and the
+# measured real-world cadence is ~15.0-15.5s (p95) — see
+# docs/artifacts/2026-08-20-073-backlog-regrouping-sprint-replan/scoping-Orts6BRn-cJJUzyAj.md
+# §2. A margin below that stall cadence means the free-running clock hits the
+# ceiling (min(data_edge, audio_edge) − this) on essentially every quiet-period
+# heartbeat cycle and sits frozen until the next heartbeat arrives.
+#
+# As of the wall-clock-driven redesign (card Orts6BRn AC10, see
+# docs/artifacts/2026-08-20-073-backlog-regrouping-sprint-replan/scoping-Orts6BRn-wallclock-playhead.md),
+# this margin no longer governs the common case: a live session with a
+# genuinely healthy connection (data_healthy) now derives its ceiling from
+# wall-clock elapsed time (_wall_clock_offset_ms), capped only by
+# AUDIO_SKEW_MARGIN_S below the audio edge when audio is present. This
+# constant remains exactly as before for the two cases it still governs:
+# still-building replay, and live sessions where the connection has gone
+# stale (no data advance within DATA_EDGE_STALE_S) — the "freeze in place"
+# safety-valve fallback. Same margin = what a still-frozen "go Live" request
+# and a fresh client connection land on in the stale-fallback case.
+LIVE_EDGE_MARGIN_S = 15.0
+
+# Wall-clock live playhead (card Orts6BRn AC10): when a live session's
+# connection is genuinely healthy, the ceiling is driven by elapsed wall-clock
+# time rather than the last-processed message's edge (see _live_edge_ms).
+# Audio bytes must still have physically arrived — PdtTracker only reports
+# what's already CAPTURED (app/services/audio_pdt_tracker.py), refreshed on a
+# ~5s poll cadence — so the audio edge remains a hard ceiling with this much
+# headroom against its own poll cadence, matching LIVE_EDGE_MARGIN_S's own
+# reasoning against the (much longer) heartbeat cadence.
+AUDIO_SKEW_MARGIN_S = 5.0
 
 # Soft-couple stall-release: if the audio leading edge (pdt_map.jsonl) hasn't
 # been refreshed within this long, the PdtTracker/ffmpeg has stalled — stop
@@ -493,7 +515,7 @@ class SessionEngine:
         # new viewer) inherit the existing clock position so a paused or
         # rewound playback isn't yanked forward by an unrelated connect.
         if self._live and self._clock and self._db and not self._initial_live_seek_done:
-            edge_ms = self._capped_edge_ms()
+            edge_ms = self._live_edge_ms()   # wall-clock-driven when healthy; LIVE_EDGE_MARGIN_S-margined fallback otherwise
             if edge_ms:
                 live_offset = edge_ms / 1000.0
                 self._clock.seek_to_offset(live_offset)
@@ -583,7 +605,7 @@ class SessionEngine:
             if not self._db:
                 logger.warning("seek_live ignored: no DB")
                 return
-            edge_ms = self._capped_edge_ms()
+            edge_ms = self._live_edge_ms()
             if not edge_ms:
                 logger.warning("seek_live: no live edge yet")
                 return
@@ -668,7 +690,17 @@ class SessionEngine:
                 except asyncio.CancelledError:
                     pass
 
-        # Clamp offset
+        # The extra 10 s client-buffer delay (card 479, moved server-side from
+        # the client) was removed per cards Orts6BRn/cJJUzyAj: now that
+        # LIVE_EDGE_MARGIN_S itself is 15 s (raised from 5 s for the same
+        # reason), stacking an additional 10 s on top of every seek would land
+        # explicit "go live" seeks 25 s below the raw edge while a fresh live
+        # connection (which doesn't route through _seek()) only lands 15 s
+        # below it — two different entry points converging on two different
+        # buffers instead of one. Every entry point now targets the same ~15 s
+        # margin via LIVE_EDGE_MARGIN_S alone.
+        # Clamp to the seekable range — the live/build ceiling (already
+        # LIVE_EDGE_MARGIN_S inside the raw edge) or the full length on a completed replay.
         offset_seconds = max(0.0, min(offset_seconds, self._duration))
         offset_ms = int(offset_seconds * 1000)
 
@@ -961,7 +993,7 @@ class SessionEngine:
         if edge_pdt is None:
             return None
         # Soft-couple stall-release: a stale edge means audio capture stalled —
-        # return None so _capped_edge_ms falls back to the raw data edge and the
+        # return None so _live_edge_ms falls back to the raw data edge and the
         # data clock keeps flowing (audio just goes silent until it recovers).
         if wall_ms is not None and (time.time() * 1000 - wall_ms) > AUDIO_EDGE_STALE_S * 1000:
             return None
@@ -1015,16 +1047,39 @@ class SessionEngine:
             return False
         return False
 
-    def _capped_edge_ms(self) -> Optional[int]:
-        """The playback live edge (ms), health-gated against both feeds.
+    def _wall_clock_offset_ms(self) -> int:
+        """Live only: elapsed real time since session start (self._start_time,
+        itself anchored once from the first message's PAYLOAD timestamp —
+        _ensure_clock), independent of message arrival. This IS the live
+        playhead when the connection is genuinely active (see _live_edge_ms)."""
+        if not self._start_time:
+            return 0
+        now = datetime.now(timezone.utc)
+        return max(0, int((now - self._start_time).total_seconds() * 1000))
 
-        Policy: when BOTH data and audio are healthy, the edge is the lagging
-        (earlier) of the two — min — so playback never outruns either feed. If
-        one feed is UNHEALTHY the other alone sets the edge: stalled/absent audio
-        → data drives; a stalled data stream → audio drives (so the playhead
-        doesn't freeze on a dead data feed while audio still flows). A
-        LIVE_EDGE_BUFFER_S cushion is always applied. Replay returns the raw data
-        edge (nothing to cap). None if neither feed has produced anything."""
+    def _live_edge_ms(self) -> Optional[int]:
+        """The playback ceiling (ms) the free-running clock stays below (card 479).
+
+        Completed replay: the whole session is present → the raw data edge (full
+        length), no margin.
+
+        Live with a genuinely healthy connection (data_healthy): the ceiling is
+        driven by elapsed wall-clock time (_wall_clock_offset_ms) instead of
+        waiting for the next message to physically confirm the edge (card
+        Orts6BRn AC10) — this is what stops the clock freezing between
+        heartbeats. When audio is present, its (already-captured) edge minus
+        AUDIO_SKEW_MARGIN_S still caps the wall-clock ceiling, since audio bytes
+        must have physically arrived.
+
+        Still-building replay, or live but NOT genuinely active (data stalled
+        >= DATA_EDGE_STALE_S — reconnecting/down): unchanged fallback, keep the
+        ceiling LIVE_EDGE_MARGIN_S below the lagging of (data edge, audio edge)
+        so the clock free-runs smoothly off the (jerky) edge instead of pinning
+        to it. When BOTH feeds are healthy the edge is their min; if one is
+        unhealthy the other alone drives (stalled/absent audio → data; stalled
+        data → audio). This IS the "freeze in place" safety valve.
+
+        None if neither feed has produced anything."""
         data_ms = self._data_edge_ms()
         if not self._live:
             return data_ms
@@ -1045,23 +1100,43 @@ class SessionEngine:
         audio_edge_s = self._audio_edge_offset()   # None when audio stalled/absent
         audio_ms = int(audio_edge_s * 1000) if audio_edge_s is not None else None
 
-        if data_healthy and audio_ms is not None:
-            edge = min(data_ms, audio_ms)          # both healthy → lagging stream limits
-            driver = "data" if data_ms <= audio_ms else "audio"
-        elif audio_ms is not None:
-            edge = audio_ms                        # data stalled/absent → audio drives
-            driver = "audio-only"
-        elif data_ms is not None:
-            edge = data_ms                         # audio stalled/absent → data drives
-            driver = "data-only"
+        if self._live and data_healthy:
+            # Connection genuinely active: trust wall-clock time for the DATA
+            # side instead of waiting for the next heartbeat to physically
+            # confirm the edge (card Orts6BRn AC10). Audio bytes must still
+            # have physically arrived (PdtTracker only reports what's
+            # CAPTURED) and only refreshes every ~5s, so the audio edge
+            # remains a hard ceiling with AUDIO_SKEW_MARGIN_S of headroom
+            # against its own poll cadence.
+            wall_ms = self._wall_clock_offset_ms()
+            if audio_ms is not None:
+                audio_ceiling = audio_ms - int(AUDIO_SKEW_MARGIN_S * 1000)
+                capped = max(0, min(wall_ms, audio_ceiling))
+                driver = "wall-clock" if wall_ms <= audio_ceiling else "audio-cap"
+            else:
+                capped = wall_ms
+                driver = "wall-clock"
         else:
-            return None
-        capped = max(0, edge - int(LIVE_EDGE_BUFFER_S * 1000))
-        # Telemetry: the min(data,audio) cap decision — unique server-side context
-        # for an audio pause (which stream held the playhead back). No-op unless on.
+            # Replay (still building), or live but NOT genuinely active (data
+            # stalled >= DATA_EDGE_STALE_S — reconnecting/down): unchanged
+            # fallback. data_ms is by definition not advancing in this branch,
+            # so this ceiling is effectively frozen at the last confirmed
+            # position — this IS the "freeze in place" safety valve.
+            if data_healthy and audio_ms is not None:
+                edge = min(data_ms, audio_ms)          # both healthy → lagging stream limits
+                driver = "data" if data_ms <= audio_ms else "audio"
+            elif audio_ms is not None:
+                edge = audio_ms                        # data stalled → audio drives
+                driver = "audio-only"
+            else:
+                edge = data_ms                         # audio stalled/absent → data drives
+                driver = "data-only"
+            capped = max(0, edge - int(LIVE_EDGE_MARGIN_S * 1000))
+        # Telemetry: the cap decision — server-side context for an audio pause
+        # or a wall-clock/audio-skew clamp. No-op unless on.
         telemetry.record(self._session_name, "cap", {
             "dataMs": data_ms, "audioMs": audio_ms, "dataHealthy": data_healthy,
-            "driver": driver, "edgeMs": edge, "cappedMs": capped,
+            "driver": driver, "edgeMs": None, "cappedMs": capped,
         })
         return capped
 
@@ -1082,7 +1157,7 @@ class SessionEngine:
                     continue
                 # Anchor the clock as soon as the build records the session start.
                 self._ensure_clock()
-                edge_ms = self._capped_edge_ms()   # also refreshes self._data_live
+                edge_ms = self._live_edge_ms()   # also refreshes self._data_live
                 if edge_ms:
                     new_dur = edge_ms / 1000.0
                     if new_dur > self._duration:
@@ -1186,7 +1261,7 @@ class SessionEngine:
                         # grown, extend duration, else wait. For live the cap
                         # holds playback at the lagging stream (audio vs data),
                         # so reaching it waits for the laggard to advance.
-                        edge_ms = self._capped_edge_ms()
+                        edge_ms = self._live_edge_ms()
                         if edge_ms and edge_ms > duration_ms:
                             self._duration = edge_ms / 1000.0
                         elif self._live and self._session_ended():
