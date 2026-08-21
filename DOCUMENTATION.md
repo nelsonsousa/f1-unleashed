@@ -4,7 +4,9 @@ A Formula 1 live-timing and replay application with synchronised audio commentar
 
 **First Release**: 1.0.0 "Monte Carlo", 7 June 2026 — it marks the day of the 2026 Monaco Grand Prix; McLaren's 1000th Grand Prix start; and the 60th anniversary of Mclaren's first-ever Formula 1 race, the 1966 Monaco Grand Prix.
 
-**Current release**: 2.0.2 "Budapest hotfix", 2026-07-24. See [Release history](#release-history).
+See [Release history](#release-history) for the current release and full version-by-version
+changelog — the newest entry there is current; this line deliberately doesn't name a version
+so it never needs editing on release.
 
 The server listens on port **1950**, an homage to the first F1 World Championship.
 
@@ -733,17 +735,24 @@ Prix (round 9, race 5 July).*
 - **Video-sync race anchoring** — ENTER snaps to the scheduled start / lights-out. *(The
   OCR-based video sync was replaced in v2.0 by [SYNC TO](#sync-to-a-tv-broadcast).)*
 
-### v2.0.2 — "Budapest hotfix" · 2026-07-24
-*Hungarian Grand Prix weekend — a same-day fix during FP1.*
+### v2.0.0 — "Spa-Francorchamps" · 2026-07-16
+*Eve of the Belgian Grand Prix weekend (round 10, Spa-Francorchamps — race 19 July).*
 
-> Fixed live: the track map (and the traces + predictions riding on it) on the Hungaroring.
+> We're in Spa! New livery, more powerful engine, better gearbox, improved aero. A lot of upgrades.
 
-- **Track map on circuits where Location ≠ Circuit name** — the client fetches the circuit
-  SVG by `Circuit.ShortName` ("Hungaroring") while the asset and the server-side geometry
-  keyed on Location ("Budapest"), so the client 404'd the SVG and the map went blank —
-  taking the live telemetry traces and lap predictions (which need its corner geometry) with
-  it. Renamed `Budapest.svg → Hungaroring.svg` and mapped the server's Location lookup onto
-  it, so client and server resolve the same file.
+The big one:
+
+- **Live Dashboard view** — two-driver gauges + lap-time forecast and live telemetry trace (P/Q), and a race battle
+  panel + zoomed self-centring mini-map (Races).
+- **Auto-select** — server-picked watch pair per session type.
+- **Qualifying** lap-time forecast + predicted-position rework.
+- **Pecking-order predictor**; **pit-stop time-loss** (prediction + in-race measurement).
+- **Position reconstruction (early)** — when GPS position data is missing or unreliable
+  (notably around the pit lane), estimate position from telemetry by matching the speed trace to
+  a circuit signature. Still unreliable and prone to frequent corrections; surfaced with
+  data-quality warnings.
+- **SYNC TO** replaces the OCR video sync; smooth marker interpolation; no-spoiler scrubber.
+- Split in-app **user guide** + **Help** modal.
 
 ### v2.0.1 — "Budapest upgrade" · 2026-07-24
 *Hungarian Grand Prix weekend (round 11, Hungaroring / Budapest).*
@@ -763,24 +772,58 @@ Prix (round 9, race 5 July).*
 - **Docs** — README / DOCUMENTATION / in-app guide corrections, Windows-launcher docs, and
   logo + buy-me-a-coffee polish.
 
-### v2.0.0 — "Spa-Francorchamps" · 2026-07-16
-*Eve of the Belgian Grand Prix weekend (round 10, Spa-Francorchamps — race 19 July).*
+### v2.0.2 — "Budapest hotfix" · 2026-07-24
+*Hungarian Grand Prix weekend — a same-day fix during FP1.*
 
-> We're in Spa! New livery, more powerful engine, better gearbox, improved aero. A lot of upgrades.
+> Fixed live: the track map (and the traces + predictions riding on it) on the Hungaroring.
 
-The big one:
+- **Track map on circuits where Location ≠ Circuit name** — the client fetches the circuit
+  SVG by `Circuit.ShortName` ("Hungaroring") while the asset and the server-side geometry
+  keyed on Location ("Budapest"), so the client 404'd the SVG and the map went blank —
+  taking the live telemetry traces and lap predictions (which need its corner geometry) with
+  it. Renamed `Budapest.svg → Hungaroring.svg` and mapped the server's Location lookup onto
+  it, so client and server resolve the same file.
 
-- **Live Dashboard view** — two-driver gauges + lap-time forecast and live telemetry trace (P/Q), and a race battle
-  panel + zoomed self-centring mini-map (Races).
-- **Auto-select** — server-picked watch pair per session type.
-- **Qualifying** lap-time forecast + predicted-position rework.
-- **Pecking-order predictor**; **pit-stop time-loss** (prediction + in-race measurement).
-- **Position reconstruction (early)** — when GPS position data is missing or unreliable
-  (notably around the pit lane), estimate position from telemetry by matching the speed trace to
-  a circuit signature. Still unreliable and prone to frequent corrections; surfaced with
-  data-quality warnings.
-- **SYNC TO** replaces the OCR video sync; smooth marker interpolation; no-spoiler scrubber.
-- Split in-app **user guide** + **Help** modal.
+### v2.0.3 — "Zandvoort upgrade" · 2026-08-21
+*Dutch Grand Prix weekend (round 15, Zandvoort).*
+
+> Bug fixes first: reconnect handling, lap timing, pit-loss estimates, auto-select — cleared
+> before Zandvoort.
+
+- **CDN downloads fixed** — every download had been returning HTTP 500 since an unsupported
+  keyword argument reached `SessionPreProcessor.run()`.
+- **SignalR reconnect burst fixed** — a dropped connection after `SessionStatus=Ends`
+  reconnected forever, replaying a stale subscription snapshot each time.
+- **Lap-boundary detection fixed** — a one-sided tolerance check could accept a future timing
+  crossing and lose the current lap entirely; now symmetric.
+- **Correct final lap times / personal bests** — a post-session resend could overwrite a
+  correct final lap time (including personal bests) with a stale in-progress value.
+- **Position-freeze staleness tracking fixed** — motion-gated, so a genuinely frozen car is
+  now flagged without falsely flagging stationary cars.
+- **Pit-loss estimate restored for Spa-Francorchamps and Budapest** — a stale circuit-length
+  table silently skipped the estimate; a missing entry now logs a visible warning instead of
+  failing silently.
+- **Auto-select stability fix** — a non-deterministic set iteration could cause an
+  inconsistent qualifying pick.
+
+### v2.1.0-b1 — "Monza preview" (`next`, pre-release) · 2026-08-21
+*Italian Grand Prix weekend (round 16, Monza) — public preview, not yet promoted to `main`.*
+
+> A preview of the pipeline redesign and the live-playhead rework, ahead of Monza.
+
+- **Wall-clock-driven live playhead** — the live playback ceiling now advances from elapsed
+  real time when the connection is healthy, instead of waiting for the next message to
+  physically confirm the edge; fixes the playhead freezing between heartbeats and choppy
+  audio on a fresh live connect.
+- **Pipeline redesign completion** — internal capture/processing changes (shared
+  scheduled-start parsing, end-of-session analysis triggers on `SessionStatus=Ends` instead
+  of lagging behind capture teardown).
+- Processor-handler exceptions now propagate instead of being silently swallowed.
+- Track flag colouring (SC/VSC/Red/Green) scoped to the outline only; status badge shows the
+  logo when inactive; CDN topic downloads gated by the session's own `Index.json`.
+- **Not included in this preview**: circuit-signature generation (new capability, needs more
+  real-session validation) and the WB-16 config-externalisation series (large batch,
+  deferred as a block).
 
 ---
 

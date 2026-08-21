@@ -6,9 +6,11 @@ A Formula 1 live-timing and replay application with synchronised audio commentar
 
 > **This is an unofficial project, not affiliated with Formula 1 or the FIA.** F1Unleashed is a personal, non-commercial viewer and is not associated with, endorsed by, or affiliated with Formula 1, Formula One Licensing B.V., Formula One Management, or the FIA. See [Trademarks & disclaimer](#trademarks--disclaimer).
 
-**Release 1.0.0** — 7 June 2026, the day of the 2026 Monaco Grand Prix: McLaren's 1000th Grand Prix start. McLaren's first-ever race was also a Monaco Grand Prix, in 1966 — so the day marked both 1000 races and 60 years of McLaren in Formula 1.
+First released 7 June 2026, the day of the 2026 Monaco Grand Prix: McLaren's 1000th Grand Prix start. McLaren's first-ever race was also a Monaco Grand Prix, in 1966 — so the day marked both 1000 races and 60 years of McLaren in Formula 1.
 
-**Current release**: 2.0.2 "Budapest hotfix", 2026-07-24.
+See [DOCUMENTATION.md's Release History](DOCUMENTATION.md#release-history) for the current
+release and the full version-by-version changelog — kept there so this file doesn't need
+editing every release.
 
 For what it does and how it works, see [DOCUMENTATION.md](DOCUMENTATION.md). For a tour of the
 interface, the in-app **user guide** (the **Help (?)** icon on the home page) is split into the
