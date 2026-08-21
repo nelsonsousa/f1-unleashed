@@ -19,8 +19,7 @@ import requests
 from signalrcore.hub_connection_builder import HubConnectionBuilder
 from signalrcore.messages.completion_message import CompletionMessage
 
-from app import settings
-from app.services.livetiming_fetcher import LIVE_MARKER_FILENAME, get_topics_for_session
+from app.services.livetiming_fetcher import is_jsonl_complete
 
 logger = logging.getLogger(__name__)
 
@@ -131,13 +130,6 @@ class F1SignalRClient:
         self._session_start: Optional[datetime] = None
         self._t_last_message: float = 0
         self._message_count = 0
-        # Set when a real F1 SessionStatus="Ends" message is observed (as
-        # opposed to any other reason _run_connection's loop exits — a
-        # restart-time stop(), an idle timeout, or exhausted reconnects).
-        # Only a genuine, clean end removes the `.live` marker at finalize
-        # (Trello lIGWChiB) — a mid-session stop must leave it in place so
-        # the next process appends instead of truncating.
-        self._session_ended_cleanly = False
 
         # For async communication
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -205,13 +197,6 @@ class F1SignalRClient:
 
     def _process_message(self, topic: str, data: Any, timestamp: datetime):
         """Process and store a single message."""
-        # The real F1 terminal marker for this session — as opposed to
-        # _finalize_capture's own synthetic `_SessionEnd` entry, which fires
-        # on ANY exit (including a restart-time stop mid-session) and must
-        # NOT be mistaken for a genuine end. See `_session_ended_cleanly`.
-        if topic == "SessionStatus" and isinstance(data, dict) and data.get("Status") == "Ends":
-            self._session_ended_cleanly = True
-
         offset = timestamp - self._session_start if self._session_start else timedelta(0)
 
         message = {
@@ -304,20 +289,13 @@ class F1SignalRClient:
         terminal _SessionEnd marker, closes the file, terminal status).
         """
         live_file = self.cache_path / "live.jsonl"
-        marker_file = self.cache_path / LIVE_MARKER_FILENAME
-        # Marker present: an earlier F1SignalRClient (possibly a prior
-        # process, killed or restarted mid-session) claimed this cache_path
-        # and never reached a clean end — append, preserving whatever it
-        # captured (Trello lIGWChiB; content-based `is_jsonl_complete`
-        # detection was too fragile here — a mid-session stop never writes
-        # the real terminal marker). Marker absent: either a genuinely new
-        # session, or a file with no active-live provenance (a CDN download,
-        # or a foreign/stale file) — overwrite, matching the "corpse of a
-        # crashed attempt" semantics this replaced, now driven by an
-        # explicit out-of-band signal instead of parsing file content.
-        mode = "a" if marker_file.exists() else "w"
+        # A file already at this deterministic path that is NOT a complete
+        # session (no terminal SessionStatus "Ends" marker — see
+        # `is_jsonl_complete`) is the corpse of a crashed/failed prior
+        # attempt, not resumable state: truncate and start fresh rather
+        # than appending onto it. An absent file also opens fresh via "a".
+        mode = "w" if live_file.exists() and not is_jsonl_complete(live_file) else "a"
         self._output_file = open(live_file, mode, encoding="utf-8")
-        marker_file.touch()
 
         consecutive_failures = 0
         try:
@@ -467,15 +445,6 @@ class F1SignalRClient:
             except Exception:
                 pass
             self._output_file = None
-
-        # Remove the `.live` marker only on a genuine, clean session end
-        # (a real SessionStatus="Ends" was observed) — NOT on every finalize,
-        # since this method also runs on a restart-time stop() mid-session,
-        # an idle timeout, or exhausted reconnects. Leaving the marker in
-        # place for those is what makes the next process append instead of
-        # truncate (Trello lIGWChiB).
-        if self._session_ended_cleanly:
-            (self.cache_path / LIVE_MARKER_FILENAME).unlink(missing_ok=True)
 
         # Save subscribe data
         if self._subscribe_data:
