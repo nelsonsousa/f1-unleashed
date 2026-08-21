@@ -178,12 +178,26 @@ class DpReckoner:
         also calling back into this reckoner without mutating mid-iteration."""
         return dict(self._dp)
 
-    def observe_real_position(self, num: str, dp: float, clock_time: datetime) -> None:
+    def observe_real_position(
+        self, num: str, dp: float, clock_time: datetime,
+        refresh_real_anchor: bool = True,
+    ) -> None:
         """Feed a real, measured position fix for `num`. Refines the shared
         calibration factor `C` from the ratio of real distance advanced to
         speed*time elapsed, and resets this car's reckoning anchor to `dp`
         -- drift accumulated since the last real fix is discarded in favour
-        of ground truth."""
+        of ground truth.
+
+        `refresh_real_anchor` (default True, preserving behavior for every
+        existing 3-arg call site) gates ONLY the `_real_dp`/`_real_ts` write
+        below -- calibration and the `_dp`/`_ts` reckoning anchor above
+        always run unconditionally. Pass `False` when the caller has
+        determined this call is a motion-gated stale repeat (a
+        byte-identical position fix while the car is known to be moving):
+        `_real_dp`/`_real_ts` are then left at whatever they were before
+        this call, so `last_known_dp()`/`ms_since_last_known()` continue to
+        reflect the car's true last REAL fix instead of resetting on every
+        repeated message."""
         prev_dp = self._cal_prev_dp.get(num)
         if prev_dp is not None:
             ddp = (dp - prev_dp) % 100.0
@@ -202,9 +216,13 @@ class DpReckoner:
         self._ts[num] = clock_time
         # WB3: anchor the last-REAL-fix state separately -- advance() never
         # touches these two dicts, so they stay exactly "as of the last real
-        # fix" no matter how much dead-reckoning happens afterward.
-        self._real_dp[num] = dp
-        self._real_ts[num] = clock_time
+        # fix" no matter how much dead-reckoning happens afterward. They can
+        # also be left untouched by THIS call itself (refresh_real_anchor=
+        # False), when the caller has determined the call is a motion-gated
+        # stale repeat rather than a fresh real fix (FWnY5RhK).
+        if refresh_real_anchor:
+            self._real_dp[num] = dp
+            self._real_ts[num] = clock_time
 
     def last_known_dp(self, num: str) -> Optional[float]:
         """The dp% at `num`'s most recent REAL (measured) position fix, or

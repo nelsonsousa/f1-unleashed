@@ -62,6 +62,17 @@ APEX_SPEED_MARGIN = 0.20  # a detected minimum can only be an apex if its speed 
 MAX_DT_S = 2.0            # clamp per-step integration (guards against feed pauses)
 GLITCH_MAX_ZEROS = 2      # up to this many consecutive speed=0 samples = glitch → carry speed
 
+# FWnY5RhK: a byte-identical position repeat is only treated as a stale
+# (non-real) fix -- for staleness-reporting purposes, via
+# observe_real_position(refresh_real_anchor=...) -- when the car is known
+# to be moving above this speed. A stationary car's repeat (parked, pit
+# box, grid) is a genuine real fix and must keep refreshing the real
+# anchor. 30 km/h is empirical, not physical: cross-validated at artifact
+# 062 §5.3 (27 hand-verified cases) and independently at
+# data-investigation.md §6.3/§8.2 (35-session census, 13,995,271 CarData
+# ticks) -- both rounds landed on the same boundary.
+MOTION_REPEAT_SPEED_KPH = 30.0
+
 
 class PositionProcessor(Processor):
     """Projects car positions onto track and emits distance percentages."""
@@ -296,17 +307,33 @@ class PositionProcessor(Processor):
             rx = round(x, 1)
             ry = round(y, 1)
 
+            # FWnY5RhK: determine the repeat/motion state BEFORE
+            # observe_real_position() runs, so a byte-identical repeat
+            # while the car is moving can suppress just the real-anchor
+            # write (see MOTION_REPEAT_SPEED_KPH above). `_r_speed` is the
+            # glitch-tolerant last-good CarData speed (_clean_speed,
+            # GLITCH_MAX_ZEROS) already maintained by _handle_car_data --
+            # no new input required. Defaults to 0.0 (stationary) for a
+            # car with no CarData yet, which reproduces today's behavior
+            # exactly for that case.
+            prev = self._last_pos.get(num)
+            is_repeat = prev is not None and prev == (rx, ry, dist_pct)
+            moving_repeat = is_repeat and self._r_speed.get(num, 0.0) > MOTION_REPEAT_SPEED_KPH
+
             # Calibrate the speed→distance scale GLOBALLY (total dp advanced / total speed·dt),
             # so the Position-vs-CarData sampling mismatch cancels out; then re-seed the
             # reconstruction so it can take over seamlessly when Position drops out. Delegated
-            # to the shared DpReckoner (WB1) — see dp_reckoner.py's own docstring.
-            self._reckoner.observe_real_position(num, dist_pct, clock_time)
+            # to the shared DpReckoner (WB1) — see dp_reckoner.py's own docstring. The real-fix
+            # anchor (_real_dp/_real_ts) is suppressed only for a motion-gated stale repeat;
+            # calibration and the general reckoning anchor still run unconditionally.
+            self._reckoner.observe_real_position(
+                num, dist_pct, clock_time, refresh_real_anchor=not moving_repeat,
+            )
             self._last_pos_ts[num] = clock_time
             self._miss[num] = 0                        # real fix → no outage, reset counter
             self._r_buf.pop(num, None)                 # real fix → discard tolerated buffer
 
-            prev = self._last_pos.get(num)
-            if prev and prev == (rx, ry, dist_pct):
+            if is_repeat:
                 cars[num] = [rx, ry, dist_pct]
                 continue
 
