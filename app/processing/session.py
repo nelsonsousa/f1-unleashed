@@ -1122,10 +1122,16 @@ class SessionEngine:
             # fallback. data_ms is by definition not advancing in this branch,
             # so this ceiling is effectively frozen at the last confirmed
             # position — this IS the "freeze in place" safety valve.
-            if data_healthy and audio_ms is not None:
-                edge = min(data_ms, audio_ms)          # both healthy → lagging stream limits
-                driver = "data" if data_ms <= audio_ms else "audio"
-            elif audio_ms is not None:
+            # NOTE: the "both data_healthy and audio_ms present" sub-case is
+            # structurally unreachable here and was deliberately removed
+            # (2026-08-21, Orts6BRn/cJJUzyAj coverage close-out): to reach
+            # this else-branch at all, either self._live is False (still-
+            # building replay, where audio_ms is unconditionally None) or
+            # self._live is True with data_healthy False (the only other way
+            # `if self._live and data_healthy` can be false) -- so
+            # `data_healthy` is never True with `audio_ms is not None` by the
+            # time execution gets here.
+            if audio_ms is not None:
                 edge = audio_ms                        # data stalled → audio drives
                 driver = "audio-only"
             else:

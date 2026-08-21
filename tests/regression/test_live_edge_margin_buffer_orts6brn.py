@@ -95,6 +95,12 @@ class _FakeConn:
             return None
         return (self._holder["max_offset_ms"],)
 
+    def fetchall(self):
+        # add_client()'s scrubber-events query (`WHERE topic = 'event'`) --
+        # no test in this file needs non-empty events, so an empty result set
+        # exercises the query path without asserting on its contents.
+        return []
+
 
 class _FakeDB:
     """Minimal double for `SessionDatabase`. Only implements what
@@ -673,6 +679,69 @@ class QuietPeriodHeartbeatCadenceDoesNotFreezeTheClock(unittest.TestCase):
             f"redesign (data stays healthy throughout; the ceiling should "
             f"never lag the free-running clock) "
             f"(scoping-Orts6BRn-wallclock-playhead.md AC-W4)")
+
+
+# ---------------------------------------------------------------------------
+# Coverage close-out (2026-08-21, Orts6BRn/cJJUzyAj patch-coverage gate) --
+# `add_client()`'s own call site (session.py:554, `edge_ms =
+# self._live_edge_ms()`) was, until this test, never called directly by any
+# test in this suite -- every AC-W* test above exercises `_live_edge_ms()`
+# itself and reasons (correctly, but only by inspection) that `add_client()`
+# applies no further transformation to its return value. This test instead
+# drives the real `add_client()` call site end-to-end so that reasoning is
+# also a passing assertion, not just a comment.
+# ---------------------------------------------------------------------------
+
+class _FakeWebSocket:
+    """Stands in for `starlette.websockets.WebSocket` -- `add_client()` only
+    ever calls `.send_text()` on it (via `_send_to_client`, which swallows
+    any exception), so that's the only method this needs."""
+
+    def __init__(self):
+        self.sent: list[str] = []
+
+    async def send_text(self, data: str) -> None:
+        self.sent.append(data)
+
+
+class AddClientAppliesLiveEdgeCeilingOnFirstConnect(unittest.IsolatedAsyncioTestCase):
+    """First client of a live engine's lifetime: `add_client()` seeks the
+    clock to whatever `_live_edge_ms()` returns, unmodified (session.py:553-562).
+    Uses the same wall-clock-driven, healthy-connection, no-audio scenario as
+    `WallClockDrivenCeiling_NoAudio` (AC-W1/AC-W6) so the expected landing
+    point is the raw wall-clock elapsed time -- proving the call site, not
+    just the helper it calls."""
+
+    async def test_first_client_lands_clock_at_live_edge_ms_return_value(self):
+        from app.processing.clock import PlaybackClock
+
+        start = datetime(2026, 8, 20, 12, 0, 0, tzinfo=timezone.utc)
+        elapsed_s = 51.4
+        wall_ms = int(elapsed_s * 1000)
+        data_ms = 999_000  # far above wall_ms; must NOT drive the result
+
+        engine = _make_engine(live=True, max_offset_ms=data_ms)
+        engine._start_time = start
+        engine._clock = PlaybackClock(start)
+        engine._duration = 3600.0
+        engine._baseline_ready.set()  # skip the 30s connect-restore wait
+
+        ws = _FakeWebSocket()
+
+        with _patch_wall_clock_now(start, lambda: wall_ms):
+            client_id = await engine.add_client(ws)
+
+        self.assertEqual(client_id, 1)
+        self.assertTrue(engine._initial_live_seek_done)
+        self.assertAlmostEqual(
+            engine._clock.offset_seconds, elapsed_s, places=3,
+            msg=(
+                f"add_client()'s first-connect seek landed the clock at "
+                f"{engine._clock.offset_seconds}s, expected {elapsed_s}s "
+                f"(raw wall-clock elapsed, matching _live_edge_ms()'s own "
+                f"return value) -- session.py:554's call site diverged from "
+                f"_live_edge_ms() itself"
+            ))
 
 
 if __name__ == "__main__":
