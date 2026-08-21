@@ -55,7 +55,7 @@ _FPQ = {"Practice_1", "Practice_2", "Practice_3", "Sprint_Qualifying", "Qualifyi
 CIRCUIT_LENGTH_M = {
     "Melbourne": 5278, "Shanghai": 5451, "Suzuka": 5807, "Miami_Gardens": 5412,
     "Montréal": 4361, "Monte_Carlo": 3337, "Barcelona": 4657, "Spielberg": 4318,
-    "Silverstone": 5891,
+    "Silverstone": 5891, "Spa-Francorchamps": 7004, "Budapest": 4381,
 }
 
 
@@ -232,7 +232,7 @@ def _session_spans(tel, st):
 def compute(session_path: Path) -> Optional[dict]:
     circuit = _circuit_of(session_path)
     if circuit not in CIRCUIT_LENGTH_M:
-        logger.info("pit_loss_estimate: no circuit length for %s — skipping", circuit)
+        logger.warning("pit_loss_estimate: no circuit length for %s — skipping", circuit)
         return None
     canon = _session_canonical_name(session_path.name)
     if canon not in _FPQ:                         # geometry is only measured from FP/Q runs
