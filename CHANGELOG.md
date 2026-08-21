@@ -58,7 +58,7 @@ Nothing pending.
 
 ---
 
-## [2.0.3] (`main`, stable) — 2026-08-21
+## [2.0.3] "Zandvoort upgrade" (`main`, stable) — 2026-08-21
 
 ### Fixed
 - **CDN session downloads were returning HTTP 500** on every request due to an
